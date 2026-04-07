@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"D:\\\\下载\\\\编程\\\\APARK\")",
+      "Bash(npm --version)",
+      "Bash(npm create:*)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(npx electron:*)",
+      "Bash(npx @electron/rebuild)",
+      "Bash(\"D:/下载/编程/APARK/release/win-unpacked/APark Mail.exe\" --disable-gpu --no-sandbox)",
+      "Bash(taskkill /F /IM \"APark Mail.exe\")",
+      "Bash(rm:*)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 9892)",
+      "Bash(taskkill //F //PID 9892)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist)",
+      "Bash(powershell -Command \"Remove-Item -Path 'release/win-unpacked' -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Path 'release'\")",
+      "Bash(rm -rf D:/下载/编程/APARK/release)",
+      "Bash(npx electron-builder:*)",
+      "Read(//c/Users/dttxo/AppData/Local/electron-builder/Cache/winCodeSign/**)",
+      "Bash(ls -la *.7z)",
+      "Bash(D:/下载/编程/APARK/node_modules/7zip-bin/win/x64/7za.exe x:*)",
+      "Bash(node -e ':*)",
+      "Bash(mkdir -p \"C:/Users/dttxo/AppData/Local/electron-builder/Cache/winCodeSign/021302215\")",
+      "Bash(\"D:/下载/编程/APARK/node_modules/7zip-bin/win/x64/7za.exe\" x:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(npx asar:*)",
+      "Bash(grep -l 'ToastContainer' \"release/extracted/renderer/assets/\"*)"
+    ]
+  }
+}
