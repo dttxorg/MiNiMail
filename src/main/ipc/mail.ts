@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
 import { fetchMailList, fetchMailDetail, getMailFolders, setMessageFlags, deleteMessage, moveMessage } from '../services/mail';
+import { syncMails, fetchFullMessage as svcFetchFullMessage } from '../services/mailService';
 import { sendMail, testSmtpConnection } from '../services/smtp';
 import { getAccountById } from '../database';
 
@@ -15,6 +16,30 @@ export function registerMailHandlers(): void {
     } catch (err) {
       const error = err as Error;
       log.error(`Failed to get folders for account ${accountId}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Sync mails (main entry point for refresh)
+  ipcMain.handle('mail:sync', async (_event, accountId: number, folder: string) => {
+    try {
+      const result = await syncMails(accountId, folder);
+      return { success: true, data: result };
+    } catch (err) {
+      const error = err as Error;
+      log.error(`Failed to sync mails for account ${accountId}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Fetch full message with 15s timeout
+  ipcMain.handle('mail:fetchFull', async (_event, accountId: number, messageUid: number, folder: string) => {
+    try {
+      const detail = await svcFetchFullMessage(accountId, messageUid, folder);
+      return { success: true, data: detail };
+    } catch (err) {
+      const error = err as Error;
+      log.error(`Failed to fetch full message UID ${messageUid}:`, error);
       return { success: false, error: error.message };
     }
   });

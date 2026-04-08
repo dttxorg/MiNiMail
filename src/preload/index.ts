@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'oauth:startFlow',
       'oauth:handleCallback',
       'oauth:refreshToken',
+      'mail:sync',
+      'mail:fetchFull',
     ];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
@@ -44,6 +46,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onMessage: (callback: (message: string) => void) => {
     ipcRenderer.on('message', (_event, message) => callback(message));
+  },
+  onMailSync: (callback: (mail: unknown) => void) => {
+    ipcRenderer.on('mail:sync-new', (_event, mail) => callback(mail));
   },
   // Window controls for frameless window
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
