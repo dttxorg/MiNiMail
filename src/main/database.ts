@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import log from 'electron-log';
+import { encryptCredential, decryptCredential, isEncryptionAvailable } from './services/crypto';
 
 let db: Database.Database | null = null;
 
@@ -114,7 +115,25 @@ export function getAccountById(id: number): Account | null {
 
 export function getAccountCredentials(accountId: number): { password?: string; oauth_token?: string; oauth_refresh_token?: string; oauth_expiry?: number } | null {
   const stmt = getDatabase().prepare('SELECT password, oauth_token, oauth_refresh_token, oauth_expiry FROM credentials WHERE account_id = ?');
-  return (stmt.get(accountId) as { password?: string; oauth_token?: string; oauth_refresh_token?: string; oauth_expiry?: number }) || null;
+  const row = stmt.get(accountId) as { password?: Buffer; oauth_token?: Buffer; oauth_refresh_token?: Buffer; oauth_expiry?: number } | undefined;
+  if (!row) return null;
+
+  // Decrypt stored BLOB credentials
+  let password: string | undefined;
+  let oauth_token: string | undefined;
+  let oauth_refresh_token: string | undefined;
+
+  if (row.password) {
+    try { password = decryptCredential(row.password); } catch { password = undefined; }
+  }
+  if (row.oauth_token) {
+    try { oauth_token = decryptCredential(row.oauth_token); } catch { oauth_token = undefined; }
+  }
+  if (row.oauth_refresh_token) {
+    try { oauth_refresh_token = decryptCredential(row.oauth_refresh_token); } catch { oauth_refresh_token = undefined; }
+  }
+
+  return { password, oauth_token, oauth_refresh_token, oauth_expiry: row.oauth_expiry };
 }
 
 export interface CreateAccountInput {
@@ -162,12 +181,19 @@ export function createAccount(input: CreateAccountInput): Account {
 
   const accountId = result.lastInsertRowid as number;
 
-  // Store credentials
-  if (input.auth_type === 'password' && input.password) {
-    db.prepare('INSERT INTO credentials (account_id, password) VALUES (?, ?)').run(accountId, input.password);
-  } else if (input.auth_type === 'oauth' && (input.oauth_token || input.oauth_refresh_token)) {
-    db.prepare('INSERT INTO credentials (account_id, oauth_token, oauth_refresh_token) VALUES (?, ?, ?)')
-      .run(accountId, input.oauth_token || null, input.oauth_refresh_token || null);
+  // Store credentials (encrypted)
+  if (!isEncryptionAvailable()) {
+    log.warn('safeStorage not available, credentials will not be stored');
+  } else {
+    if (input.auth_type === 'password' && input.password) {
+      const encryptedPassword = encryptCredential(input.password);
+      db.prepare('INSERT INTO credentials (account_id, password) VALUES (?, ?)').run(accountId, encryptedPassword);
+    } else if (input.auth_type === 'oauth' && (input.oauth_token || input.oauth_refresh_token)) {
+      const encryptedToken = input.oauth_token ? encryptCredential(input.oauth_token) : null;
+      const encryptedRefreshToken = input.oauth_refresh_token ? encryptCredential(input.oauth_refresh_token) : null;
+      db.prepare('INSERT INTO credentials (account_id, oauth_token, oauth_refresh_token) VALUES (?, ?, ?)')
+        .run(accountId, encryptedToken, encryptedRefreshToken);
+    }
   }
 
   log.info(`Account created: ${input.email} (ID: ${accountId})`);
@@ -200,18 +226,29 @@ export function updateAccount(id: number, input: Partial<CreateAccountInput>): A
     stmt.run(...values);
   }
 
-  // Update credentials if provided
-  if (input.password) {
-    db.prepare('UPDATE credentials SET password = ? WHERE account_id = ?').run(input.password, id);
-  }
-  if (input.oauth_token || input.oauth_refresh_token) {
-    const updates: string[] = [];
-    const credValues: (string | null)[] = [];
-    if (input.oauth_token !== undefined) { updates.push('oauth_token = ?'); credValues.push(input.oauth_token); }
-    if (input.oauth_refresh_token !== undefined) { updates.push('oauth_refresh_token = ?'); credValues.push(input.oauth_refresh_token); }
-    if (updates.length > 0) {
-      credValues.push(id as never);
-      db.prepare(`UPDATE credentials SET ${updates.join(', ')} WHERE account_id = ?`).run(...credValues);
+  // Update credentials if provided (encrypt before storing)
+  if (!isEncryptionAvailable()) {
+    log.warn('safeStorage not available, credentials will not be updated');
+  } else {
+    if (input.password) {
+      const encrypted = encryptCredential(input.password);
+      db.prepare('UPDATE credentials SET password = ? WHERE account_id = ?').run(encrypted, id);
+    }
+    if (input.oauth_token !== undefined || input.oauth_refresh_token !== undefined) {
+      const updates: string[] = [];
+      const credValues: (Buffer | null)[] = [];
+      if (input.oauth_token !== undefined) {
+        updates.push('oauth_token = ?');
+        credValues.push(input.oauth_token ? encryptCredential(input.oauth_token) : null);
+      }
+      if (input.oauth_refresh_token !== undefined) {
+        updates.push('oauth_refresh_token = ?');
+        credValues.push(input.oauth_refresh_token ? encryptCredential(input.oauth_refresh_token) : null);
+      }
+      if (updates.length > 0) {
+        credValues.push(id as never);
+        db.prepare(`UPDATE credentials SET ${updates.join(', ')} WHERE account_id = ?`).run(...credValues);
+      }
     }
   }
 
