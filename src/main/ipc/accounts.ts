@@ -43,9 +43,33 @@ export function registerAccountHandlers(): void {
     }
   });
 
-  // Create account
+  // Create account — PRE-FLIGHT IMAP VALIDATION
   ipcMain.handle('accounts:create', async (_event, input: CreateAccountInput) => {
     try {
+      // ── Step 1: Real IMAP handshake test before storing ──────────────────
+      log.info(`[accounts:create] Testing IMAP connection for ${input.email} at ${input.imap_host}:${input.imap_port}`);
+
+      const imapResult = await testImapConnection({
+        host: input.imap_host,
+        port: input.imap_port,
+        username: input.username || input.email,
+        password: input.password,
+        oauthToken: input.oauth_token,
+        useTLS: input.use_tls !== false,
+      });
+
+      if (!imapResult.success) {
+        log.warn(`[accounts:create] IMAP handshake failed for ${input.email}: ${imapResult.message}`);
+        return {
+          success: false,
+          error: `无法连接邮箱服务器：${imapResult.message}`,
+          code: 'IMAP_AUTH_FAILED',
+        };
+      }
+
+      log.info(`[accounts:create] IMAP handshake OK for ${input.email}, proceeding to store`);
+
+      // ── Step 2: Encrypt & persist to SQLite ────────────────────────────────
       const account = createAccount(input);
       return { success: true, data: account };
     } catch (err) {
