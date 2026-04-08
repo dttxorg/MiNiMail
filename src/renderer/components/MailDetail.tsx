@@ -193,6 +193,9 @@ export function MailDetail({
     );
   }
 
+  // Safety check - should not reach here without email in success state
+  if (!email) return null;
+
   return (
     <div className="flex-1 h-screen bg-zinc-900 flex flex-col relative">
       {/* Action Bar */}

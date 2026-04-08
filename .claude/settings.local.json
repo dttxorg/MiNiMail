@@ -29,7 +29,8 @@
       "Bash(\"D:/下载/编程/APARK/node_modules/7zip-bin/win/x64/7za.exe\" x:*)",
       "Bash(npx tailwindcss:*)",
       "Bash(npx asar:*)",
-      "Bash(grep -l 'ToastContainer' \"release/extracted/renderer/assets/\"*)"
+      "Bash(grep -l 'ToastContainer' \"release/extracted/renderer/assets/\"*)",
+      "Bash(npx vite:*)"
     ]
   }
 }

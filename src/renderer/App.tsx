@@ -26,7 +26,7 @@ function App() {
   const [aiTargetLanguage, setAiTargetLanguage] = useState('中文');
 
   // ─── Accounts state (dynamic — from useAccounts hook) ───
-  const { accounts, loading: accountsLoading, fetchAccounts, createAccount, deleteAccount: deleteAccountApi } = useAccounts();
+  const { accounts, fetchAccounts, createAccount, deleteAccount: deleteAccountApi } = useAccounts();
   const {
     isSyncing,
     syncMails,
@@ -69,15 +69,7 @@ function App() {
   // ─── Toast state ───
   const [toasts, setToasts] = useState<ToastData[]>([]);
 
-  // Keep a ref to current emails so interval callback always has fresh state
-  const emailsRef = useRef(emails);
-  useEffect(() => { emailsRef.current = emails; }, [emails]);
-
-  // ─── Add a new email to global state ───
-  const addNewEmailToState = useCallback((email: Omit<MockEmail, 'accountId'>, accountId: number) => {
-    const newEmail: MockEmail = { ...email, accountId };
-    setEmails(prev => [newEmail, ...prev]);
-  }, []);
+  // ─── Manual refresh: fetchMails via useMail hook ───
 
   // ─── Manual refresh: fetchMails via useMail hook ───
   const fetchMails = useCallback(async (): Promise<void> => {
@@ -256,8 +248,8 @@ function App() {
         }}
         onCompose={() => setShowCompose(true)}
         onSettings={() => setShowSettings(true)}
-        currentAccount={currentAccount}
-        accounts={accounts}
+        currentAccount={currentAccount || { email: '', name: '未选择账号', avatar: undefined }}
+        accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
         onSwitchAccount={handleSwitchAccount}
         onAddAccount={() => setShowAddAccount(true)}
         inboxExpanded={inboxExpanded}
@@ -369,7 +361,7 @@ function App() {
         t={t}
         isOpen={showCompose}
         onClose={handleCloseCompose}
-        accounts={accounts}
+        accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
         selectedAccount={currentAccount}
         onSend={async () => ({ success: true, message: '发送成功' })}
         initialTo={selectedEmail ? selectedEmail.from.email : ''}
@@ -387,7 +379,7 @@ function App() {
         aiTargetLanguage={aiTargetLanguage}
         onAiTargetLanguageChange={setAiTargetLanguage}
         onAddAccount={() => { setShowSettings(false); setShowAddAccount(true); }}
-        accounts={accounts}
+        accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
         onDeleteAccount={handleDeleteAccount}
         currentAccountId={currentAccount?.id ?? 0}
       />
