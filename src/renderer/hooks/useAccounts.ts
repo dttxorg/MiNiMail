@@ -119,6 +119,7 @@ declare global {
       getVersion: () => Promise<string>;
       getUserDataPath: () => Promise<string>;
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+      onMailSync: (callback: (mail: unknown) => void) => void;
     };
   }
 }

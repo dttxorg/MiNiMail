@@ -1,16 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+// src/renderer/hooks/useMail.ts
+import { useState, useCallback } from 'react';
 import type { ApiResponse } from '../types';
 
-export interface SendMailOptions {
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject: string;
-  body: string;
-  isHtml?: boolean;
-}
-
-export interface MailSummary {
+export interface RendererMailSummary {
   id: string;
   uid: number;
   from: string;
@@ -18,191 +10,98 @@ export interface MailSummary {
   to: string;
   subject: string;
   date: Date;
-  flags: string[];
   snippet: string;
   hasAttachments: boolean;
   isRead: boolean;
   isStarred: boolean;
+  folder: string;
+  accountId: number;
 }
 
-export interface MailDetail {
-  id: string;
-  uid: number;
-  from: string;
-  fromName: string;
-  to: string;
-  cc?: string;
-  subject: string;
-  date: Date;
-  flags: string[];
+export interface RendererMailDetail extends RendererMailSummary {
   bodyHtml?: string;
   bodyText?: string;
-  attachments: Array<{
-    filename: string;
-    contentType: string;
-    size: number;
-    contentId?: string;
-  }>;
+  attachments: Array<{ filename: string; contentType: string; size: number }>;
   headers: Record<string, string>;
 }
 
-export interface FolderInfo {
-  name: string;
-  path: string;
-  delimiter: string;
-  flags: string[];
-}
+export type MailLoadingState = 'idle' | 'loading' | 'success' | 'error' | 'timeout';
 
-export function useMail(accountId: number | null, folder: string = 'INBOX') {
-  const [mails, setMails] = useState<MailSummary[]>([]);
-  const [folders, setFolders] = useState<FolderInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedMail, setSelectedMail] = useState<MailDetail | null>(null);
-  const [selectedMailUid, setSelectedMailUid] = useState<number | null>(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+export function useMail() {
+  const [mailList, setMailList] = useState<RendererMailSummary[]>([]);
+  const [currentMail, setCurrentMail] = useState<RendererMailDetail | null>(null);
+  const [mailLoadingState, setMailLoadingState] = useState<MailLoadingState>('idle');
+  const [mailError, setMailError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
-  const fetchFolders = useCallback(async () => {
-    if (!accountId) return;
+  const syncMails = useCallback(async (accountId: number, folder: string = 'INBOX') => {
+    setIsSyncing(true);
+    setSyncError(null);
     try {
-      const response = await window.electronAPI.invoke('mail:getFolders', accountId) as ApiResponse<FolderInfo[]>;
-      if (response.success && response.data) {
-        setFolders(response.data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch folders:', err);
-    }
-  }, [accountId]);
-
-  const fetchMailList = useCallback(async () => {
-    if (!accountId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await window.electronAPI.invoke('mail:getList', accountId, folder, { limit: 50 }) as ApiResponse<MailSummary[]>;
-      if (response.success && response.data) {
-        setMails(response.data);
+      const response = await window.electronAPI.invoke('mail:sync', accountId, folder);
+      const result = response as ApiResponse<{ newMails: RendererMailSummary[]; totalCached: number }>;
+      if (result.success && result.data) {
+        setMailList(prev => [...result.data!.newMails, ...prev]);
       } else {
-        setError(response.error || 'Failed to fetch mails');
+        setSyncError(result.error || 'Sync failed');
       }
     } catch (err) {
-      setError((err as Error).message);
+      setSyncError((err as Error).message);
     } finally {
-      setLoading(false);
+      setIsSyncing(false);
     }
-  }, [accountId, folder]);
+  }, []);
 
-  const fetchMailDetail = useCallback(async (uid: number) => {
-    if (!accountId) return;
-    setLoadingDetail(true);
-    setSelectedMailUid(uid);
+  const fetchMailDetail = useCallback(async (accountId: number, messageUid: number, folder: string = 'INBOX') => {
+    setMailLoadingState('loading');
+    setMailError(null);
+    setCurrentMail(null);
+
     try {
-      const response = await window.electronAPI.invoke('mail:getDetail', accountId, uid, folder) as ApiResponse<MailDetail>;
-      if (response.success && response.data) {
-        setSelectedMail(response.data);
+      const response = await window.electronAPI.invoke('mail:fetchFull', accountId, messageUid, folder);
+      const result = response as ApiResponse<RendererMailDetail>;
+      if (result.success && result.data) {
+        setCurrentMail(result.data);
+        setMailLoadingState('success');
+      } else {
+        if ((result.error || '').includes('Timeout')) {
+          setMailLoadingState('timeout');
+          setMailError('获取内容超时，请检查网络后重试');
+        } else {
+          setMailLoadingState('error');
+          setMailError(result.error || 'Failed to load mail');
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch mail detail:', err);
-    } finally {
-      setLoadingDetail(false);
-    }
-  }, [accountId, folder]);
-
-  const setFlags = useCallback(async (uid: number, flags: string[]) => {
-    if (!accountId) return;
-    try {
-      await window.electronAPI.invoke('mail:setFlags', accountId, uid, flags, folder);
-      // Refresh the mail list
-      await fetchMailList();
-    } catch (err) {
-      console.error('Failed to set flags:', err);
-    }
-  }, [accountId, folder, fetchMailList]);
-
-  const markAsRead = useCallback((uid: number) => {
-    setFlags(uid, ['\\Seen']);
-  }, [setFlags]);
-
-  const markAsUnread = useCallback((uid: number) => {
-    setFlags(uid, ['\\Seen']);
-  }, [setFlags]);
-
-  const toggleStar = useCallback((mail: MailSummary) => {
-    const newFlags = mail.isStarred
-      ? ['\\Flagged']
-      : ['\\Seen', '\\Flagged'];
-    setFlags(mail.uid, newFlags);
-  }, [setFlags]);
-
-  const sendMail = useCallback(async (options: SendMailOptions): Promise<{ success: boolean; message: string }> => {
-    if (!accountId) {
-      return { success: false, message: 'No account selected' };
-    }
-    try {
-      const response = await window.electronAPI.invoke('mail:send', accountId, options) as ApiResponse<{ messageId?: string }>;
-      if (response.success) {
-        return { success: true, message: '邮件发送成功' };
+      const msg = (err as Error).message;
+      if (msg.includes('Timeout') || msg.includes('timeout')) {
+        setMailLoadingState('timeout');
+        setMailError('获取内容超时，请检查网络后重试');
+      } else {
+        setMailLoadingState('error');
+        setMailError(msg);
       }
-      return { success: false, message: response.error || '发送失败' };
-    } catch (err) {
-      return { success: false, message: (err as Error).message };
     }
-  }, [accountId]);
+  }, []);
 
-  const deleteMail = useCallback(async (messageUid: number): Promise<{ success: boolean; message: string }> => {
-    if (!accountId) {
-      return { success: false, message: 'No account selected' };
-    }
-    try {
-      const response = await window.electronAPI.invoke('mail:delete', accountId, messageUid, folder) as ApiResponse<void>;
-      if (response.success) {
-        await fetchMailList();
-        return { success: true, message: '邮件已删除' };
-      }
-      return { success: false, message: response.error || '删除失败' };
-    } catch (err) {
-      return { success: false, message: (err as Error).message };
-    }
-  }, [accountId, folder, fetchMailList]);
-
-  const moveMail = useCallback(async (messageUid: number, toFolder: string): Promise<{ success: boolean; message: string }> => {
-    if (!accountId) {
-      return { success: false, message: 'No account selected' };
-    }
-    try {
-      const response = await window.electronAPI.invoke('mail:move', accountId, messageUid, folder, toFolder) as ApiResponse<void>;
-      if (response.success) {
-        await fetchMailList();
-        return { success: true, message: '邮件已移动' };
-      }
-      return { success: false, message: response.error || '移动失败' };
-    } catch (err) {
-      return { success: false, message: (err as Error).message };
-    }
-  }, [accountId, folder, fetchMailList]);
-
-  useEffect(() => {
-    if (accountId) {
-      fetchFolders();
-      fetchMailList();
-    }
-  }, [accountId, fetchFolders, fetchMailList]);
+  const clearCurrentMail = useCallback(() => {
+    setCurrentMail(null);
+    setMailLoadingState('idle');
+    setMailError(null);
+  }, []);
 
   return {
-    mails,
-    folders,
-    loading,
-    error,
-    selectedMail,
-    selectedMailUid,
-    loadingDetail,
-    fetchMailList,
+    mailList,
+    setMailList,
+    currentMail,
+    setCurrentMail,
+    mailLoadingState,
+    mailError,
+    isSyncing,
+    syncError,
+    syncMails,
     fetchMailDetail,
-    setFlags,
-    markAsRead,
-    toggleStar,
-    sendMail,
-    deleteMail,
-    moveMail,
+    clearCurrentMail,
   };
 }
