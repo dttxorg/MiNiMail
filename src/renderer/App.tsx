@@ -9,53 +9,9 @@ import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccoun
 import { ToastContainer, ToastData } from './components/Toast';
 import { mockEmails, MockEmail } from './data/mockData';
 import type { CreateAccountInput } from './types';
+import { useAccounts } from './hooks/useAccounts';
+import { useMail } from './hooks/useMail';
 import './i18n';
-
-// ─── Random new email pool for sync simulation ───
-const SYNC_NEW_EMAILS: Omit<MockEmail, 'accountId'>[] = [
-  {
-    id: `sync-${Date.now()}-1`,
-    from: { name: '系统通知', email: 'system@notify.com', avatar: 'https://api.dicebear.com/7.x/identicon/svg?seed=system' },
-    to: ['me@example.com'],
-    subject: '您的账号安全提醒',
-    snippet: '我们检测到您的账号在新设备上登录，如非本人操作请立即修改密码...',
-    body: '您的账号安全提醒...\n\n我们检测到您的账号在新设备上登录。',
-    date: new Date(),
-    isRead: false,
-    isStarred: false,
-    hasAttachments: false,
-    folder: 'inbox',
-    category: 'primary',
-  },
-  {
-    id: `sync-${Date.now()}-2`,
-    from: { name: '服务器监控', email: 'monitor@cloud.com' },
-    to: ['me@example.com'],
-    subject: '【监控告警】CPU 使用率超过 80%',
-    snippet: '服务器 web-01 的 CPU 使用率已达到 82%，请及时处理...',
-    body: '服务器监控告警：CPU 使用率超过阈值。',
-    date: new Date(),
-    isRead: false,
-    isStarred: false,
-    hasAttachments: false,
-    folder: 'inbox',
-    category: 'primary',
-  },
-  {
-    id: `sync-${Date.now()}-3`,
-    from: { name: 'GitHub', email: 'noreply@github.com', avatar: 'https://api.dicebear.com/7.x/identicon/svg?seed=github2' },
-    to: ['me@example.com'],
-    subject: '[GitHub] 您的 PR #42 已被合并',
-    snippet: '您的 Pull Request #42 已被合并到 main 分支，感谢您的贡献...',
-    body: 'PR #42 merged into main.',
-    date: new Date(),
-    isRead: false,
-    isStarred: false,
-    hasAttachments: false,
-    folder: 'inbox',
-    category: 'primary',
-  },
-];
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -69,12 +25,26 @@ function App() {
   const [appLanguage, setAppLanguage] = useState<'zh' | 'en' | 'ja' | 'ko' | 'es' | 'fr' | 'de' | 'ru'>('zh');
   const [aiTargetLanguage, setAiTargetLanguage] = useState('中文');
 
-  // ─── Accounts state (dynamic — not hardcoded) ───
-  const [accounts, setAccounts] = useState([
-    { id: 1, email: 'me@example.com', name: '我的邮箱', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=me' },
-    { id: 2, email: 'work@company.com', name: '工作邮箱', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=work' },
-  ]);
-  const [currentAccount, setCurrentAccount] = useState(accounts[0]);
+  // ─── Accounts state (dynamic — from useAccounts hook) ───
+  const { accounts, loading: accountsLoading, fetchAccounts, createAccount, deleteAccount: deleteAccountApi } = useAccounts();
+  const {
+    isSyncing,
+    syncMails,
+  } = useMail();
+  const [currentAccount, setCurrentAccount] = useState<{ id: number; email: string; name: string; avatar: string } | null>(null);
+
+  // Set default account when accounts load
+  useEffect(() => {
+    if (accounts.length > 0 && !currentAccount) {
+      const defaultAcc = accounts.find(a => a.is_default === 1) || accounts[0];
+      setCurrentAccount({
+        id: defaultAcc.id,
+        email: defaultAcc.email,
+        name: defaultAcc.display_name || defaultAcc.email.split('@')[0],
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${defaultAcc.email.split('@')[0]}`,
+      });
+    }
+  }, [accounts, currentAccount]);
 
   const [inboxExpanded, setInboxExpanded] = useState(false);
   const [accountFilter, setAccountFilter] = useState<number | null>(null);
@@ -92,7 +62,6 @@ function App() {
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
 
   // ─── Refresh / Loading state ───
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ─── Context menu state ───
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; emailId: string } | null>(null);
@@ -104,61 +73,23 @@ function App() {
   const emailsRef = useRef(emails);
   useEffect(() => { emailsRef.current = emails; }, [emails]);
 
-  // ─── Add a new email to global state + show toast ───
+  // ─── Add a new email to global state ───
   const addNewEmailToState = useCallback((email: Omit<MockEmail, 'accountId'>, accountId: number) => {
     const newEmail: MockEmail = { ...email, accountId };
     setEmails(prev => [newEmail, ...prev]);
-    setToasts(prev => [...prev, {
-      id: `toast-${Date.now()}`,
-      title: email.subject,
-      snippet: email.snippet.slice(0, 20) + '...',
-      avatar: email.from.avatar,
-      senderInitial: email.from.name.charAt(0),
-      emailId: email.id,
-    }]);
   }, []);
 
-  // ─── Manual refresh: fetchMails — appends 1 random new email to existing state ───
+  // ─── Manual refresh: fetchMails via useMail hook ───
   const fetchMails = useCallback(async (): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    const template = SYNC_NEW_EMAILS[Math.floor(Math.random() * SYNC_NEW_EMAILS.length)];
-    const freshEmail: Omit<MockEmail, 'accountId'> = {
-      ...template,
-      id: `sync-${Date.now()}`,
-      date: new Date(),
-    };
-    // Assign to a random existing account
-    const targetAccountId = accounts[Math.floor(Math.random() * accounts.length)]?.id ?? 1;
-    addNewEmailToState(freshEmail, targetAccountId);
-  }, [accounts, addNewEmailToState]);
+    if (!currentAccount) return;
+    await syncMails(currentAccount.id, selectedFolder);
+  }, [currentAccount, selectedFolder, syncMails]);
 
   const handleRefresh = async () => {
-    if (isRefreshing) return;
-    setIsRefreshing(true);
+    if (isSyncing) return;
     setSelectedIds([]);
-    try {
-      await fetchMails();
-    } finally {
-      setIsRefreshing(false);
-    }
+    await fetchMails();
   };
-
-  // ─── Auto-sync: poll every 60 seconds in background ───
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      // Simulate background sync: add a new email silently
-      const template = SYNC_NEW_EMAILS[Math.floor(Math.random() * SYNC_NEW_EMAILS.length)];
-      const newEmail: Omit<MockEmail, 'accountId'> = {
-        ...template,
-        id: `sync-${Date.now()}`,
-        date: new Date(),
-      };
-      const targetAccountId = accounts[Math.floor(Math.random() * accounts.length)]?.id ?? 1;
-      addNewEmailToState(newEmail, targetAccountId);
-    }, 60000);
-
-    return () => clearInterval(interval);
-  }, [accounts, addNewEmailToState]);
 
   // ─── Auto-dismiss toasts after 5 seconds ───
   useEffect(() => {
@@ -255,14 +186,31 @@ function App() {
 
   const handleSwitchAccount = (accountId: number) => {
     const acc = accounts.find(a => a.id === accountId);
-    if (acc) setCurrentAccount(acc);
+    if (acc) {
+      setCurrentAccount({
+        id: acc.id,
+        email: acc.email,
+        name: acc.display_name || acc.email.split('@')[0],
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${acc.email.split('@')[0]}`,
+      });
+    }
   };
 
-  const handleDeleteAccount = (accountId: number) => {
-    setAccounts(prev => prev.filter(a => a.id !== accountId));
-    if (currentAccount.id === accountId) {
+  const handleDeleteAccount = async (accountId: number) => {
+    await deleteAccountApi(accountId);
+    if (currentAccount && currentAccount.id === accountId) {
       const remaining = accounts.filter(a => a.id !== accountId);
-      if (remaining.length > 0) setCurrentAccount(remaining[0]);
+      if (remaining.length > 0) {
+        const nextAcc = remaining[0];
+        setCurrentAccount({
+          id: nextAcc.id,
+          email: nextAcc.email,
+          name: nextAcc.display_name || nextAcc.email.split('@')[0],
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${nextAcc.email.split('@')[0]}`,
+        });
+      } else {
+        setCurrentAccount(null);
+      }
     }
   };
 
@@ -283,29 +231,12 @@ function App() {
   };
 
   const handleSaveAttempt = async (input: CreateAccountInput) => {
-    const newAccount = {
-      id: Date.now(),
-      email: input.email,
-      name: input.display_name || input.email.split('@')[0],
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${input.email.split('@')[0]}`,
-    };
-    setAccounts(prev => [...prev, newAccount]);
-    setShowAddAccount(false);
-    return { success: true };
-  };
-
-  // Toast click: navigate to the new email
-  const handleToastClick = (emailId: string) => {
-    const email = emails.find(e => e.id === emailId);
-    if (email) {
-      setSelectedEmail(email);
-      setSelectedIds([emailId]);
+    const result = await createAccount(input);
+    if (result.success) {
+      await fetchAccounts();
+      setShowAddAccount(false);
     }
-    setToasts(prev => prev.filter(t => t.emailId !== emailId));
-  };
-
-  const handleToastDismiss = (id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
+    return result;
   };
 
   const sortedForSelectAll = [...folderEmails].sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -339,7 +270,7 @@ function App() {
           setSelectedIds([]);
         }}
         onRefresh={handleRefresh}
-        isRefreshing={isRefreshing}
+        isRefreshing={isSyncing}
       />
 
       <MailList
@@ -353,7 +284,7 @@ function App() {
         onSelectAll={handleSelectAll}
         isAllSelected={isAllSelected}
         onContextMenu={handleContextMenu}
-        isLoading={isRefreshing}
+        isLoading={isSyncing}
       />
 
       <MailDetail
@@ -430,8 +361,8 @@ function App() {
       {/* Toast Notifications */}
       <ToastContainer
         toasts={toasts}
-        onDismiss={handleToastDismiss}
-        onClick={handleToastClick}
+        onDismiss={() => {}}
+        onClick={() => {}}
       />
 
       <ComposeDialog
@@ -458,7 +389,7 @@ function App() {
         onAddAccount={() => { setShowSettings(false); setShowAddAccount(true); }}
         accounts={accounts}
         onDeleteAccount={handleDeleteAccount}
-        currentAccountId={currentAccount.id}
+        currentAccountId={currentAccount?.id ?? 0}
       />
 
       <AddAccountDialog
