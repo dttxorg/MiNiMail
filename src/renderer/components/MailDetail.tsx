@@ -16,6 +16,8 @@ import {
 import { MockEmail } from '../data/mockData';
 import { useAI } from '../hooks/useAI';
 
+type MailLoadingState = 'idle' | 'loading' | 'success' | 'error' | 'timeout';
+
 interface MailDetailProps {
   t: (key: string) => string;
   email: MockEmail | null;
@@ -24,6 +26,9 @@ interface MailDetailProps {
   onDelete: () => void;
   aiTargetLanguage: string;
   onReplyWithSuggestion: (content: string) => void;
+  mailLoadingState?: MailLoadingState;
+  mailError?: string | null;
+  onRetry?: () => void;
 }
 
 type AIFunction = 'translate' | 'summarize' | 'reply';
@@ -36,6 +41,9 @@ export function MailDetail({
   onDelete,
   aiTargetLanguage,
   onReplyWithSuggestion,
+  mailLoadingState = 'idle',
+  mailError = null,
+  onRetry,
 }: MailDetailProps) {
   const { translate, summarize, suggestReply, loading: aiApiLoading } = useAI();
   const [isStarred, setIsStarred] = useState(false);
@@ -137,7 +145,8 @@ export function MailDetail({
     }
   };
 
-  if (!email) {
+  // No email selected + not loading = show placeholder
+  if (!email && mailLoadingState === 'idle') {
     return (
       <div className="flex-1 h-screen bg-zinc-900 flex flex-col items-center justify-center text-zinc-500">
         <div className="w-20 h-20 rounded-full bg-zinc-800 flex items-center justify-center mb-4">
@@ -145,6 +154,41 @@ export function MailDetail({
         </div>
         <p className="text-lg font-medium text-zinc-400 mb-2">{t('selectMailToRead')}</p>
         <p className="text-sm">{t('chooseMailToView')}</p>
+      </div>
+    );
+  }
+
+  // Loading skeleton
+  if (mailLoadingState === 'loading') {
+    return (
+      <div className="flex-1 h-screen bg-zinc-900 flex flex-col p-6 overflow-y-auto">
+        <div className="animate-pulse space-y-4">
+          <div className="h-6 bg-zinc-700 rounded w-1/2" />
+          <div className="h-4 bg-zinc-700 rounded w-1/3" />
+          <div className="border-t border-zinc-700 my-4" />
+          <div className="h-4 bg-zinc-700 rounded w-full" />
+          <div className="h-4 bg-zinc-700 rounded w-5/6" />
+          <div className="h-4 bg-zinc-700 rounded w-4/6" />
+        </div>
+        <p className="text-center text-zinc-500 mt-6 text-sm">正在从服务器获取内容...</p>
+      </div>
+    );
+  }
+
+  // Timeout / Error state
+  if (mailLoadingState === 'timeout' || mailLoadingState === 'error') {
+    return (
+      <div className="flex-1 h-screen bg-zinc-900 flex flex-col items-center justify-center text-zinc-400 gap-4">
+        <div className="text-4xl">⚠️</div>
+        <p className="text-sm text-center px-8">{mailError || '获取内容超时，请检查网络后重试'}</p>
+        {onRetry && (
+          <button
+            onClick={onRetry}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm transition-colors"
+          >
+            点击重试
+          </button>
+        )}
       </div>
     );
   }
