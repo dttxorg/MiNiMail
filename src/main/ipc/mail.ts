@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
 import { fetchMailList, fetchMailDetail, getMailFolders, setMessageFlags, deleteMessage, moveMessage } from '../services/mail';
-import { syncMails, fetchFullMessage as svcFetchFullMessage } from '../services/mailService';
+import { syncMails, fetchFullMessage as svcFetchFullMessage, getFolders as svcGetFolders, loadCachedMails } from '../services/mailService';
 import { sendMail, testSmtpConnection } from '../services/smtp';
 import { getAccountById } from '../database';
 
@@ -28,6 +28,18 @@ export function registerMailHandlers(): void {
     } catch (err) {
       const error = err as Error;
       log.error(`Failed to sync mails for account ${accountId}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Load cached mails from SQLite (for offline/startup)
+  ipcMain.handle('mail:loadCached', async (_event, accountId: number, folder: string) => {
+    try {
+      const cached = loadCachedMails(accountId, folder);
+      return { success: true, data: cached };
+    } catch (err) {
+      const error = err as Error;
+      log.error(`Failed to load cached mails for account ${accountId}:`, error);
       return { success: false, error: error.message };
     }
   });

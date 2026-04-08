@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'oauth:refreshToken',
       'mail:sync',
       'mail:fetchFull',
+      'mail:loadCached',
     ];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
