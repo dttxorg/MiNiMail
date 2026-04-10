@@ -152,8 +152,8 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
     folder: row.folder as string,
     accountId: row.account_id as number,
     cachedAt: row.cached_at as string,
-    messageId: row.message_id as string | undefined,
-    inReplyTo: row.in_reply_to as string | undefined,
+    messageId: row.message_id != null ? (row.message_id as string) : undefined,
+    inReplyTo: row.in_reply_to != null ? (row.in_reply_to as string) : undefined,
   }));
 }
 
