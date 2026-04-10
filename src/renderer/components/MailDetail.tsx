@@ -81,10 +81,43 @@ export function MailDetail({
 
   const handleCopy = () => {
     if (!email) return;
-    const text = isDetail(email)
-      ? (email.bodyText || email.snippet || email.subject)
-      : (email.snippet || email.subject);
-    navigator.clipboard.writeText(text);
+
+    let cleanText = '';
+
+    // ── Path 1: DOM 解析（HTML 邮件）— 浏览器自动剥离 img/媒体标签 ──
+    if (isDetail(email) && email.bodyHtml) {
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = DOMPurify.sanitize(email.bodyHtml, {
+        ALLOWED_TAGS: [
+          'p','br','b','i','u','strong','em','a','ul','ol','li',
+          'h1','h2','h3','h4','h5','h6','blockquote','span','div',
+          'table','thead','tbody','tr','th','td','hr','pre','code',
+        ],
+        ALLOWED_ATTR: ['href', 'title'],
+        ALLOW_DATA_ATTR: false,
+      });
+      cleanText = tempDiv.innerText || tempDiv.textContent || '';
+    }
+
+    // ── Path 2: 纯文本回退 — 用正则剥离残留媒体链接 ──
+    if (!cleanText) {
+      const raw = isDetail(email)
+        ? (email.bodyText || email.snippet || email.subject)
+        : (email.snippet || email.subject);
+      cleanText = raw
+        // 剥离 [image: xxx]、![alt](url)、独立图片 URL 等媒体标记
+        .replace(/\[image[:\s][^\]]*\]/gi, '')
+        .replace(/!\[([^\]]*)\]\([^)]\)/g, '$1')
+        .replace(
+          /https?:\/\/[^\s\u4e00-\u9fa5]*(?:jpe?g|png|gif|webp|bmp|svg|ico)[^\s\u4e00-\u9fa5]*/gi,
+          ''
+        )
+        // 多个连续空行合并为两个换行（保留段落结构）
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    navigator.clipboard.writeText(cleanText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
