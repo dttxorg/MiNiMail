@@ -320,43 +320,81 @@ function App() {
     setIsAiClassifying(true);
 
     try {
-      const aiConfig = await window.electronAPI.invoke('ai:getConfig') as { success: boolean; data?: { hasApiKey: boolean } };
+      const aiConfig = await window.electronAPI.invoke('ai:getConfig') as {
+        success: boolean; data?: { hasApiKey: boolean };
+      };
       if (!aiConfig.success || !aiConfig.data?.hasApiKey) {
-        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: '请先在设置中配置 AI API Key' }]);
+        setToasts(prev => [...prev, {
+          id: Date.now().toString(), type: 'error',
+          message: '请先在设置中配置 AI API Key',
+        }]);
         return;
       }
 
-      // Apply lookback filter
+      // Apply lookback filter — only classify unread mail within the time window
       const lookbackMs = lookbackToMs(aiLookback);
       const lookbackDate = Date.now() - lookbackMs;
       const eligible = mailList.filter(m => m.date.getTime() > lookbackDate && !m.isRead);
 
       if (eligible.length === 0) {
-        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'info', message: `没有在 ${aiLookback === '3d' ? '3 天' : aiLookback === '7d' ? '7 天' : '1 个月'}内需要分析的未读邮件` }]);
+        const rangeLabel = aiLookback === '3d' ? '3 天' : aiLookback === '7d' ? '7 天' : '1 个月';
+        setToasts(prev => [...prev, {
+          id: Date.now().toString(), type: 'info',
+          message: `没有在 ${rangeLabel}内需要分析的未读邮件`,
+        }]);
         return;
       }
 
-      // Apply batch size limit per scan mode
+      // Respect scan mode batch size
       const maxBatch = aiScanMode === 'deep' ? 10 : 50;
       const toProcess = eligible.slice(0, maxBatch);
 
-      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'info', message: `正在分析 ${toProcess.length} 封邮件 (${aiScanMode === 'deep' ? '深度' : '轻度'}扫描)...` }]);
+      setToasts(prev => [...prev, {
+        id: Date.now().toString(), type: 'info',
+        message: `正在分析 ${toProcess.length} 封邮件 (${aiScanMode === 'deep' ? '深度' : '轻度'}扫描)...`,
+      }]);
 
-      // Use ai:summarize for now — structured batch IPC call with scanMode
-      const emailList = toProcess.map((m, i) =>
-        `${i + 1}. From: ${m.fromName} <${m.from}> | Subject: ${m.subject} | Snippet: ${m.snippet}`
-      ).join('\n');
+      // Build payload matching ai:classifyBatch IPC contract
+      const emailPayload = toProcess.map(m => ({
+        id: m.id,
+        subject: m.subject,
+        from: m.from,
+        from_name: m.fromName,
+        has_attachment: m.hasAttachments,
+        snippet: m.snippet,
+      }));
 
-      const response = await window.electronAPI.invoke('ai:summarize', emailList) as { success: boolean; content?: string; error?: string };
+      const response = await window.electronAPI.invoke('ai:classifyBatch', {
+        emails: emailPayload,
+        scanMode: aiScanMode,
+      }) as {
+        success: boolean;
+        results?: Array<{ id: string; category: string }>;
+        error?: string;
+      };
 
-      if (response.success && response.content) {
-        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'success', message: `AI 分析完成：${toProcess.length} 封邮件已分类` }]);
+      if (response.success && response.results && response.results.length > 0) {
+        // Write classification results back into mailList
+        const categoryMap = new Map(response.results.map(r => [r.id, r.category]));
+        setMailList(prev =>
+          prev.map(m => categoryMap.has(m.id) ? { ...m, category: categoryMap.get(m.id) } : m)
+        );
+        setToasts(prev => [...prev, {
+          id: Date.now().toString(), type: 'success',
+          message: `AI 分析完成：${response.results!.length} 封邮件已分类`,
+        }]);
       } else {
-        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: response.error || 'AI 分析失败' }]);
+        setToasts(prev => [...prev, {
+          id: Date.now().toString(), type: 'error',
+          message: response.error || 'AI 分析失败，请检查 API Key 和网络',
+        }]);
       }
     } catch (err) {
       console.error('[runBatchAnalysis]', err);
-      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: 'AI 分析异常，请查看控制台' }]);
+      setToasts(prev => [...prev, {
+        id: Date.now().toString(), type: 'error',
+        message: 'AI 分析异常，请查看控制台',
+      }]);
     } finally {
       if (aiLockTimer.current) clearTimeout(aiLockTimer.current);
       aiLockTimer.current = setTimeout(() => {
