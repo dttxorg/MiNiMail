@@ -28,6 +28,47 @@ function lookbackToMs(range: LookbackRange): number {
   return 30 * 24 * 60 * 60 * 1000;
 }
 
+/** Find all emails in the same thread as `target`, sorted oldest-first.
+ *  Uses In-Reply-To chains. Same-account only to avoid cross-account false matches. */
+function findThreadSiblings(
+  target: RendererMailSummary,
+  allMails: RendererMailSummary[]
+): RendererMailSummary[] {
+  if (!target.messageId && !target.inReplyTo) return [];
+
+  // Build a lookup by messageId (same account only)
+  const byMsgId = new Map<string, RendererMailSummary>();
+  for (const m of allMails) {
+    if (m.accountId === target.accountId && m.messageId) {
+      byMsgId.set(m.messageId, m);
+    }
+  }
+
+  // Walk up the inReplyTo chain to collect all ancestor message-IDs
+  const threadMsgIds = new Set<string>();
+  function collectChain(mail: RendererMailSummary, depth = 0): void {
+    if (depth > 50) return; // cycle guard
+    if (mail.messageId) threadMsgIds.add(mail.messageId);
+    if (mail.inReplyTo) {
+      threadMsgIds.add(mail.inReplyTo);
+      const parent = byMsgId.get(mail.inReplyTo);
+      if (parent && !threadMsgIds.has(parent.messageId ?? '')) {
+        collectChain(parent, depth + 1);
+      }
+    }
+  }
+  collectChain(target);
+
+  // Any mail in the same account that shares a message-ID or replies to one in the chain
+  return allMails.filter(m =>
+    m.id !== target.id &&
+    m.accountId === target.accountId &&
+    (
+      (m.messageId && threadMsgIds.has(m.messageId)) ||
+      (m.inReplyTo && threadMsgIds.has(m.inReplyTo))
+    )
+  ).sort((a, b) => a.date.getTime() - b.date.getTime());
+}
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -124,6 +165,7 @@ function App() {
   // ─── Multi-select ───
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
+  const [threadSiblings, setThreadSiblings] = useState<RendererMailSummary[]>([]);
 
   // ─── Context menu ───
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; emailId: string } | null>(null);
@@ -178,6 +220,7 @@ function App() {
   const handleViewEmail = (email: RendererMailSummary) => {
     setSelectedEmail(email);
     fetchMailDetail(email.accountId, email.uid, email.folder);
+    setThreadSiblings(findThreadSiblings(email, mailList));
     if (isMobile) setMobileView('detail');
   };
 
@@ -536,6 +579,7 @@ function App() {
           mailLoadingState={mailLoadingState}
           mailError={mailError}
           onRetry={() => selectedEmail && fetchMailDetail(selectedEmail.accountId, selectedEmail.uid, selectedEmail.folder)}
+          threadSiblings={threadSiblings}
         />
       </div>
 

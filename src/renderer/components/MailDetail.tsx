@@ -22,6 +22,7 @@ interface MailDetailProps {
   mailLoadingState?: MailLoadingState;
   mailError?: string | null;
   onRetry?: () => void;
+  threadSiblings?: RendererMailSummary[];
 }
 
 type AIFunction = 'translate' | 'summarize' | 'reply';
@@ -42,6 +43,7 @@ export function MailDetail({
   mailLoadingState = 'idle',
   mailError = null,
   onRetry,
+  threadSiblings = [],
 }: MailDetailProps) {
   const { translate, summarize, suggestReply, loading: aiApiLoading } = useAI();
   const [isStarred, setIsStarred] = useState(false);
@@ -456,6 +458,15 @@ export function MailDetail({
           </div>
         )}
 
+        {/* ── Thread: historical messages (collapsed) above current ── */}
+        {threadSiblings.length > 0 && (
+          <div className="mb-3">
+            {threadSiblings.map(sibling => (
+              <ThreadMessage key={`${sibling.accountId}:${sibling.uid}`} email={sibling} />
+            ))}
+          </div>
+        )}
+
         {/* ── Email Body ── */}
         <div className="rounded-xl p-4 text-[13px] leading-relaxed min-h-[100px]" style={{ backgroundColor: '#282A2E', color: '#D1D1D6', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
           {isBodyLoading ? (
@@ -507,4 +518,98 @@ function formatRelativeTime(date: Date): string {
   if (diffHours < 24) return `${diffHours}小时前`;
   if (diffDays < 7) return `${diffDays}天前`;
   return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+}
+
+interface ThreadMessageProps {
+  email: RendererMailSummary;
+}
+
+function ThreadMessage({ email }: ThreadMessageProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState<RendererMailDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleToggle = async () => {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    if (nextExpanded && !detail && !loading) {
+      setLoading(true);
+      try {
+        const res = await window.electronAPI.invoke(
+          'mail:fetchFull',
+          email.accountId,
+          email.uid,
+          email.folder
+        ) as { success: boolean; data?: RendererMailDetail };
+        if (res.success && res.data) setDetail(res.data);
+      } catch (err) {
+        console.error('[ThreadMessage] fetchFull failed:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const bodyHtml = detail?.bodyHtml;
+  const bodyText = detail?.bodyText;
+
+  return (
+    <div className="mb-2 rounded-xl overflow-hidden" style={{ backgroundColor: '#282A2E' }}>
+      {/* Header row — always visible */}
+      <button
+        onClick={handleToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+        style={{ color: '#D1D1D6' }}
+        onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#3a3a3d'; }}
+        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+      >
+        <SenderAvatar name={email.fromName || email.from} size={22} />
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          <span className="text-[12px] font-medium truncate">{email.fromName || email.from}</span>
+          {email.to && (
+            <span className="text-[11px] truncate" style={{ color: '#636366' }}>
+              → {email.to.split(',')[0]}
+            </span>
+          )}
+        </div>
+        <span className="text-[11px] flex-shrink-0" style={{ color: '#636366' }}>
+          {formatRelativeTime(email.date)}
+        </span>
+        <span className="text-[10px] flex-shrink-0 ml-1" style={{ color: '#636366' }}>
+          {expanded ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {/* Body — only when expanded */}
+      {expanded && (
+        <div
+          className="px-3 pb-3 text-[12px] leading-relaxed"
+          style={{ borderTop: '1px solid #3a3a3d', color: '#D1D1D6', paddingTop: 8 }}
+        >
+          {loading ? (
+            <div className="flex items-center gap-2 py-3" style={{ color: '#636366' }}>
+              <span className="w-3.5 h-3.5 animate-spin" style={{ display: 'flex' }}>
+                {Icons.LoadingSpinner}
+              </span>
+              <span>加载中...</span>
+            </div>
+          ) : bodyHtml ? (
+            <div
+              dangerouslySetInnerHTML={{
+                __html: DOMPurify.sanitize(bodyHtml, {
+                  ALLOWED_TAGS: ['p','br','b','i','u','strong','em','a','ul','ol','li','h1','h2','h3','h4','h5','h6','blockquote','span','div','table','thead','tbody','tr','th','td','img','hr','pre','code'],
+                  ALLOWED_ATTR: ['href','src','alt','title','style','class','target'],
+                  ALLOW_DATA_ATTR: false,
+                }),
+              }}
+            />
+          ) : bodyText ? (
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{bodyText}</pre>
+          ) : (
+            <pre style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{email.snippet || '（无内容）'}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
