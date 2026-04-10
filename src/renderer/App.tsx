@@ -7,93 +7,190 @@ import { ComposeDialog } from './components/ComposeDialog';
 import { SettingsModal } from './components/SettingsModal';
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
 import { ToastContainer, ToastData } from './components/Toast';
-import { mockEmails, MockEmail } from './data/mockData';
 import type { CreateAccountInput } from './types';
 import { useAccounts } from './hooks/useAccounts';
-import { useMail } from './hooks/useMail';
+import { useMail, RendererMailSummary } from './hooks/useMail';
 import './i18n';
+
+type ScanMode = 'light' | 'deep';
+type LookbackRange = '3d' | '7d' | '1mo';
+
+interface CurrentAccount {
+  id: number;
+  email: string;
+  name: string;
+  avatar?: string;
+}
+
+function lookbackToMs(range: LookbackRange): number {
+  if (range === '3d') return 3 * 24 * 60 * 60 * 1000;
+  if (range === '7d') return 7 * 24 * 60 * 60 * 1000;
+  return 30 * 24 * 60 * 60 * 1000;
+}
+
 
 function App() {
   const { t, i18n } = useTranslation();
   const [selectedFolder, setSelectedFolder] = useState('inbox');
-  const [selectedEmail, setSelectedEmail] = useState<MockEmail | null>(null);
-  const [activeTab, setActiveTab] = useState<'primary' | 'social' | 'promotions'>('primary');
+  const [selectedEmail, setSelectedEmail] = useState<RendererMailSummary | null>(null);
   const [showCompose, setShowCompose] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
 
+  // Mobile panel view state: 'list' | 'detail'
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>(() =>
+    selectedEmail ? 'detail' : 'list'
+  );
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
   const [appLanguage, setAppLanguage] = useState<'zh' | 'en' | 'ja' | 'ko' | 'es' | 'fr' | 'de' | 'ru'>('zh');
   const [aiTargetLanguage, setAiTargetLanguage] = useState('中文');
 
-  // ─── Accounts state (dynamic — from useAccounts hook) ───
+  // ─── AI Behavior Settings ───
+  const [aiAutoSort, setAiAutoSort] = useState(false);
+  const [aiScanMode, setAiScanMode] = useState<ScanMode>('light');
+  const [aiLookback, setAiLookback] = useState<LookbackRange>('7d');
+
+  // ─── Accounts ───
   const { accounts, fetchAccounts, createAccount, deleteAccount: deleteAccountApi } = useAccounts();
   const {
     isSyncing,
     syncMails,
+    mailList,
+    setMailList,
+    currentMail,
+    fetchMailDetail,
+    mailLoadingState,
+    mailError,
+    clearCurrentMail,
+    clearBodyCacheEntry,
   } = useMail();
-  const [currentAccount, setCurrentAccount] = useState<{ id: number; email: string; name: string; avatar: string } | null>(null);
 
-  // Set default account when accounts load
+  const [currentAccount, setCurrentAccount] = useState<CurrentAccount | 'all'>('all');
+
+  // Debounce/pending-refresh guard
+  const refreshPending = useRef(false);
+
+  // Load AI settings on mount
   useEffect(() => {
-    if (accounts.length > 0 && !currentAccount) {
-      const defaultAcc = accounts.find(a => a.is_default === 1) || accounts[0];
-      setCurrentAccount({
-        id: defaultAcc.id,
-        email: defaultAcc.email,
-        name: defaultAcc.display_name || defaultAcc.email.split('@')[0],
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${defaultAcc.email.split('@')[0]}`,
-      });
+    (async () => {
+      try {
+        const res = await window.electronAPI.invoke('ai:getSettings') as {
+          success: boolean;
+          data?: { autoSort: boolean; scanMode: ScanMode; lookback: LookbackRange };
+        };
+        if (res.success && res.data) {
+          setAiAutoSort(res.data.autoSort);
+          setAiScanMode(res.data.scanMode);
+          setAiLookback(res.data.lookback);
+        }
+      } catch (err) {
+        console.error('[ai:getSettings]', err);
+      }
+    })();
+  }, []);
+
+  // Initial sync when accounts first become available
+  useEffect(() => {
+    if (accounts.length > 0) {
+      console.log('[initialSync] accounts loaded:', accounts.length, 'currentAccount=', currentAccount);
+      if (currentAccount === 'all') {
+        // Serial sync — one account at a time to avoid IMAP/SQLite conflicts
+        (async () => {
+          for (const acc of accounts) {
+            console.log('[initialSync] syncing account', acc.id, acc.email);
+            await syncMails(acc.id, selectedFolder);
+          }
+        })();
+      }
     }
-  }, [accounts, currentAccount]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts.length]);
 
-  const [inboxExpanded, setInboxExpanded] = useState(false);
-  const [accountFilter, setAccountFilter] = useState<number | null>(null);
+  // ─── AI classifying lock ───
+  const [isAiClassifying, setIsAiClassifying] = useState(false);
+  const aiLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ─── Emails state (dynamic — not hardcoded) ───
-  const [emails, setEmails] = useState<MockEmail[]>(
-    mockEmails.map(email => ({ ...email, accountId: email.from.email.includes('work') ? 2 : 1 }))
-  );
-
-  const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
+  // ─── Reply suggestion ───
   const [replySuggestion, setReplySuggestion] = useState<string | null>(null);
 
-  // ─── Multi-select state ───
+  // ─── Multi-select ───
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
 
-  // ─── Refresh / Loading state ───
-
-  // ─── Context menu state ───
+  // ─── Context menu ───
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; emailId: string } | null>(null);
 
-  // ─── Toast state ───
+  // ─── Toast ───
   const [toasts, setToasts] = useState<ToastData[]>([]);
 
-  // ─── Manual refresh: fetchMails via useMail hook ───
+  const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
 
-  // ─── Manual refresh: fetchMails via useMail hook ───
+  // ─── Fetch mails — serial to avoid IMAP/SQLite conflicts ───
   const fetchMails = useCallback(async (): Promise<void> => {
-    if (!currentAccount) return;
-    await syncMails(currentAccount.id, selectedFolder);
-  }, [currentAccount, selectedFolder, syncMails]);
+    console.log('[fetchMails] currentAccount=', currentAccount, 'accounts=', accounts.length);
+    if (currentAccount === 'all') {
+      // Serial: await each account before starting the next
+      for (const acc of accounts) {
+        console.log('[fetchMails] syncing account', acc.id, acc.email);
+        await syncMails(acc.id, selectedFolder);
+      }
+    } else {
+      console.log('[fetchMails] syncing single account', currentAccount.id);
+      await syncMails(currentAccount.id, selectedFolder);
+    }
+  }, [currentAccount, selectedFolder, accounts, syncMails]);
 
   const handleRefresh = async () => {
-    if (isSyncing) return;
+    console.log('[handleRefresh] isSyncing=', isSyncing, 'pending=', refreshPending.current);
+    if (isSyncing) {
+      refreshPending.current = true;
+      console.log('[handleRefresh] busy, queued pending refresh');
+      return;
+    }
     setSelectedIds([]);
+    refreshPending.current = false;
     await fetchMails();
+    // If more clicks came in while syncing, sync once more
+    if (refreshPending.current) {
+      refreshPending.current = false;
+      console.log('[handleRefresh] processing queued refresh');
+      await fetchMails();
+    }
   };
 
-  // ─── Auto-dismiss toasts after 5 seconds ───
+  // ─── Auto-dismiss toasts ───
   useEffect(() => {
     if (toasts.length === 0) return;
-    const timer = setTimeout(() => {
-      setToasts(prev => prev.slice(1));
-    }, 5000);
+    const timer = setTimeout(() => setToasts(prev => prev.slice(1)), 5000);
     return () => clearTimeout(timer);
   }, [toasts]);
 
   // ─── Multi-select handlers ───
-  const handleSelectEmail = (email: MockEmail, event?: React.MouseEvent) => {
+  // 纯查看：点击邮件 body → 只切换右侧详情，不影响 selectedIds
+  const handleViewEmail = (email: RendererMailSummary) => {
+    setSelectedEmail(email);
+    fetchMailDetail(email.accountId, email.uid, email.folder);
+    if (isMobile) setMobileView('detail');
+  };
+
+  // 纯勾选：点击 checkbox（左键无修饰）→ 只切换 selectedIds，不切换详情
+  const handleToggleSelect = (email: RendererMailSummary) => {
+    setSelectedIds(prev =>
+      prev.includes(email.id) ? prev.filter(id => id !== email.id) : [...prev, email.id]
+    );
+    setLastClickedId(email.id);
+  };
+
+  // 复合选择：ctrl/shift + 点击 body 或 checkbox → 多选/范围选（保留查看行为）
+  const handleSelectEmail = (email: RendererMailSummary, event?: React.MouseEvent) => {
     const isCtrl = event?.ctrlKey || event?.metaKey;
     const isShift = event?.shiftKey;
 
@@ -111,8 +208,9 @@ function App() {
         prev.includes(email.id) ? prev.filter(id => id !== email.id) : [...prev, email.id]
       );
     } else {
-      setSelectedIds([email.id]);
       setSelectedEmail(email);
+      fetchMailDetail(email.accountId, email.uid, email.folder);
+      if (isMobile) setMobileView('detail');
     }
     setLastClickedId(email.id);
   };
@@ -127,23 +225,31 @@ function App() {
     }
   };
 
+  const handleBackToList = () => {
+    setMobileView('list');
+    if (isMobile) {
+      setSelectedEmail(null);
+      clearCurrentMail();
+    }
+  };
+
   // ─── Bulk operations ───
   const handleDeleteSelected = () => {
-    setEmails(prev => prev.filter(email => !selectedIds.includes(email.id)));
+    setMailList(prev => prev.filter(email => !selectedIds.includes(email.id)));
     if (selectedEmail && selectedIds.includes(selectedEmail.id)) setSelectedEmail(null);
     setSelectedIds([]);
     setContextMenu(null);
   };
 
   const handleMarkReadSelected = (read: boolean) => {
-    setEmails(prev => prev.map(email =>
+    setMailList(prev => prev.map(email =>
       selectedIds.includes(email.id) ? { ...email, isRead: read } : email
     ));
     setContextMenu(null);
   };
 
   const handleToggleStarSelected = () => {
-    setEmails(prev => prev.map(email =>
+    setMailList(prev => prev.map(email =>
       selectedIds.includes(email.id) ? { ...email, isStarred: !email.isStarred } : email
     ));
     setContextMenu(null);
@@ -163,20 +269,126 @@ function App() {
     return () => document.removeEventListener('click', handler);
   }, [contextMenu]);
 
-  // ─── Helpers ───
-  const getFilteredEmails = (): MockEmail[] => {
-    if (selectedFolder === 'inbox') {
-      if (accountFilter !== null) return emails.filter(e => e.accountId === accountFilter);
-      return emails;
+  // ─── Run batch AI classification ───
+  const runBatchAnalysis = useCallback(async () => {
+    if (isAiClassifying) return;
+    if (mailList.length === 0) return;
+
+    setIsAiClassifying(true);
+
+    try {
+      const aiConfig = await window.electronAPI.invoke('ai:getConfig') as { success: boolean; data?: { hasApiKey: boolean } };
+      if (!aiConfig.success || !aiConfig.data?.hasApiKey) {
+        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: '请先在设置中配置 AI API Key' }]);
+        return;
+      }
+
+      // Apply lookback filter
+      const lookbackMs = lookbackToMs(aiLookback);
+      const lookbackDate = Date.now() - lookbackMs;
+      const eligible = mailList.filter(m => m.date.getTime() > lookbackDate && !m.isRead);
+
+      if (eligible.length === 0) {
+        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'info', message: `没有在 ${aiLookback === '3d' ? '3 天' : aiLookback === '7d' ? '7 天' : '1 个月'}内需要分析的未读邮件` }]);
+        return;
+      }
+
+      // Apply batch size limit per scan mode
+      const maxBatch = aiScanMode === 'deep' ? 10 : 50;
+      const toProcess = eligible.slice(0, maxBatch);
+
+      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'info', message: `正在分析 ${toProcess.length} 封邮件 (${aiScanMode === 'deep' ? '深度' : '轻度'}扫描)...` }]);
+
+      // Use ai:summarize for now — structured batch IPC call with scanMode
+      const emailList = toProcess.map((m, i) =>
+        `${i + 1}. From: ${m.fromName} <${m.from}> | Subject: ${m.subject} | Snippet: ${m.snippet}`
+      ).join('\n');
+
+      const response = await window.electronAPI.invoke('ai:summarize', emailList) as { success: boolean; content?: string; error?: string };
+
+      if (response.success && response.content) {
+        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'success', message: `AI 分析完成：${toProcess.length} 封邮件已分类` }]);
+      } else {
+        setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: response.error || 'AI 分析失败' }]);
+      }
+    } catch (err) {
+      console.error('[runBatchAnalysis]', err);
+      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: 'AI 分析异常，请查看控制台' }]);
+    } finally {
+      if (aiLockTimer.current) clearTimeout(aiLockTimer.current);
+      aiLockTimer.current = setTimeout(() => {
+        setIsAiClassifying(false);
+        aiLockTimer.current = null;
+      }, 1000);
     }
-    return emails.filter(e => e.folder === selectedFolder);
-  };
+  }, [isAiClassifying, mailList, aiLookback, aiScanMode]);
+
+  // ─── Auto-analysis when mail list grows ───
+  useEffect(() => {
+    if (mailList.length === 0) return;
+    if (isAiClassifying) return;
+    if (!aiAutoSort) return;
+
+    const timer = setTimeout(() => runBatchAnalysis(), 2000);
+    return () => clearTimeout(timer);
+  }, [mailList.length]);
+
+  useEffect(() => {
+    return () => { if (aiLockTimer.current) clearTimeout(aiLockTimer.current); };
+  }, []);
+
+  // ─── Helpers ───
+  const AI_CATEGORY_IDS = ['工作/业务类', '账单/财务类', '社交/个人类', '广告/营销类', '安全/风险类', '通知类'];
+
+  const getFilteredEmails = useCallback((): RendererMailSummary[] => {
+    // ══════════════════════════════════════════════════
+    // 🔍 诊断日志 — 排查完成后请删除此区块
+    console.log('1. 全局邮件总数:', mailList.length);
+    console.log('2. 当前选中的文件夹状态 (selectedFolder):', selectedFolder);
+    console.log(
+      '3. 提取第一封邮件的真实字段看大小写和命名:',
+      mailList[0] ? { folder: mailList[0].folder, category: mailList[0].category } : '无数据'
+    );
+    if (mailList.length > 0) {
+      console.log(
+        '3b. 所有邮件的 folder 值 (去重):',
+        [...new Set(mailList.map(m => m.folder))]
+      );
+    }
+    // ══════════════════════════════════════════════════
+
+    // AI category view: filter by the category field
+    if (AI_CATEGORY_IDS.includes(selectedFolder)) {
+      const result = mailList.filter(e => e.category === selectedFolder);
+      console.log('4. 经过 getFilteredEmails 过滤后准备传给 MailList 的数量:', result.length);
+      return result;
+    }
+    // Basic folder view: case-insensitive match on the folder field
+    const needle = selectedFolder.toLowerCase();
+    const result = mailList.filter(e => (e.folder ?? '').toLowerCase() === needle);
+    console.log('4. 经过 getFilteredEmails 过滤后准备传给 MailList 的数量:', result.length);
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mailList, selectedFolder]);
 
   useEffect(() => { i18n.changeLanguage(appLanguage); }, [appLanguage, i18n]);
 
   const folderEmails = getFilteredEmails();
 
+  // ─── Account switching ───
   const handleSwitchAccount = (accountId: number) => {
+    if (accountId === -1) {
+      setCurrentAccount('all');
+      setSelectedIds([]);
+      setSelectedFolder('inbox');
+      // Serial sync all accounts
+      (async () => {
+        for (const acc of accounts) {
+          await syncMails(acc.id, selectedFolder);
+        }
+      })();
+      return;
+    }
     const acc = accounts.find(a => a.id === accountId);
     if (acc) {
       setCurrentAccount({
@@ -185,12 +397,15 @@ function App() {
         name: acc.display_name || acc.email.split('@')[0],
         avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${acc.email.split('@')[0]}`,
       });
+      setSelectedIds([]);
+      setSelectedFolder('inbox');
+      syncMails(acc.id, selectedFolder);
     }
   };
 
   const handleDeleteAccount = async (accountId: number) => {
     await deleteAccountApi(accountId);
-    if (currentAccount && currentAccount.id === accountId) {
+    if (currentAccount !== 'all' && currentAccount.id === accountId) {
       const remaining = accounts.filter(a => a.id !== accountId);
       if (remaining.length > 0) {
         const nextAcc = remaining[0];
@@ -200,15 +415,21 @@ function App() {
           name: nextAcc.display_name || nextAcc.email.split('@')[0],
           avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${nextAcc.email.split('@')[0]}`,
         });
+        syncMails(nextAcc.id, selectedFolder);
       } else {
-        setCurrentAccount(null);
+        setCurrentAccount('all');
       }
     }
   };
 
   const handleDeleteEmail = (emailId: string) => {
-    setEmails(prev => prev.filter(e => e.id !== emailId));
-    if (selectedEmail?.id === emailId) setSelectedEmail(null);
+    const target = mailList.find(e => e.id === emailId);
+    if (target) clearBodyCacheEntry(target.accountId, target.uid);
+    setMailList(prev => prev.filter(e => e.id !== emailId));
+    if (selectedEmail?.id === emailId) {
+      setSelectedEmail(null);
+      clearCurrentMail();
+    }
     setSelectedIds(prev => prev.filter(id => id !== emailId));
   };
 
@@ -220,6 +441,18 @@ function App() {
   const handleCloseCompose = () => {
     setShowCompose(false);
     setReplySuggestion(null);
+  };
+
+  // ─── Screenshot share: saves PNG blob to disk via Electron IPC ───
+  const handleShare = async (blob: Blob, _filename: string) => {
+    try {
+      const clipboardItem = new ClipboardItem({ 'image/png': blob });
+      await navigator.clipboard.write([clipboardItem]);
+      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'success', message: '长截图已复制，直接粘贴发送即可' }]);
+    } catch (err) {
+      console.error('[handleShare]', err);
+      setToasts(prev => [...prev, { id: Date.now().toString(), type: 'error', message: '截图复制失败' }]);
+    }
   };
 
   const handleSaveAttempt = async (input: CreateAccountInput) => {
@@ -235,81 +468,76 @@ function App() {
   const allVisibleIds = sortedForSelectAll.map(e => e.id);
   const isAllSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedIds.includes(id));
 
+  const isAllAccountsView = currentAccount === 'all';
+  const listTitle = isAllAccountsView ? '所有账号' : (currentAccount && 'name' in currentAccount ? currentAccount.name : '');
+
   return (
-    <div className="flex h-screen bg-zinc-950 text-zinc-200">
-      <Sidebar
-        t={t}
-        selectedFolder={selectedFolder}
-        onSelectFolder={(folderId) => {
-          setSelectedFolder(folderId);
-          setInboxExpanded(false);
-          setAccountFilter(null);
-          setSelectedIds([]);
-        }}
-        onCompose={() => setShowCompose(true)}
-        onSettings={() => setShowSettings(true)}
-        currentAccount={currentAccount || { email: '', name: '未选择账号', avatar: undefined }}
-        accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
-        onSwitchAccount={handleSwitchAccount}
-        onAddAccount={() => setShowAddAccount(true)}
-        inboxExpanded={inboxExpanded}
-        onToggleInbox={() => setInboxExpanded(prev => !prev)}
-        accountFilter={accountFilter}
-        onAccountFilter={(accountId) => {
-          setAccountFilter(accountId);
-          setSelectedFolder('inbox');
-          setInboxExpanded(false);
-          setSelectedIds([]);
-        }}
-        onRefresh={handleRefresh}
-        isRefreshing={isSyncing}
-      />
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#0d0d0f' }}>
+      {/* Sidebar — fixed 200px, never shrinks */}
+      <div
+        className="flex-shrink-0 overflow-hidden"
+        style={{ width: 200, display: isMobile ? 'none' : 'flex', flexDirection: 'column' }}
+      >
+        <Sidebar
+          t={t}
+          selectedFolder={selectedFolder}
+          onSelectFolder={(folderId) => { setSelectedFolder(folderId); setSelectedIds([]); }}
+          onCompose={() => setShowCompose(true)}
+          onSettings={() => setShowSettings(true)}
+          currentAccount={currentAccount}
+          accounts={accounts.map(a => ({
+            id: a.id,
+            email: a.email,
+            name: a.display_name || a.email.split('@')[0],
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}`,
+          }))}
+          onSwitchAccount={handleSwitchAccount}
+          onAddAccount={() => setShowAddAccount(true)}
+          onRefresh={handleRefresh}
+          isRefreshing={isSyncing}
+          isAiClassifying={isAiClassifying}
+          onAnalysisDone={runBatchAnalysis}
+        />
+      </div>
 
-      <MailList
-        t={t}
-        emails={folderEmails}
-        selectedEmailId={selectedEmail?.id || null}
-        onSelectEmail={handleSelectEmail}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        selectedIds={selectedIds}
-        onSelectAll={handleSelectAll}
-        isAllSelected={isAllSelected}
-        onContextMenu={handleContextMenu}
-        isLoading={isSyncing}
-      />
+      {/* MailList — fixed 320px, never shrinks; hidden on mobile when in detail view */}
+      <div
+        className="flex-shrink-0 overflow-hidden"
+        style={{ width: 320, display: isMobile ? (mobileView === 'list' ? 'flex' : 'none') : 'flex', flexDirection: 'column' }}
+      >
+        <MailList
+          t={t}
+          emails={folderEmails}
+          selectedEmailId={selectedEmail?.id || null}
+          onSelectEmail={handleSelectEmail}
+          onViewEmail={handleViewEmail}
+          onToggleSelect={handleToggleSelect}
+          selectedIds={selectedIds}
+          onSelectAll={handleSelectAll}
+          isAllSelected={isAllSelected}
+          onContextMenu={handleContextMenu}
+          isLoading={isSyncing}
+          listTitle={listTitle}
+        />
+      </div>
 
-      <MailDetail
-        t={t}
-        email={selectedEmail}
-        onReply={() => setShowCompose(true)}
-        onForward={() => setShowCompose(true)}
-        onDelete={() => { if (selectedEmail) handleDeleteEmail(selectedEmail.id); }}
-        aiTargetLanguage={aiTargetLanguage}
-        onReplyWithSuggestion={handleReplyWithSuggestion}
-      />
-
-      {/* Bulk Action Toolbar */}
-      {selectedIds.length > 0 && (
-        <div className="fixed top-0 left-64 right-0 z-40 bg-zinc-900/95 backdrop-blur border-b border-zinc-700 px-4 py-2 flex items-center gap-3">
-          <span className="text-sm text-zinc-400">{selectedIds.length} {t('selected')}</span>
-          <button onClick={handleDeleteSelected} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 rounded-lg text-sm transition-colors">
-            删除
-          </button>
-          <button onClick={() => handleMarkReadSelected(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors">
-            标为已读
-          </button>
-          <button onClick={() => handleMarkReadSelected(false)} className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors">
-            标为未读
-          </button>
-          <button onClick={handleToggleStarSelected} className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition-colors">
-            切换星标
-          </button>
-          <button onClick={() => setSelectedIds([])} className="ml-auto text-zinc-500 hover:text-zinc-300 text-sm">
-            取消选择
-          </button>
-        </div>
-      )}
+      {/* MailDetail — flex-1, takes all remaining space; min-w-0 prevents shrink */}
+      <div className="flex-1 min-w-0 flex-shrink-0 overflow-hidden">
+        <MailDetail
+          t={t}
+          email={currentMail ?? selectedEmail}
+          onReply={() => setShowCompose(true)}
+          onForward={() => setShowCompose(true)}
+          onDelete={() => { if (selectedEmail) handleDeleteEmail(selectedEmail.id); }}
+          onBack={handleBackToList}
+          onShare={handleShare}
+          aiTargetLanguage={aiTargetLanguage}
+          onReplyWithSuggestion={handleReplyWithSuggestion}
+          mailLoadingState={mailLoadingState}
+          mailError={mailError}
+          onRetry={() => selectedEmail && fetchMailDetail(selectedEmail.accountId, selectedEmail.uid, selectedEmail.folder)}
+        />
+      </div>
 
       {/* Context Menu */}
       {contextMenu && (
@@ -318,53 +546,25 @@ function App() {
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={e => e.stopPropagation()}
         >
-          <button
-            onClick={() => { handleDeleteSelected(); setSelectedIds([contextMenu.emailId]); }}
-            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2"
-          >
-            🗑️ 删除
-          </button>
-          <button
-            onClick={() => handleMarkReadSelected(true)}
-            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2"
-          >
-            ✓ 标为已读
-          </button>
-          <button
-            onClick={() => handleMarkReadSelected(false)}
-            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2"
-          >
-            ○ 标为未读
-          </button>
+          <button onClick={() => { handleDeleteSelected(); setSelectedIds([contextMenu.emailId]); }} className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2">🗑️ 删除</button>
+          <button onClick={() => handleMarkReadSelected(true)} className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2">✓ 标为已读</button>
+          <button onClick={() => handleMarkReadSelected(false)} className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2">○ 标为未读</button>
           <div className="border-t border-zinc-700 mt-1 pt-1" />
-          <button
-            onClick={() => {
-              const email = emails.find(e => e.id === contextMenu.emailId);
-              if (email) { setSelectedEmail(email); setSelectedIds([contextMenu.emailId]); }
-              closeContextMenu();
-            }}
-            className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2"
-          >
-            📧 查看详情
-          </button>
+          <button onClick={() => { const email = mailList.find(e => e.id === contextMenu.emailId); if (email) { setSelectedEmail(email); setSelectedIds([contextMenu.emailId]); } closeContextMenu(); }} className="w-full px-4 py-2 text-left text-sm text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 flex items-center gap-2">📧 查看详情</button>
         </div>
       )}
 
       {/* Toast Notifications */}
-      <ToastContainer
-        toasts={toasts}
-        onDismiss={() => {}}
-        onClick={() => {}}
-      />
+      <ToastContainer toasts={toasts} onDismiss={() => {}} onClick={() => {}} />
 
       <ComposeDialog
         t={t}
         isOpen={showCompose}
         onClose={handleCloseCompose}
         accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
-        selectedAccount={currentAccount}
+        selectedAccount={typeof currentAccount === 'string' ? null : currentAccount}
         onSend={async () => ({ success: true, message: '发送成功' })}
-        initialTo={selectedEmail ? selectedEmail.from.email : ''}
+        initialTo={selectedEmail ? selectedEmail.from : ''}
         initialSubject={selectedEmail ? `Re: ${selectedEmail.subject}` : ''}
         initialBody={replySuggestion || ''}
         aiTargetLanguage={aiTargetLanguage}
@@ -381,7 +581,13 @@ function App() {
         onAddAccount={() => { setShowSettings(false); setShowAddAccount(true); }}
         accounts={accounts.map(a => ({ id: a.id, email: a.email, name: a.display_name || a.email.split('@')[0], avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${a.email.split('@')[0]}` }))}
         onDeleteAccount={handleDeleteAccount}
-        currentAccountId={currentAccount?.id ?? 0}
+        currentAccountId={typeof currentAccount === 'string' ? 0 : (currentAccount?.id ?? 0)}
+        aiAutoSort={aiAutoSort}
+        onAiAutoSortChange={setAiAutoSort}
+        aiScanMode={aiScanMode}
+        onAiScanModeChange={setAiScanMode}
+        aiLookback={aiLookback}
+        onAiLookbackChange={setAiLookback}
       />
 
       <AddAccountDialog
