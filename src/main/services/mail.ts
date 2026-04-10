@@ -16,6 +16,8 @@ export interface MailSummary {
   hasAttachments: boolean;
   isRead: boolean;
   isStarred: boolean;
+  messageId?: string;
+  inReplyTo?: string;
 }
 
 export interface MailDetail {
@@ -55,25 +57,42 @@ function parseAddress(addr: { name?: string; address?: string } | null): { name:
 }
 
 async function createClient(accountId: number): Promise<ImapFlow> {
+  console.log('[mail.createClient] ENTER accountId=', accountId);
   const account = getAccountById(accountId);
   if (!account) throw new Error('Account not found');
 
-  const credentials = getAccountCredentials(accountId);
+  let credentials = getAccountCredentials(accountId);
   if (!credentials) throw new Error('No credentials found');
 
+  // Auto-refresh OAuth tokens that expire within the next 5 minutes
+  if (account.auth_type === 'oauth' && credentials.oauth_expiry) {
+    const fiveMinMs = 5 * 60 * 1000;
+    if (Date.now() > credentials.oauth_expiry - fiveMinMs) {
+      log.info(`[mail] Token expiring soon for account ${accountId}, refreshing…`);
+      const { refreshTokenForAccount } = await import('./oauth');
+      const refreshed = await refreshTokenForAccount(accountId);
+      if (refreshed) {
+        credentials = getAccountCredentials(accountId) ?? credentials;
+      }
+    }
+  }
+
+  const auth = account.auth_type === 'oauth' && credentials.oauth_token
+    ? { user: account.username, accessToken: credentials.oauth_token }
+    : { user: account.username, pass: credentials.password };
+
   const client = new ImapFlow({
-    host: account.imap_host,
-    port: account.imap_port,
-    secure: account.use_tls === 1,
-    auth: {
-      user: account.username,
-      pass: credentials.password,
-    },
-    logger: false,
+    host:              account.imap_host,
+    port:              account.imap_port,
+    secure:            account.use_tls === 1,
+    auth,
+    logger:            false,
     connectionTimeout: 15000,
   });
 
+  console.log('[mail.createClient] connecting to', `${account.imap_host}:${account.imap_port}`, account.auth_type);
   await client.connect();
+  console.log('[mail.createClient] connected OK');
   return client;
 }
 
@@ -111,11 +130,14 @@ export async function fetchMailList(
 ): Promise<MailSummary[]> {
   const { limit = 50, offset = 0 } = options;
 
+  console.log('[mail.fetchMailList] ENTER accountId=', accountId, 'folder=', folder);
   log.info(`[mail] Fetching mail list for account ${accountId} from ${folder}`);
 
   let client: ImapFlow | null = null;
   try {
+    console.log('[mail.fetchMailList] calling createClient...');
     client = await createClient(accountId);
+    console.log('[mail.fetchMailList] createClient returned, client=', !!client);
 
     // Open mailbox to access messages
     const lock = await client.getMailboxLock(folder);
@@ -163,6 +185,8 @@ export async function fetchMailList(
           hasAttachments: false,
           isRead: flags.includes('\\Seen'),
           isStarred: flags.includes('\\Flagged'),
+          messageId: msg.envelope?.messageId,
+          inReplyTo: msg.envelope?.inReplyTo,
         });
       }
 
@@ -195,14 +219,20 @@ export async function fetchMailDetail(
   try {
     client = await createClient(accountId);
 
-    const lock = await client.getMailboxLock(folder);
+    // Normalize folder: IMAP INBOX is case-insensitive per spec, but some
+    // servers (Dovecot, QQ Mail) are strict — always uppercase INBOX.
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    const lock = await client.getMailboxLock(imapFolder);
     try {
-      const msg = await client.fetchOne(messageUid, {
+      // CRITICAL: third argument { uid: true } tells ImapFlow to treat the
+      // first argument as a UID, NOT a sequence number.
+      // Without it, fetchOne(45) fetches the 45th message in sequence order,
+      // which is a completely different (or non-existent) message.
+      const msg = await client.fetchOne(String(messageUid), {
         envelope: true,
-        uid: true,
         flags: true,
         source: true,
-      });
+      }, { uid: true });
 
       if (!msg) return null;
 

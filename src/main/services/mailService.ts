@@ -20,6 +20,8 @@ export interface MailSummaryStored {
   folder: string;
   accountId: number;
   cachedAt: string;
+  messageId?: string;
+  inReplyTo?: string;
 }
 
 export interface SyncResult {
@@ -44,6 +46,18 @@ function getMailCacheDb() {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+function migrateMailCacheTable(db: any) {
+  // Idempotent: ALTER TABLE is a no-op if column already exists (caught and ignored)
+  const migrations = [
+    'ALTER TABLE mail_cache ADD COLUMN message_id TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN in_reply_to TEXT',
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch { /* column already exists — safe to ignore */ }
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function ensureMailCacheTable(db: any) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS mail_cache (
@@ -64,6 +78,7 @@ function ensureMailCacheTable(db: any) {
       UNIQUE(account_id, folder, uid)
     )
   `);
+  migrateMailCacheTable(db);
 }
 
 function getCachedUids(accountId: number, folder: string): Set<number> {
@@ -81,9 +96,13 @@ function upsertMailCache(mail: MailSummaryStored): void {
   ensureMailCacheTable(db);
   db.prepare(`
     INSERT OR REPLACE INTO mail_cache
-      (id, uid, "from", from_name, "to", subject, date, snippet, has_attachments, is_read, is_starred, folder, account_id, cached_at)
+      (id, uid, "from", from_name, "to", subject, date, snippet,
+       has_attachments, is_read, is_starred, folder, account_id, cached_at,
+       message_id, in_reply_to)
     VALUES
-      (@id, @uid, @from, @fromName, @to, @subject, @date, @snippet, @hasAttachments, @isRead, @isStarred, @folder, @accountId, @cachedAt)
+      (@id, @uid, @from, @fromName, @to, @subject, @date, @snippet,
+       @hasAttachments, @isRead, @isStarred, @folder, @accountId, @cachedAt,
+       @messageId, @inReplyTo)
   `).run({
     id: mail.id,
     uid: mail.uid,
@@ -99,6 +118,8 @@ function upsertMailCache(mail: MailSummaryStored): void {
     folder: mail.folder,
     accountId: mail.accountId,
     cachedAt: new Date().toISOString(),
+    messageId: mail.messageId ?? null,
+    inReplyTo: mail.inReplyTo ?? null,
   });
   db.close();
 }
@@ -108,7 +129,8 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
   ensureMailCacheTable(db);
   const rows = db.prepare(`
     SELECT id, uid, "from", from_name, "to", subject, date, snippet,
-           has_attachments, is_read, is_starred, folder, account_id, cached_at
+           has_attachments, is_read, is_starred, folder, account_id, cached_at,
+           message_id, in_reply_to
     FROM mail_cache
     WHERE account_id = ? AND folder = ?
     ORDER BY uid DESC
@@ -130,6 +152,8 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
     folder: row.folder as string,
     accountId: row.account_id as number,
     cachedAt: row.cached_at as string,
+    messageId: row.message_id as string | undefined,
+    inReplyTo: row.in_reply_to as string | undefined,
   }));
 }
 
@@ -153,6 +177,8 @@ async function fetchFromImap(accountId: number, folder: string): Promise<MailSum
     isStarred: m.isStarred,
     folder,
     accountId,
+    messageId: m.messageId,
+    inReplyTo: m.inReplyTo,
   }));
 }
 
@@ -168,27 +194,33 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export async function syncMails(accountId: number, folder: string = 'INBOX'): Promise<SyncResult> {
-  log.info(`[mailService] syncing mails for account ${accountId}, folder ${folder}`);
+  console.log('[mailService] syncMails ENTER accountId=', accountId, 'folder=', folder);
   const errors: string[] = [];
 
   try {
     // Step 1: Fetch from IMAP (real connection via mail.ts → imap-client)
     let remoteMails: MailSummary[] = [];
     try {
+      console.log('[mailService] Step1: calling fetchFromImap for accountId=', accountId);
       remoteMails = await withTimeout(fetchFromImap(accountId, folder), 15000);
+      console.log('[mailService] Step1: fetchFromImap SUCCESS, got', remoteMails.length, 'mails');
     } catch (err) {
-      const msg = (err as Error).message;
-      if (msg.includes('Timeout') || msg.includes('timeout')) {
+      const e = err as Error;
+      console.error('[mailService] Step1: fetchFromImap FAILED:', e.message, '\n', e.stack);
+      if (e.message.includes('Timeout') || e.message.includes('timeout')) {
         throw new Error('连接超时，请检查网络后重试');
       }
-      throw new Error(msg);
+      throw new Error(e.message);
     }
 
     // Step 2: Get locally cached UIDs for incremental sync
     const cachedUids = getCachedUids(accountId, folder);
+    console.log('[mailService] Step2: cached UIDs count=', cachedUids.size);
+
     const newMails: MailSummary[] = [];
 
     // Step 3: Store new mails to SQLite cache
+    console.log('[mailService] Step3: upserting', remoteMails.length, 'mails to SQLite...');
     for (const mail of remoteMails) {
       if (!cachedUids.has(mail.uid)) {
         upsertMailCache({
@@ -198,15 +230,19 @@ export async function syncMails(accountId: number, folder: string = 'INBOX'): Pr
         newMails.push(mail);
       }
     }
+    console.log('[mailService] Step3: SQLite write done. New mails:', newMails.length, '/ Total fetched:', remoteMails.length);
 
     // Step 4: Notify for new mails
     if (newMails.length > 0) {
       triggerNativeNotification(newMails[0] as MailSummary & { accountId: number; folder: string });
     }
 
+    console.log('[mailService] sync complete: newMails=', newMails.length, 'totalCached=', remoteMails.length);
     log.info(`[mailService] sync complete: ${newMails.length} new mails, ${remoteMails.length} total`);
     return { newMails, totalCached: remoteMails.length, errors };
   } catch (err) {
+    const e = err as Error;
+    console.error('[mailService] syncMails THREW exception:', e.message, '\n', e.stack);
     log.error('[mailService] sync failed:', err);
     throw err;
   }
@@ -259,6 +295,8 @@ export function loadCachedMails(accountId: number, folder: string = 'INBOX'): Ma
       isStarred: c.isStarred,
       folder: c.folder,
       accountId: c.accountId,
+      messageId: c.messageId,
+      inReplyTo: c.inReplyTo,
     } as MailSummary));
   } catch (err) {
     log.warn('[mailService] loadCachedMails failed:', err);
