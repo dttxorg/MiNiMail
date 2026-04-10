@@ -422,33 +422,13 @@ function App() {
   const AI_CATEGORY_IDS = ['工作/业务类', '账单/财务类', '社交/个人类', '广告/营销类', '安全/风险类', '通知类'];
 
   const getFilteredEmails = useCallback((): RendererMailSummary[] => {
-    // ══════════════════════════════════════════════════
-    // 🔍 诊断日志 — 排查完成后请删除此区块
-    console.log('1. 全局邮件总数:', mailList.length);
-    console.log('2. 当前选中的文件夹状态 (selectedFolder):', selectedFolder);
-    console.log(
-      '3. 提取第一封邮件的真实字段看大小写和命名:',
-      mailList[0] ? { folder: mailList[0].folder, category: mailList[0].category } : '无数据'
-    );
-    if (mailList.length > 0) {
-      console.log(
-        '3b. 所有邮件的 folder 值 (去重):',
-        [...new Set(mailList.map(m => m.folder))]
-      );
-    }
-    // ══════════════════════════════════════════════════
-
     // AI category view: filter by the category field
     if (AI_CATEGORY_IDS.includes(selectedFolder)) {
-      const result = mailList.filter(e => e.category === selectedFolder);
-      console.log('4. 经过 getFilteredEmails 过滤后准备传给 MailList 的数量:', result.length);
-      return result;
+      return mailList.filter(e => e.category === selectedFolder);
     }
     // Basic folder view: case-insensitive match on the folder field
     const needle = selectedFolder.toLowerCase();
-    const result = mailList.filter(e => (e.folder ?? '').toLowerCase() === needle);
-    console.log('4. 经过 getFilteredEmails 过滤后准备传给 MailList 的数量:', result.length);
-    return result;
+    return mailList.filter(e => (e.folder ?? '').toLowerCase() === needle);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mailList, selectedFolder]);
 
