@@ -1,19 +1,29 @@
-import React, { useState } from 'react';
-import { Search, Star, Paperclip, Check, Loader2 } from 'lucide-react';
-import { MockEmail } from '../data/mockData';
+import React, { useState, useRef } from 'react';
+import { Search, Star, Paperclip, Check, X } from 'lucide-react';
+import { RendererMailSummary } from '../hooks/useMail';
+import { SenderAvatar } from './SenderAvatar';
+
+const CATEGORY_BADGES: Record<string, { label: string; emoji: string; bg: string }> = {
+  '工作/业务类': { label: '工作', emoji: '💼', bg: 'rgba(0,113,227,0.18)' },
+  '账单/财务类': { label: '账单', emoji: '💰', bg: 'rgba(255,159,10,0.18)' },
+  '广告/营销类': { label: '广告', emoji: '📢', bg: 'rgba(191,90,242,0.18)' },
+  '安全/风险类': { label: '风险', emoji: '🔒', bg: 'rgba(255,55,95,0.18)' },
+  '通知类':      { label: '通知', emoji: '🔔', bg: 'rgba(100,210,255,0.18)' },
+};
 
 interface MailListProps {
   t: (key: string) => string;
-  emails: MockEmail[];
+  emails: RendererMailSummary[];
   selectedEmailId: string | null;
-  onSelectEmail: (email: MockEmail, event?: React.MouseEvent) => void;
-  activeTab: 'primary' | 'social' | 'promotions';
-  onTabChange: (tab: 'primary' | 'social' | 'promotions') => void;
+  onSelectEmail: (email: RendererMailSummary, event?: React.MouseEvent) => void;
+  onViewEmail: (email: RendererMailSummary) => void;
+  onToggleSelect: (email: RendererMailSummary) => void;
   selectedIds: string[];
   onSelectAll: () => void;
   isAllSelected: boolean;
   onContextMenu: (emailId: string, x: number, y: number) => void;
   isLoading: boolean;
+  listTitle?: string;
 }
 
 function formatRelativeTime(date: Date): string {
@@ -22,7 +32,6 @@ function formatRelativeTime(date: Date): string {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-
   if (diffMins < 1) return '刚刚';
   if (diffMins < 60) return `${diffMins}分钟前`;
   if (diffHours < 24) return `${diffHours}小时前`;
@@ -38,7 +47,6 @@ function getTimeGroup(date: Date): TimeGroup {
   const yesterdayStart = new Date(todayStart.getTime() - 86400000);
   const weekStart = new Date(todayStart.getTime() - 7 * 86400000);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
   const d = date.getTime();
   if (d >= todayStart.getTime()) return 'today';
   if (d >= yesterdayStart.getTime()) return 'yesterday';
@@ -57,38 +65,17 @@ function getTimeGroupLabel(t: (key: string) => string, group: TimeGroup): string
   }
 }
 
-function getAvatarColor(name: string): string {
-  const colors = [
-    'bg-red-500',
-    'bg-orange-500',
-    'bg-amber-500',
-    'bg-emerald-500',
-    'bg-teal-500',
-    'bg-cyan-500',
-    'bg-blue-500',
-    'bg-indigo-500',
-    'bg-violet-500',
-    'bg-purple-500',
-    'bg-fuchsia-500',
-    'bg-pink-500',
-  ];
-  const index = name.charCodeAt(0) % colors.length;
-  return colors[index];
-}
 
 function SkeletonItem() {
   return (
-    <div className="p-4 border-b border-zinc-800 animate-pulse">
-      <div className="flex gap-3">
-        <div className="w-10 h-10 rounded-full bg-zinc-800 flex-shrink-0" />
-        <div className="flex-1 space-y-2">
-          <div className="flex justify-between">
-            <div className="h-3 w-24 bg-zinc-800 rounded" />
-            <div className="h-3 w-12 bg-zinc-800 rounded" />
-          </div>
-          <div className="h-3 w-full bg-zinc-800 rounded" />
-          <div className="h-3 w-3/4 bg-zinc-800 rounded" />
+    <div className="px-4 py-3 animate-pulse flex items-center gap-3">
+      <div className="w-7 h-7 rounded-full flex-shrink-0" style={{ backgroundColor: '#3a3a3d' }} />
+      <div className="flex-1 space-y-1.5">
+        <div className="flex justify-between">
+          <div className="h-2.5 w-20 rounded" style={{ backgroundColor: '#3a3a3d' }} />
+          <div className="h-2.5 w-10 rounded" style={{ backgroundColor: '#3a3a3d' }} />
         </div>
+        <div className="h-2 w-full rounded" style={{ backgroundColor: '#3a3a3d' }} />
       </div>
     </div>
   );
@@ -99,28 +86,32 @@ export function MailList({
   emails,
   selectedEmailId,
   onSelectEmail,
-  activeTab,
-  onTabChange,
+  onViewEmail,
+  onToggleSelect,
   selectedIds,
   onSelectAll,
   isAllSelected,
   onContextMenu,
   isLoading,
+  listTitle = '',
 }: MailListProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  const filteredEmails = emails.filter((email) => {
-    if (activeTab === 'primary') return email.category === 'primary' || !email.category;
-    if (activeTab === 'social') return email.category === 'social';
-    if (activeTab === 'promotions') return email.category === 'promotions';
-    return true;
-  });
+  const filteredEmails = emails;
 
-  // Sort descending (newest first) and group by time
-  const sortedEmails = [...filteredEmails].sort((a, b) => b.date.getTime() - a.date.getTime());
+  const searchedEmails = searchQuery.trim()
+    ? filteredEmails.filter(e =>
+        e.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (e.fromName || e.from).toLowerCase().includes(searchQuery.toLowerCase()) ||
+        e.snippet.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : filteredEmails;
 
-  // Build list with time group headers interspersed
-  type ListItem = { type: 'header'; group: TimeGroup; label: string } | { type: 'email'; email: MockEmail };
+  const sortedEmails = [...searchedEmails].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  type ListItem = { type: 'header'; group: TimeGroup; label: string } | { type: 'email'; email: RendererMailSummary };
 
   const listItems: ListItem[] = [];
   let currentGroup: TimeGroup | null = null;
@@ -133,188 +124,242 @@ export function MailList({
     listItems.push({ type: 'email', email });
   }
 
-  // AI classification placeholder - for future auto-categorization
-  const classifyEmail = (email: MockEmail): 'primary' | 'social' | 'promotions' => {
-    return 'primary';
-  };
+  const hasSelection = selectedIds.length > 0;
+
+  function openSearch() {
+    setSearchOpen(true);
+    setTimeout(() => searchRef.current?.focus(), 50);
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery('');
+    searchRef.current?.blur();
+  }
 
   return (
-    <div className="w-96 h-screen bg-zinc-900 border-r border-zinc-800 flex flex-col">
-      {/* Header: Search + Tabs - drag region */}
-      <div className="h-14 flex flex-col justify-center px-3 flex-shrink-0 [-webkit-app-region:drag]">
-        <div className="relative [-webkit-app-region:no-drag]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-          <input
-            type="text"
-            placeholder={t('searchEmails')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-100 text-sm placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex border-b border-zinc-800 [-webkit-app-region:no-drag]">
-        {(['primary', 'social', 'promotions'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
-            className={`flex-1 py-2.5 text-sm font-medium transition-colors relative ${
-              activeTab === tab
-                ? 'text-zinc-100'
-                : 'text-zinc-500 hover:text-zinc-300'
-            }`}
+    <div
+      className="h-screen flex flex-col"
+      style={{ backgroundColor: '#282A2E', width: 320, flexShrink: 0 }}
+    >
+      {/* Header: Dynamic Search */}
+      <div className="px-3 pt-3 pb-2 flex-shrink-0">
+        {searchOpen ? (
+          /* Expanded search */
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-xl"
+            style={{ backgroundColor: '#3a3a3d' }}
           >
-            {t(tab)}
-            {tab === 'primary' && emails.filter((e) => !e.isRead).length > 0 && (
-              <span className="ml-1 px-1.5 py-0.5 bg-blue-600 text-white text-xs rounded-full">
-                {emails.filter((e) => !e.isRead).length}
-              </span>
+            <Search className="w-4 h-4 flex-shrink-0" style={{ color: '#636366' }} />
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder={t('searchEmails')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="flex-1 text-sm text-white bg-transparent placeholder:text-[#636366] focus:outline-none"
+              style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+              onBlur={closeSearch}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" style={{ color: '#636366' }} />
+              </button>
             )}
-            {activeTab === tab && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500" />
-            )}
-          </button>
-        ))}
+            <button onClick={closeSearch} className="cursor-pointer ml-1">
+              <X className="w-4 h-4" style={{ color: '#636366' }} />
+            </button>
+          </div>
+        ) : (
+          /* Collapsed: show icon trigger */
+          <div className="flex justify-end">
+            <button
+              onClick={openSearch}
+              className="p-2 rounded-lg transition-colors cursor-pointer"
+              style={{ color: '#636366' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#3a3a3d'; e.currentTarget.style.color = '#a1a1a6'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#636366'; }}
+            >
+              <Search className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Select All Row */}
-      <div className="flex items-center px-4 py-2 border-b border-zinc-800 bg-zinc-900/80 gap-2">
-        <button
-          onClick={onSelectAll}
-          className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 transition-all ${
-            isAllSelected
-              ? 'bg-blue-600 border-blue-600'
-              : 'border-zinc-600 hover:border-zinc-400'
-          }`}
+      {/* Batch toolbar — only when items are selected */}
+      {hasSelection && (
+        <div
+          className="flex items-center px-4 py-2 gap-3 flex-shrink-0"
+          style={{ backgroundColor: '#1F2124', borderBottom: '1px solid #3a3a3d' }}
         >
-          {isAllSelected && <Check className="w-3.5 h-3.5 text-white" />}
-        </button>
-        <span className="text-xs text-zinc-500">
-          {isAllSelected ? t('selectAll') : `${t('selectAll')} (${sortedEmails.length})`}
-        </span>
-      </div>
+          <button
+            onClick={onSelectAll}
+            className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 transition-all cursor-pointer"
+            style={{
+              backgroundColor: isAllSelected ? '#0071e3' : 'transparent',
+              border: isAllSelected ? 'none' : '1.5px solid #636366',
+            }}
+          >
+            {isAllSelected && <Check className="w-3 h-3 text-white" />}
+          </button>
+          <span className="text-xs" style={{ color: '#a1a1a6' }}>
+            {selectedIds.length} 项已选中
+          </span>
+          <button
+            onClick={() => {}}
+            className="ml-auto text-xs px-3 py-1 rounded-md cursor-pointer transition-colors"
+            style={{ backgroundColor: '#3a3a3d', color: '#a1a1a6' }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#48484a'; }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = '#3a3a3d'; }}
+          >
+            批量操作 ▾
+          </button>
+        </div>
+      )}
 
       {/* Email List */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div>
-            {Array.from({ length: 5 }).map((_, i) => (
+            {Array.from({ length: 6 }).map((_, i) => (
               <SkeletonItem key={i} />
             ))}
           </div>
-        ) : sortedEmails.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-zinc-500">
-            <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mb-4">
-              <span className="text-3xl">📭</span>
-            </div>
-            <p className="text-sm">{t('noEmails')}</p>
+        ) : sortedEmails.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full" style={{ color: '#48484a' }}>
+            <span className="text-2xl mb-2">📭</span>
+            <p style={{ fontSize: 12, fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{t('noEmails')}</p>
           </div>
-        )}
-        {listItems.map((item, index) => {
-          if (item.type === 'header') {
+        ) : (
+          listItems.map((item, index) => {
+            if (item.type === 'header') {
+              return (
+                <div
+                  key={`header-${item.group}-${index}`}
+                  className="px-4 pt-4 pb-1.5 text-xs font-medium uppercase tracking-widest"
+                  style={{
+                    color: '#48484a',
+                    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                  }}
+                >
+                  {item.label}
+                </div>
+              );
+            }
+            const email = item.email;
+            const isSelected = selectedIds.includes(email.id);
+            const isActive = selectedEmailId === email.id;
+
             return (
               <div
-                key={`header-${item.group}-${index}`}
-                className="px-4 py-2 bg-zinc-950 text-zinc-500 text-xs font-semibold uppercase tracking-wider"
-              >
-                {item.label}
-              </div>
-            );
-          }
-          const email = item.email;
-          const isSelected = selectedIds.includes(email.id);
-          const isActive = selectedEmailId === email.id;
-
-          return (
-            <div
-              key={email.id}
-              onClick={(e) => onSelectEmail(email, e)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                onContextMenu(email.id, e.clientX, e.clientY);
-              }}
-              className={`p-4 border-b border-zinc-800 cursor-pointer transition-colors flex items-start gap-2 ${
-                isSelected
-                  ? 'bg-blue-600/20 border-l-2 border-l-blue-500'
-                  : isActive
-                  ? 'bg-zinc-800'
-                  : 'hover:bg-zinc-800/50'
-              }`}
-            >
-              {/* Checkbox */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectEmail(email, { ctrlKey: true } as React.MouseEvent);
+                key={email.id}
+                onClick={(e) => onSelectEmail(email, e)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onContextMenu(email.id, e.clientX, e.clientY);
                 }}
-                className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${
-                  isSelected
-                    ? 'bg-blue-600 border-blue-600'
-                    : 'border-zinc-600 hover:border-zinc-400'
-                }`}
+                className="px-4 py-2 transition-colors flex items-center gap-3 relative"
+                style={{ backgroundColor: 'transparent' }}
+                onMouseEnter={e => {
+                  if (!isSelected && !isActive) e.currentTarget.style.backgroundColor = '#1F2124';
+                  else if (isSelected && !isActive) e.currentTarget.style.backgroundColor = 'rgba(0,113,227,0.08)';
+                  else if (!isSelected && isActive) e.currentTarget.style.backgroundColor = '#1F2124';
+                }}
+                onMouseLeave={e => {
+                  if (!isSelected && !isActive) e.currentTarget.style.backgroundColor = 'transparent';
+                  else if (isSelected && !isActive) e.currentTarget.style.backgroundColor = 'rgba(0,113,227,0.05)';
+                  else if (!isSelected && isActive) e.currentTarget.style.backgroundColor = '#282A2E';
+                }}
               >
-                {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
-              </button>
+                {/* Hover-only checkball — absolutely positioned over avatar */}
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleSelect(email);
+                  }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 transition-opacity duration-150 cursor-pointer z-10"
+                  style={{ backgroundColor: isSelected ? '#0071e3' : 'rgba(255,255,255,0.12)' }}
+                  onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+                  onMouseLeave={e => { e.currentTarget.style.opacity = isSelected ? '1' : '0'; }}
+                  id={`cb-${email.id}`}
+                >
+                  {isSelected && <Check className="w-3 h-3 text-white" />}
+                </div>
 
-              {/* Avatar */}
-              <div className="flex-shrink-0">
-                {email.from.avatar ? (
-                  <img
-                    src={email.from.avatar}
-                    alt={email.from.name}
-                    className="w-10 h-10 rounded-full bg-zinc-700"
-                  />
-                ) : (
-                  <div
-                    className={`w-10 h-10 rounded-full ${getAvatarColor(
-                      email.from.name
-                    )} flex items-center justify-center text-white text-sm font-semibold`}
-                  >
-                    {email.from.name.charAt(0)}
-                  </div>
-                )}
-              </div>
+                {/* Avatar: sender initials */}
+                <div className="flex-shrink-0 ml-5">
+                  <SenderAvatar name={email.fromName || email.from} size={32} />
+                </div>
 
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 min-w-0">
+                {/* Content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-sm ${
-                        email.isRead ? 'text-zinc-400' : 'text-zinc-100 font-semibold'
-                      } truncate`}
+                      className="truncate"
+                      style={{
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                        fontSize: 13,
+                        color: isActive ? '#f5f5f7' : email.isRead ? '#636366' : '#a1a1a6',
+                        fontWeight: email.isRead ? '400' : '600',
+                        letterSpacing: '-0.01em',
+                      }}
                     >
-                      {email.from.name}
+                      {email.fromName || email.from.split('@')[0]}
                     </span>
+                    <span className="flex-shrink-0" style={{ fontSize: 10, color: '#48484a', lineHeight: 1 }}>
+                      {formatRelativeTime(email.date)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span
+                      className="truncate flex-1"
+                      style={{
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                        fontSize: 12,
+                        color: isActive ? '#c1c1c6' : email.isRead ? '#48484a' : '#7a7a7e',
+                        letterSpacing: '-0.01em',
+                      }}
+                    >
+                      {email.subject}
+                    </span>
+                    {email.hasAttachments && (
+                      <Paperclip className="w-3 h-3 flex-shrink-0" style={{ color: '#48484a' }} />
+                    )}
                     {email.isStarred && (
-                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 flex-shrink-0" />
+                      <Star className="w-3 h-3 flex-shrink-0" style={{ color: '#ff9f0a', fill: '#ff9f0a' }} />
+                    )}
+                    {email.category && CATEGORY_BADGES[email.category] && (
+                      <span
+                        className="text-xs px-1 py-0.5 rounded"
+                        style={{
+                          backgroundColor: CATEGORY_BADGES[email.category].bg,
+                          color: '#8a8a8e',
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                        }}
+                      >
+                        {CATEGORY_BADGES[email.category].emoji}
+                      </span>
                     )}
                   </div>
-                  <span className="text-xs text-zinc-500 flex-shrink-0 ml-2">
-                    {formatRelativeTime(email.date)}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`text-sm ${
-                      email.isRead ? 'text-zinc-500' : 'text-zinc-300'
-                    } truncate flex-1`}
+                  <p
+                    className="truncate mt-0.5"
+                    style={{
+                      fontSize: 11,
+                      color: '#3a3a3c',
+                      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                      letterSpacing: '-0.01em',
+                    }}
                   >
-                    {email.subject}
-                  </span>
-                  {email.hasAttachments && (
-                    <Paperclip className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0" />
-                  )}
+                    {email.snippet}
+                  </p>
                 </div>
-
-                <p className="text-xs text-zinc-500 truncate">{email.snippet}</p>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
     </div>
   );
