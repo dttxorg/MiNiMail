@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Loader2, X, Globe, Check } from 'lucide-react';
+import { Loader2, X, Globe } from 'lucide-react';
 import type { Account } from '../types';
 
 interface ComposeDialogProps {
@@ -61,7 +61,6 @@ export function ComposeDialog({
   const [error, setError] = useState<string | null>(null);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -70,7 +69,6 @@ export function ComposeDialog({
       setSubject(initialSubject || '');
       setBody(initialBody || '');
       setError(null);
-      setAiResult(null);
     }
   }, [isOpen, selectedAccount, accounts, initialTo, initialSubject, initialBody]);
 
@@ -112,71 +110,58 @@ export function ComposeDialog({
     }
   };
 
-  // AI Polish function - uses aiTargetLanguage
   const handlePolish = async () => {
     if (!body.trim()) return;
-
     setAiLoading(true);
-    setAiResult(null);
-
-    // Simulate AI polishing in target language
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock polish in the target language
-    const polishLabels: Record<string, string> = {
-      '中文': '【润色结果】',
-      'English': '[Polished Version]',
-      '日本語': '【校正結果】',
-      '한국어': '【윤문 결과】',
-      'Español': '[Versión pulida]',
-      'Français': '[Version polie]',
-      'Deutsch': '[Polierte Version]',
-      'Русский': '[Отредактированная версия]',
-    };
-    const label = polishLabels[aiTargetLanguage] || '[Polished]';
-
-    const polished = body
-      .split('\n')
-      .map(line => {
-        line = line.trim();
-        if (!line) return line;
-        return line.charAt(0).toUpperCase() + line.slice(1);
-      })
-      .join('\n');
-
-    setAiResult(`${label}\n\n${polished}`);
-    setBody(`${label}\n\n${polished}`);
-    setAiLoading(false);
+    setError(null);
+    try {
+      const res = await window.electronAPI.invoke('ai:polish', body, 'formal') as {
+        success: boolean; content?: string; error?: string;
+      };
+      if (res.success && res.content) {
+        setBody(res.content);
+      } else {
+        setError(res.error || '润色失败，请检查 AI 配置');
+      }
+    } catch (err) {
+      setError((err as Error).message || '润色请求异常');
+    } finally {
+      setAiLoading(false);
+    }
   };
 
-  // AI Translate function
   const handleTranslate = async (targetLang: string) => {
     if (!body.trim()) return;
-
     setAiLoading(true);
-    setAiResult(null);
+    setError(null);
     setShowLangMenu(false);
 
-    // Simulate AI translation
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-
-    // Mock translations for all 8 languages
-    const mockTranslations: Record<string, string> = {
-      '中文': `[中文翻译]\n\n${body}`,
-      'English': `[Translation to English]\n\n${body}`,
-      '日本語': `[日本語翻訳]\n\n${body}`,
-      '한국어': `[한국어 번역]\n\n${body}`,
-      'Español': `[Traducción al Español]\n\n${body}`,
-      'Français': `[Traduction en Français]\n\n${body}`,
-      'Deutsch': `[Übersetzung ins Deutsche]\n\n${body}`,
-      'Русский': `[Перевод на Русский]\n\n${body}`,
+    const langMap: Record<string, string> = {
+      '中文': 'Chinese',
+      'English': 'English',
+      '日本語': 'Japanese',
+      '한국어': 'Korean',
+      'Español': 'Spanish',
+      'Français': 'French',
+      'Deutsch': 'German',
+      'Русский': 'Russian',
     };
+    const apiLang = langMap[targetLang] || targetLang;
 
-    const translated = mockTranslations[targetLang] || `[Translation to ${targetLang}]\n\n${body}`;
-
-    setAiResult(translated);
-    setBody(translated);
-    setAiLoading(false);
+    try {
+      const res = await window.electronAPI.invoke('ai:translate', body, apiLang) as {
+        success: boolean; content?: string; error?: string;
+      };
+      if (res.success && res.content) {
+        setBody(res.content);
+      } else {
+        setError(res.error || '翻译失败，请检查 AI 配置');
+      }
+    } catch (err) {
+      setError((err as Error).message || '翻译请求异常');
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   if (!isOpen) return null;
