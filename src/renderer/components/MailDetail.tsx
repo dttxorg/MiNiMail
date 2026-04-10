@@ -96,7 +96,13 @@ export function MailDetail({
         ALLOWED_ATTR: ['href', 'title'],
         ALLOW_DATA_ATTR: false,
       });
-      cleanText = tempDiv.innerText || tempDiv.textContent || '';
+      const rawText = tempDiv.innerText || tempDiv.textContent || '';
+      // 正则清洗链：去掉行首尾空白 → 压同行内空格 → 压同行间空行 → trim
+      cleanText = rawText
+        .replace(/^[ \t]+/gm, '')          // 清理行首尾多余空格/制表符
+        .replace(/[ \t]+/g, ' ')            // 压缩行内连续空格为单个
+        .replace(/\n{3,}/g, '\n\n')         // 3+ 连续换行压缩为 2 个（保段落间距）
+        .trim();
     }
 
     // ── Path 2: 纯文本回退 — 用正则剥离残留媒体链接 ──
@@ -112,7 +118,9 @@ export function MailDetail({
           /https?:\/\/[^\s\u4e00-\u9fa5]*(?:jpe?g|png|gif|webp|bmp|svg|ico)[^\s\u4e00-\u9fa5]*/gi,
           ''
         )
-        // 多个连续空行合并为两个换行（保留段落结构）
+        // 正则清洗链：去掉行首尾空白 → 压同行内空格 → 压同行间空行 → trim
+        .replace(/^[ \t]+/gm, '')
+        .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
     }
