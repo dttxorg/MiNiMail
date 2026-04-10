@@ -29,12 +29,13 @@ function lookbackToMs(range: LookbackRange): number {
 }
 
 /** Find all emails in the same thread as `target`, sorted oldest-first.
- *  Uses In-Reply-To chains. Same-account only to avoid cross-account false matches. */
+ *  Uses References (first ID = thread root) + In-Reply-To chains.
+ *  Same-account only to avoid cross-account false matches. */
 function findThreadSiblings(
   target: RendererMailSummary,
   allMails: RendererMailSummary[]
 ): RendererMailSummary[] {
-  if (!target.messageId && !target.inReplyTo) return [];
+  if (!target.messageId && !target.inReplyTo && !target.references) return [];
 
   // Build a lookup by messageId (same account only)
   const byMsgId = new Map<string, RendererMailSummary>();
@@ -44,8 +45,22 @@ function findThreadSiblings(
     }
   }
 
+  // Determine the thread root: first ID in References, else target's own messageId
+  function getThreadRoot(mail: RendererMailSummary): string | undefined {
+    if (mail.references) {
+      const refs = mail.references.trim().split(/\s+/);
+      if (refs.length > 0 && refs[0]) return refs[0];
+    }
+    return mail.messageId;
+  }
+
+  const threadRoot = getThreadRoot(target);
+  if (!threadRoot) return [];
+
   // Walk up the inReplyTo chain to collect all ancestor message-IDs
   const threadMsgIds = new Set<string>();
+  threadMsgIds.add(threadRoot); // include root explicitly
+
   function collectChain(mail: RendererMailSummary, depth = 0): void {
     if (depth > 50) return; // cycle guard
     if (mail.messageId) threadMsgIds.add(mail.messageId);
@@ -65,7 +80,9 @@ function findThreadSiblings(
     m.accountId === target.accountId &&
     (
       (m.messageId && threadMsgIds.has(m.messageId)) ||
-      (m.inReplyTo && threadMsgIds.has(m.inReplyTo))
+      (m.inReplyTo && threadMsgIds.has(m.inReplyTo)) ||
+      // shares the same thread root via References
+      (m.references && m.references.includes(threadRoot))
     )
   ).sort((a, b) => a.date.getTime() - b.date.getTime());
 }

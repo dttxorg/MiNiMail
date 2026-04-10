@@ -22,6 +22,8 @@ export interface RendererMailSummary {
   messageId?: string;
   /** RFC 2822 In-Reply-To header value (messageId of parent) */
   inReplyTo?: string;
+  /** RFC 2822 References header — full ancestry chain, first ID is the thread root */
+  references?: string;
 }
 
 export interface RendererMailDetail extends RendererMailSummary {

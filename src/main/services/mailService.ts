@@ -22,6 +22,8 @@ export interface MailSummaryStored {
   cachedAt: string;
   messageId?: string;
   inReplyTo?: string;
+  /** RFC 2822 References header */
+  references?: string;
 }
 
 export interface SyncResult {
@@ -51,6 +53,7 @@ function migrateMailCacheTable(db: any) {
   const migrations = [
     'ALTER TABLE mail_cache ADD COLUMN message_id TEXT',
     'ALTER TABLE mail_cache ADD COLUMN in_reply_to TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN references_header TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists — safe to ignore */ }
@@ -98,11 +101,11 @@ function upsertMailCache(mail: MailSummaryStored): void {
     INSERT OR REPLACE INTO mail_cache
       (id, uid, "from", from_name, "to", subject, date, snippet,
        has_attachments, is_read, is_starred, folder, account_id, cached_at,
-       message_id, in_reply_to)
+       message_id, in_reply_to, references_header)
     VALUES
       (@id, @uid, @from, @fromName, @to, @subject, @date, @snippet,
        @hasAttachments, @isRead, @isStarred, @folder, @accountId, @cachedAt,
-       @messageId, @inReplyTo)
+       @messageId, @inReplyTo, @references)
   `).run({
     id: mail.id,
     uid: mail.uid,
@@ -120,6 +123,7 @@ function upsertMailCache(mail: MailSummaryStored): void {
     cachedAt: new Date().toISOString(),
     messageId: mail.messageId ?? null,
     inReplyTo: mail.inReplyTo ?? null,
+    references: mail.references ?? null,
   });
   db.close();
 }
@@ -130,7 +134,7 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
   const rows = db.prepare(`
     SELECT id, uid, "from", from_name, "to", subject, date, snippet,
            has_attachments, is_read, is_starred, folder, account_id, cached_at,
-           message_id, in_reply_to
+           message_id, in_reply_to, references_header
     FROM mail_cache
     WHERE account_id = ? AND folder = ?
     ORDER BY uid DESC
@@ -154,6 +158,7 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
     cachedAt: row.cached_at as string,
     messageId: row.message_id != null ? (row.message_id as string) : undefined,
     inReplyTo: row.in_reply_to != null ? (row.in_reply_to as string) : undefined,
+    references: row.references_header != null ? (row.references_header as string) : undefined,
   }));
 }
 
@@ -297,6 +302,7 @@ export function loadCachedMails(accountId: number, folder: string = 'INBOX'): Ma
       accountId: c.accountId,
       messageId: c.messageId,
       inReplyTo: c.inReplyTo,
+      references: c.references,
     } as MailSummary));
   } catch (err) {
     log.warn('[mailService] loadCachedMails failed:', err);
