@@ -30,6 +30,7 @@ import {
   getAiLanguageFromAppLanguage,
   resolveFolderPath,
 } from '../shared/mailFolders';
+import { coerceMailHistoryRange, type MailHistoryRange } from '../shared/mailSyncSettings';
 import './i18n';
 
 type ScanMode = 'light' | 'deep';
@@ -275,6 +276,7 @@ function App() {
   const [aiAutoSort, setAiAutoSort] = useState(false);
   const [aiScanMode, setAiScanMode] = useState<ScanMode>('light');
   const [aiLookback, setAiLookback] = useState<LookbackRange>('7d');
+  const [mailFetchHistoryRange, setMailFetchHistoryRange] = useState<MailHistoryRange>('1mo');
   const [autoFetchMinutes, setAutoFetchMinutes] = useState(0);
   const [isAutoAnalysisReady, setIsAutoAnalysisReady] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<CurrentAccount | 'all'>('all');
@@ -357,9 +359,16 @@ function App() {
           success: boolean;
           data?: string | null;
         };
-        if (intervalRes.success && intervalRes.data) {
+        if (intervalRes.success && intervalRes.data !== undefined && intervalRes.data !== null) {
           const parsed = Number(intervalRes.data);
           setAutoFetchMinutes(Number.isFinite(parsed) ? parsed : 0);
+        }
+        const historyRes = await window.electronAPI.invoke('settings:get', 'mail_fetch_history_range') as {
+          success: boolean;
+          data?: string | null;
+        };
+        if (historyRes.success) {
+          setMailFetchHistoryRange(coerceMailHistoryRange(historyRes.data));
         }
       } catch (err) {
         console.error('[ai:getSettings]', err);
@@ -1454,6 +1463,15 @@ function App() {
     }
   }, []);
 
+  const handleMailHistoryRangeChange = useCallback(async (range: MailHistoryRange) => {
+    setMailFetchHistoryRange(range);
+    try {
+      await window.electronAPI.invoke('settings:set', 'mail_fetch_history_range', range);
+    } catch (err) {
+      console.error('[settings:set mail_fetch_history_range]', err);
+    }
+  }, []);
+
   const handleSaveDraft = useCallback(async (options: {
     accountId: number;
     to: string[];
@@ -1723,6 +1741,8 @@ function App() {
           onAiScanModeChange={setAiScanMode}
           aiLookback={aiLookback}
           onAiLookbackChange={setAiLookback}
+          mailHistoryRange={mailFetchHistoryRange}
+          onMailHistoryRangeChange={handleMailHistoryRangeChange}
           autoFetchInterval={autoFetchMinutes}
           onAutoFetchIntervalChange={handleAutoFetchIntervalChange}
         />
