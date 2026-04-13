@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
 import { initDatabase, closeDatabase } from './database';
@@ -32,6 +33,7 @@ const isDev = !app.isPackaged;
 
 function createWindow() {
   log.info('Creating main window...');
+  const appIconPath = path.join(app.getAppPath(), 'build', 'icons', 'app-icon.png');
 
   // Remove menu bar
   Menu.setApplicationMenu(null);
@@ -41,10 +43,11 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: 'minimail',
+    title: 'MinNiMail',
     backgroundColor: '#1a1d29',
     frame: false,
     titleBarStyle: 'hidden',
+    icon: appIconPath,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -73,6 +76,14 @@ function createWindow() {
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     log.error(`Failed to load: ${errorCode} - ${errorDescription}`);
+  });
+
+  // Notify renderer on maximize state changes
+  mainWindow.on('maximize', () => {
+    mainWindow!.webContents.send('window:maximized-change', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow!.webContents.send('window:maximized-change', false);
   });
 }
 
@@ -138,6 +149,29 @@ ipcMain.on('window:close', () => {
 
 ipcMain.handle('window:is-maximized', () => {
   return mainWindow?.isMaximized() ?? false;
+});
+
+// ── File dialog and write handlers (used for screenshot export) ─────────────────
+ipcMain.handle('file:saveDialog', async (_event, options: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    defaultPath: options.defaultPath,
+    filters: options.filters || [{ name: 'All Files', extensions: ['*'] }],
+  });
+  return { success: !result.canceled, filePath: result.filePath };
+});
+
+ipcMain.handle('file:writeFile', async (_event, options: { filePath: string; data: string; encoding: 'utf8' | 'base64' }) => {
+  try {
+    if (options.encoding === 'base64') {
+      const buffer = Buffer.from(options.data, 'base64');
+      await fs.promises.writeFile(options.filePath, buffer);
+    } else {
+      await fs.promises.writeFile(options.filePath, options.data, 'utf8');
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
 });
 
 log.info('Main process initialized');
