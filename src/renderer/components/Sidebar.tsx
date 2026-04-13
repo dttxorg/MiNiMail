@@ -300,10 +300,36 @@ export function Sidebar({
 
       <nav className="flex-1 px-3 py-1 overflow-y-auto">
         <div className="space-y-0.5">
-          {FOLDERS.map((folder) => {
+          <button
+            onClick={() => onSelectFolder('inbox')}
+            className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
+            style={{ color: selectedFolder === 'inbox' ? '#f5f5f7' : '#a1a1a6', backgroundColor: selectedFolder === 'inbox' ? '#2a2a2d' : 'transparent', fontWeight: 500, borderRadius: 6, padding: '4px 8px 4px 0', fontSize: 12 }}
+          >
+            <NavIcon active={selectedFolder === 'inbox'}><span className="w-4 h-4 flex">{Icons.Inbox}</span></NavIcon>
+            <span className="flex-1 text-left leading-none">{ui.primaryView}</span>
+            {(folderUnreadCounts.inbox || 0) > 0 && <span style={{ fontSize: 10, color: '#71717a', lineHeight: 1 }}>{folderUnreadCounts.inbox}</span>}
+          </button>
+
+          <button
+            onClick={() => onSelectFolder('unread')}
+            className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
+            style={{
+              color: selectedFolder === 'unread' ? '#f5f5f7' : '#a1a1a6',
+              backgroundColor: selectedFolder === 'unread' ? '#2a2a2d' : 'transparent',
+              fontWeight: 500,
+              borderRadius: 6,
+              padding: '4px 8px 4px 0',
+              fontSize: 12,
+            }}
+          >
+            <NavIcon active={selectedFolder === 'unread'}><span className="w-4 h-4 flex">{Icons.Inbox}</span></NavIcon>
+            <span className="flex-1 text-left leading-none">{ui.unread}</span>
+            {unreadConversationCount > 0 && <span style={{ fontSize: 10, color: '#71717a', lineHeight: 1 }}>{unreadConversationCount}</span>}
+          </button>
+
+          {FOLDERS.filter((folder) => folder.id !== 'inbox').map((folder) => {
             const selected = selectedFolder === folder.id;
             const Icon = Icons[folder.icon as keyof typeof Icons];
-            const unreadCount = folder.id === 'inbox' ? (folderUnreadCounts.inbox || 0) : 0;
             return (
               <button
                 key={folder.id}
@@ -312,29 +338,11 @@ export function Sidebar({
                 style={{ color: selected ? '#f5f5f7' : '#a1a1a6', backgroundColor: selected ? '#2a2a2d' : 'transparent', fontWeight: 500, borderRadius: 6, padding: '4px 8px 4px 0', fontSize: 12 }}
               >
                 <NavIcon active={selected}><span className="w-4 h-4 flex">{Icon}</span></NavIcon>
-                <span className="flex-1 text-left leading-none">{folder.id === 'inbox' ? ui.primaryView : t(folder.labelKey)}</span>
-                {unreadCount > 0 && <span style={{ fontSize: 10, color: '#71717a', lineHeight: 1 }}>{unreadCount}</span>}
+                <span className="flex-1 text-left leading-none">{t(folder.labelKey)}</span>
               </button>
             );
           })}
         </div>
-
-        <button
-          onClick={() => onSelectFolder('unread')}
-          className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
-          style={{
-            color: selectedFolder === 'unread' ? '#f5f5f7' : '#a1a1a6',
-            backgroundColor: selectedFolder === 'unread' ? '#2a2a2d' : 'transparent',
-            fontWeight: 500,
-            borderRadius: 6,
-            padding: '4px 8px 4px 0',
-            fontSize: 12,
-          }}
-        >
-          <NavIcon active={selectedFolder === 'unread'}><span className="w-4 h-4 flex">{Icons.Inbox}</span></NavIcon>
-          <span className="flex-1 text-left leading-none">{ui.unread}</span>
-          {unreadConversationCount > 0 && <span style={{ fontSize: 10, color: '#71717a', lineHeight: 1 }}>{unreadConversationCount}</span>}
-        </button>
 
         <button
           onClick={() => onSelectFolder('starred')}

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check, Paperclip, Search, X } from 'lucide-react';
 import { RendererMailSummary } from '../hooks/useMail';
 import { getConversationCounterparty, isLocalSenderMail } from '../utils/mailConversations';
+import { getSearchTrailingActions } from '../utils/searchActions';
 import { SenderAvatar } from './SenderAvatar';
 
 const CATEGORY_BADGES: Record<string, { label: string; emoji: string; bg: string }> = {
@@ -108,6 +109,7 @@ export function MailList({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const trailingSearchActions = getSearchTrailingActions(searchQuery);
 
   const searchedEmails = searchQuery.trim()
     ? emails.filter((email) =>
@@ -158,22 +160,21 @@ export function MailList({
               style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
               onBlur={closeSearch}
             />
-            <button
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                if (searchQuery) {
+            {trailingSearchActions.map((action) => (
+              <button
+                key={action}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
                   setSearchQuery('');
                   setTimeout(() => searchRef.current?.focus(), 0);
-                  return;
-                }
-                closeSearch();
-              }}
-              className="cursor-pointer ml-1"
-              aria-label={searchQuery ? 'Clear search' : 'Close search'}
-              title={searchQuery ? 'Clear search' : 'Close search'}
-            >
-              <X className="w-4 h-4" style={{ color: '#636366' }} />
-            </button>
+                }}
+                className="cursor-pointer ml-1"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                <X className="w-4 h-4" style={{ color: '#636366' }} />
+              </button>
+            ))}
           </div>
         ) : (
           <div className="flex justify-end">

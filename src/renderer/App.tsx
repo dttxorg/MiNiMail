@@ -77,8 +77,11 @@ function isStandardFolder(folder: string): folder is StandardFolderId {
 }
 
 function getSyncFoldersForView(folder: string): StandardFolderId[] {
-  if (folder === 'inbox' || folder === 'sent' || folder === 'drafts' || folder === 'starred' || folder === 'unread') {
+  if (folder === 'inbox' || folder === 'sent' || folder === 'drafts' || folder === 'starred') {
     return PRIMARY_VIEW_FOLDERS;
+  }
+  if (folder === 'unread') {
+    return STANDARD_FOLDERS;
   }
   if (folder === 'archive') return ['archive'];
   if (folder === 'trash') return ['trash'];
@@ -572,6 +575,9 @@ function App() {
   }, [conversationAccountEmails, currentAccount, threadMailUniverse]);
 
   const getFilteredEmails = useCallback((): RendererMailSummary[] => {
+    if (selectedFolder === 'unread') {
+      return threadMailUniverse;
+    }
     return getVisibleFolderEmails({
       selectedFolder,
       currentAccount,
@@ -579,7 +585,7 @@ function App() {
       localThreadMails,
       aiCategoryIds: AI_CATEGORY_IDS,
     });
-  }, [currentAccount, localThreadMails, mailList, selectedFolder]);
+  }, [currentAccount, localThreadMails, mailList, selectedFolder, threadMailUniverse]);
 
   const rawFolderEmails = useMemo(() => getFilteredEmails(), [getFilteredEmails]);
   const conversationRows = useMemo(
@@ -588,8 +594,8 @@ function App() {
   );
   const folderEmails = useMemo(() => {
     if (selectedFolder !== 'unread') return conversationRows;
-    return filterUnreadConversationRows(conversationRows, rawFolderEmails, conversationAccountEmails);
-  }, [conversationAccountEmails, conversationRows, rawFolderEmails, selectedFolder]);
+    return filterUnreadConversationRows(conversationRows, threadMailUniverse, conversationAccountEmails);
+  }, [conversationAccountEmails, conversationRows, selectedFolder, threadMailUniverse]);
 
   useEffect(() => {
     i18n.changeLanguage(appLanguage);
