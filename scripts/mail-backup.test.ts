@@ -74,6 +74,29 @@ function testExportLayoutHelpers() {
     }),
     ['Team _ Ops', 'Archive', '2026'],
   );
+
+  assertDeepEqual(
+    getExportSubdirParts({
+      mode: 'export',
+      taskId: 'task-2b',
+      destinationPath: 'D:/Exports',
+      scope: {
+        accountId: 8,
+        accountLabel: '..',
+        folderPaths: ['.././Reports//.. /Q1/.'],
+      },
+    }),
+    ['account-8', 'Reports', 'Q1'],
+  );
+
+  assertEqual(
+    buildExportFileName({
+      uid: 23,
+      subject: '..',
+      date: '2026-04-03T08:30:00.000Z',
+    }),
+    '2026-04-03_08-30-00__untitled__23.eml',
+  );
 }
 
 function testDetailFetchPolicy() {

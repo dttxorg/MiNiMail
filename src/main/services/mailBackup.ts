@@ -38,8 +38,25 @@ export function sanitizeWindowsPathPart(input: string, fallback: string = 'untit
     .replace(/\s+/g, ' ')
     .trim();
 
-  const value = normalized || fallback;
+  let value = normalized || fallback;
+  if (value === '.' || value === '..') {
+    value = fallback;
+  }
   return WINDOWS_RESERVED_NAMES.has(value.toUpperCase()) ? `_${value}` : value;
+}
+
+function sanitizeExportPathSegments(input: string): string[] {
+  return input
+    .split(/[\\/]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .flatMap((part) => {
+      const sanitized = sanitizeWindowsPathPart(part, '');
+      if (!sanitized || sanitized === '.' || sanitized === '..') {
+        return [];
+      }
+      return [sanitized];
+    });
 }
 
 export function buildExportFileName(mail: Pick<ExportSummaryLike, 'uid' | 'subject' | 'date'>): string {
@@ -63,10 +80,7 @@ export function getExportSubdirParts(request: MailExportRequest, folderPath?: st
 
   return [
     ...parts,
-    ...selectedFolder
-      .split(/[\\/]+/)
-      .map((part) => sanitizeWindowsPathPart(part, 'folder'))
-      .filter(Boolean),
+    ...sanitizeExportPathSegments(selectedFolder),
   ];
 }
 
