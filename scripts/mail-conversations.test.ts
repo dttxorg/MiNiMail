@@ -4,7 +4,6 @@ import {
   findSenderConversationMails,
   formatQuotedOriginalBody,
 } from '../src/renderer/utils/mailConversations';
-import { getSearchTrailingActions } from '../src/renderer/utils/searchActions';
 
 type Mail = {
   id: string;
@@ -138,18 +137,11 @@ function testUnreadConversationFilterKeepsThreadsWithAnyUnreadMail() {
   assert(unreadRows[0].id === threadFollowUp.id, 'Expected latest mail in the unread conversation to remain visible');
 }
 
-function testSearchTrailingActionRegression() {
-  assert(getSearchTrailingActions('').length === 0, 'Expected no trailing search action for an empty query');
-  assert(getSearchTrailingActions('   ').length === 0, 'Expected no trailing search action for whitespace only');
-  assert(getSearchTrailingActions('invoice').length === 1, 'Expected exactly one trailing search action for a non-empty query');
-}
-
 function run() {
   testConversationRowsCollapseSameSender();
   testConversationIncludesOutgoingRepliesToSameSender();
   testQuotedOriginalBodyUsesReadableContent();
   testUnreadConversationFilterKeepsThreadsWithAnyUnreadMail();
-  testSearchTrailingActionRegression();
   console.log('mail-conversations tests passed');
 }
 

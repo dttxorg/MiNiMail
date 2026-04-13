@@ -557,6 +557,11 @@ function App() {
     [localThreadMails, mailList]
   );
 
+  const scopedThreadMailUniverse = useMemo(() => {
+    if (currentAccount === 'all') return threadMailUniverse;
+    return threadMailUniverse.filter((mail) => mail.accountId === currentAccount.id);
+  }, [currentAccount, threadMailUniverse]);
+
   const conversationAccountEmails = useMemo(() => {
     if (currentAccount === 'all') {
       return accounts.map((account) => account.email);
@@ -566,17 +571,15 @@ function App() {
 
   const unreadConversationCount = useMemo(() => {
     const unreadKeys = new Set<string>();
-    for (const mail of threadMailUniverse) {
-      if (!mail.isRead && (currentAccount === 'all' || mail.accountId === currentAccount.id)) {
-        unreadKeys.add(getConversationKey(mail, conversationAccountEmails));
-      }
+    for (const mail of scopedThreadMailUniverse) {
+      if (!mail.isRead) unreadKeys.add(getConversationKey(mail, conversationAccountEmails));
     }
     return unreadKeys.size;
-  }, [conversationAccountEmails, currentAccount, threadMailUniverse]);
+  }, [conversationAccountEmails, scopedThreadMailUniverse]);
 
   const getFilteredEmails = useCallback((): RendererMailSummary[] => {
     if (selectedFolder === 'unread') {
-      return threadMailUniverse;
+      return scopedThreadMailUniverse;
     }
     return getVisibleFolderEmails({
       selectedFolder,
@@ -585,7 +588,7 @@ function App() {
       localThreadMails,
       aiCategoryIds: AI_CATEGORY_IDS,
     });
-  }, [currentAccount, localThreadMails, mailList, selectedFolder, threadMailUniverse]);
+  }, [currentAccount, localThreadMails, mailList, scopedThreadMailUniverse, selectedFolder]);
 
   const rawFolderEmails = useMemo(() => getFilteredEmails(), [getFilteredEmails]);
   const conversationRows = useMemo(
@@ -594,8 +597,8 @@ function App() {
   );
   const folderEmails = useMemo(() => {
     if (selectedFolder !== 'unread') return conversationRows;
-    return filterUnreadConversationRows(conversationRows, threadMailUniverse, conversationAccountEmails);
-  }, [conversationAccountEmails, conversationRows, selectedFolder, threadMailUniverse]);
+    return filterUnreadConversationRows(conversationRows, scopedThreadMailUniverse, conversationAccountEmails);
+  }, [conversationAccountEmails, conversationRows, scopedThreadMailUniverse, selectedFolder]);
 
   useEffect(() => {
     i18n.changeLanguage(appLanguage);
