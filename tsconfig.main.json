@@ -12,5 +12,5 @@
     "resolveJsonModule": true,
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/types/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "src/types/**/*"]
 }

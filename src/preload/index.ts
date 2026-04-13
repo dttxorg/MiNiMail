@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:getList',
       'mail:getDetail',
       'mail:setFlags',
+      'mail:setRead',
+      'mail:setStarred',
+      'mail:updateCategories',
       'mail:getCurrentFolder',
       'mail:send',
       'mail:testSmtp',
@@ -27,18 +30,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:move',
       'ai:getConfig',
       'ai:saveConfig',
+      'ai:getSettings',
+      'ai:saveSettings',
       'ai:translate',
       'ai:summarize',
       'ai:suggestReply',
       'ai:polish',
-      'oauth:isConfigured',
-      'oauth:getStatus',
+      'ai:classifyBatch',
       'oauth:startFlow',
-      'oauth:handleCallback',
       'oauth:refreshToken',
+      'oauth:getClientConfig',
       'mail:sync',
       'mail:fetchFull',
       'mail:loadCached',
+      'mail:loadCachedBody',
+      'mail:cacheLocal',
+      'mail:exportEml',
+      'mail:cancelBackup',
+      'file:saveDialog',
+      'file:writeFile',
+      'file:pickDirectory',
+      'file:openPath',
     ];
     if (validChannels.includes(channel)) {
       return ipcRenderer.invoke(channel, ...args);
@@ -51,9 +63,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMailSync: (callback: (mail: unknown) => void) => {
     ipcRenderer.on('mail:sync-new', (_event, mail) => callback(mail));
   },
+  onBackupProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+    ipcRenderer.on('mail:backup-progress', listener);
+    return () => ipcRenderer.removeListener('mail:backup-progress', listener);
+  },
   // Window controls for frameless window
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  onMaximizeChange: (callback: (isMaximized: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean) => callback(isMaximized);
+    ipcRenderer.on('window:maximized-change', listener);
+    return () => ipcRenderer.removeListener('window:maximized-change', listener);
+  },
 });

@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Ban,
   Check,
   Clock,
   CalendarDays,
+  Download,
+  FolderOpen,
   Globe,
   Info,
   Key,
@@ -20,6 +23,14 @@ import {
   getMailHistoryRangeOptions,
 } from '../utils/mailHistoryRange';
 import type { MailHistoryRange } from '../../shared/mailSyncSettings';
+import type { MailBackupReadState } from '../../shared/backup';
+import {
+  canStartBackupExport,
+  getBackupReadStateOptions,
+  summarizeBackupResult,
+  type BackupExportScope,
+  type BackupUiState,
+} from '../utils/mailBackupUi';
 
 interface SettingsModalProps {
   t: (key: string) => string;
@@ -48,9 +59,31 @@ interface SettingsModalProps {
   onMailHistoryRangeChange: (v: MailHistoryRange) => void;
   autoFetchInterval: number;
   onAutoFetchIntervalChange: (minutes: number) => void;
+  backupState: BackupUiState;
+  backupAccounts: Array<{
+    id: number;
+    email: string;
+    name: string;
+  }>;
+  backupFolders: Array<{
+    name: string;
+    path: string;
+    delimiter: string;
+    flags: string[];
+  }>;
+  onBackupAccountChange: (accountId: number) => void;
+  onBackupScopeChange: (scope: BackupExportScope) => void;
+  onBackupFolderToggle: (folderPath: string) => void;
+  onBackupReadStateChange: (readState: MailBackupReadState) => void;
+  onBackupStartDateChange: (value: string) => void;
+  onBackupEndDateChange: (value: string) => void;
+  onBackupPickDestination: () => void;
+  onStartBackupExport: () => void;
+  onCancelBackupExport: () => void;
+  onOpenBackupFolder: () => void;
 }
 
-type NavId = 'accounts' | 'ai' | 'about';
+type NavId = 'accounts' | 'backup' | 'ai' | 'about';
 
 function getSettingsText(appLanguage: AppLanguage) {
   const appLanguages = {
@@ -303,6 +336,29 @@ function getSettingsText(appLanguage: AppLanguage) {
 
   return {
     ...baseText,
+    backupNav: appLanguage === 'zh' ? '备份' : 'Backup',
+    backupTitle: appLanguage === 'zh' ? '邮件备份' : 'Mail Backup',
+    backupDescription:
+      appLanguage === 'zh'
+        ? '导出当前缓存中的邮件为 EML 文件。导入功能将在后续任务中启用。'
+        : 'Export cached mail to EML files. Import will be enabled in a later task.',
+    backupAccount: appLanguage === 'zh' ? '账号' : 'Account',
+    backupScope: appLanguage === 'zh' ? '导出范围' : 'Export Scope',
+    backupFolders: appLanguage === 'zh' ? '文件夹' : 'Folders',
+    backupDestination: appLanguage === 'zh' ? '导出目录' : 'Destination',
+    backupFilters: appLanguage === 'zh' ? '筛选条件' : 'Filters',
+    backupStart: appLanguage === 'zh' ? '开始日期' : 'Start date',
+    backupEnd: appLanguage === 'zh' ? '结束日期' : 'End date',
+    backupPick: appLanguage === 'zh' ? '选择文件夹' : 'Choose folder',
+    backupStartExport: appLanguage === 'zh' ? '开始导出' : 'Start export',
+    backupCancel: appLanguage === 'zh' ? '取消导出' : 'Cancel export',
+    backupOpenFolder: appLanguage === 'zh' ? '打开文件夹' : 'Open folder',
+    backupImportPlaceholder:
+      appLanguage === 'zh'
+        ? 'EML 导入将在后续任务中启用。'
+        : 'EML import will be enabled in a later task.',
+    backupScopeAccount: appLanguage === 'zh' ? '整个账号' : 'Full account',
+    backupScopeFolders: appLanguage === 'zh' ? '选中文件夹' : 'Selected folders',
     mailHistoryRange:
       appLanguage === 'zh' ? '邮件历史范围'
       : appLanguage === 'ja' ? 'メール履歴範囲'
@@ -315,6 +371,23 @@ function getSettingsText(appLanguage: AppLanguage) {
   } as {
     groups: Record<'personal' | 'app' | 'system', string>;
     nav: Record<'accounts' | 'ai' | 'about', string>;
+    backupNav: string;
+    backupTitle: string;
+    backupDescription: string;
+    backupAccount: string;
+    backupScope: string;
+    backupFolders: string;
+    backupDestination: string;
+    backupFilters: string;
+    backupStart: string;
+    backupEnd: string;
+    backupPick: string;
+    backupStartExport: string;
+    backupCancel: string;
+    backupOpenFolder: string;
+    backupImportPlaceholder: string;
+    backupScopeAccount: string;
+    backupScopeFolders: string;
     systemLanguage: string;
     connectedAccounts: string;
     current: string;
@@ -368,6 +441,19 @@ export function SettingsModal({
   onMailHistoryRangeChange,
   autoFetchInterval,
   onAutoFetchIntervalChange,
+  backupState,
+  backupAccounts,
+  backupFolders,
+  onBackupAccountChange,
+  onBackupScopeChange,
+  onBackupFolderToggle,
+  onBackupReadStateChange,
+  onBackupStartDateChange,
+  onBackupEndDateChange,
+  onBackupPickDestination,
+  onStartBackupExport,
+  onCancelBackupExport,
+  onOpenBackupFolder,
 }: SettingsModalProps) {
   const [activeNav, setActiveNav] = useState<NavId>('accounts');
   const [saved, setSaved] = useState(false);
@@ -379,6 +465,11 @@ export function SettingsModal({
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
+  const backupReadOptions = useMemo(() => getBackupReadStateOptions(normalizedLanguage), [normalizedLanguage]);
+  const backupSummary = useMemo(() => summarizeBackupResult(backupState.lastResult, normalizedLanguage), [backupState.lastResult, normalizedLanguage]);
+  const backupProgressPercent = backupState.progress.total > 0
+    ? Math.min(100, Math.round((backupState.progress.processed / backupState.progress.total) * 100))
+    : 0;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -430,6 +521,7 @@ export function SettingsModal({
 
   const navItems: Array<{ id: NavId; label: string; group: 'personal' | 'app' | 'system'; icon: React.ReactNode }> = [
     { id: 'accounts', label: ui.nav.accounts, group: 'personal', icon: <User className="w-3.5 h-3.5" /> },
+    { id: 'backup', label: ui.backupNav, group: 'personal', icon: <Download className="w-3.5 h-3.5" /> },
     { id: 'ai', label: ui.nav.ai, group: 'app', icon: <Sparkles className="w-3.5 h-3.5" /> },
     { id: 'about', label: ui.nav.about, group: 'system', icon: <Info className="w-3.5 h-3.5" /> },
   ];
@@ -598,6 +690,193 @@ export function SettingsModal({
                 <Plus className="w-3 h-3" />
                 {t('addAccount')}
               </button>
+              </div>
+            </div>
+          )}
+          {activeNav === 'backup' && (
+            <div className="min-h-full px-6 py-5">
+              <div className="mx-auto w-full max-w-[560px]">
+                <div className="mb-4">
+                  <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>
+                    {ui.backupTitle}
+                  </p>
+                  <p className="text-[11px] mt-0.5" style={{ color: '#48484a' }}>{ui.backupDescription}</p>
+                </div>
+
+                <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[11px] font-medium text-white mb-2">{ui.backupAccount}</div>
+                      <select
+                        value={backupState.selectedAccountId ?? ''}
+                        onChange={(e) => onBackupAccountChange(Number(e.target.value))}
+                        className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                        style={{ backgroundColor: '#0d0d0f' }}
+                      >
+                        <option value="" disabled>{ui.backupAccount}</option>
+                        {backupAccounts.map((account) => (
+                          <option key={account.id} value={account.id}>{account.name} ({account.email})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <div className="text-[11px] font-medium text-white mb-2">{ui.backupScope}</div>
+                      <div className="flex gap-1.5">
+                        {([
+                          { value: 'folders' as const, label: ui.backupScopeFolders },
+                          { value: 'account' as const, label: ui.backupScopeAccount },
+                        ]).map((option) => (
+                          <button
+                            key={option.value}
+                            onClick={() => onBackupScopeChange(option.value)}
+                            className="flex-1 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
+                            style={{
+                              backgroundColor: backupState.exportScope === option.value ? '#1e1e20' : '#0d0d0f',
+                              color: backupState.exportScope === option.value ? '#f5f5f7' : '#636366',
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                  <div className="text-[11px] font-medium text-white mb-2">{ui.backupFolders}</div>
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                    {backupFolders.map((folder) => {
+                      const checked = backupState.selectedFolderPaths.includes(folder.path);
+                      return (
+                        <label key={folder.path} className="flex items-center gap-2 rounded-lg px-2 py-1.5 cursor-pointer" style={{ backgroundColor: '#0d0d0f' }}>
+                          <input
+                            type="checkbox"
+                            checked={backupState.exportScope === 'account' ? true : checked}
+                            disabled={backupState.exportScope === 'account'}
+                            onChange={() => onBackupFolderToggle(folder.path)}
+                          />
+                          <span className="text-[11px] text-white">{folder.name || folder.path}</span>
+                          <span className="text-[10px] ml-auto" style={{ color: '#636366' }}>{folder.path}</span>
+                        </label>
+                      );
+                    })}
+                    {backupFolders.length === 0 && (
+                      <div className="text-[11px]" style={{ color: '#636366' }}>No folders available for this account.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                  <div className="text-[11px] font-medium text-white mb-2">{ui.backupFilters}</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <select
+                      value={backupState.readState}
+                      onChange={(e) => onBackupReadStateChange(e.target.value as MailBackupReadState)}
+                      className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                      style={{ backgroundColor: '#0d0d0f' }}
+                    >
+                      {backupReadOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={backupState.startDate}
+                      onChange={(e) => onBackupStartDateChange(e.target.value)}
+                      className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                      style={{ backgroundColor: '#0d0d0f' }}
+                      aria-label={ui.backupStart}
+                    />
+                    <input
+                      type="date"
+                      value={backupState.endDate}
+                      onChange={(e) => onBackupEndDateChange(e.target.value)}
+                      className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                      style={{ backgroundColor: '#0d0d0f' }}
+                      aria-label={ui.backupEnd}
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                  <div className="text-[11px] font-medium text-white mb-2">{ui.backupDestination}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 rounded-lg px-2.5 py-2 text-[11px]" style={{ backgroundColor: '#0d0d0f', color: backupState.destinationPath ? '#f5f5f7' : '#636366' }}>
+                      {backupState.destinationPath || ui.backupPick}
+                    </div>
+                    <button
+                      onClick={onBackupPickDestination}
+                      className="px-3 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <FolderOpen className="w-3 h-3 inline-block mr-1.5" />
+                      {ui.backupPick}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[11px] font-medium text-white">EML Export</div>
+                    {backupState.isRunning && (
+                      <div className="text-[10px]" style={{ color: '#64d2ff' }}>
+                        {backupState.progress.processed}/{backupState.progress.total}
+                      </div>
+                    )}
+                  </div>
+                  <div className="h-2 rounded-full overflow-hidden mb-2" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{ width: `${backupProgressPercent}%`, backgroundColor: '#0071e3' }}
+                    />
+                  </div>
+                  <p className="text-[10px] mb-3" style={{ color: '#636366' }}>
+                    {backupState.progress.message || backupSummary || ui.backupImportPlaceholder}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={onStartBackupExport}
+                      disabled={backupState.isRunning || !canStartBackupExport(backupState)}
+                      className="flex-1 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#0071e3' }}
+                    >
+                      {ui.backupStartExport}
+                    </button>
+                    <button
+                      onClick={onCancelBackupExport}
+                      disabled={!backupState.isRunning}
+                      className="px-3 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <Ban className="w-3 h-3 inline-block mr-1.5" />
+                      {ui.backupCancel}
+                    </button>
+                    <button
+                      onClick={onOpenBackupFolder}
+                      disabled={!backupState.lastResult?.outputPath && !backupState.destinationPath}
+                      className="px-3 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <FolderOpen className="w-3 h-3 inline-block mr-1.5" />
+                      {ui.backupOpenFolder}
+                    </button>
+                  </div>
+                  {backupSummary && (
+                    <p className="text-[11px] mt-3" style={{ color: backupState.lastResult?.success ? '#30d158' : '#ff9f0a' }}>
+                      {backupSummary}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-xl px-3 py-3" style={{ backgroundColor: '#161618' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Info className="w-3 h-3" style={{ color: '#636366' }} />
+                    <span className="text-[11px] font-medium text-white">EML Import</span>
+                  </div>
+                  <p className="text-[11px]" style={{ color: '#636366' }}>{ui.backupImportPlaceholder}</p>
+                </div>
               </div>
             </div>
           )}

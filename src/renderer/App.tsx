@@ -31,11 +31,17 @@ import {
   resolveFolderPath,
 } from '../shared/mailFolders';
 import type { MailHistoryRange } from '../shared/mailSyncSettings';
+import type { MailBackupProgress, MailBackupResult, MailExportRequest } from '../shared/backup';
 import {
   MAIL_AUTO_FETCH_INTERVAL_SETTING_KEY,
   MAIL_FETCH_HISTORY_RANGE_SETTING_KEY,
   normalizeMailSettingsSnapshot,
 } from './utils/mailSettings';
+import {
+  canStartBackupExport,
+  createInitialBackupState,
+  type BackupUiState,
+} from './utils/mailBackupUi';
 import './i18n';
 
 type ScanMode = 'light' | 'deep';
@@ -293,6 +299,7 @@ function App() {
   const [accountFoldersById, setAccountFoldersById] = useState<Record<number, MailFolderInfo[]>>({});
   const [isViewHydrating, setIsViewHydrating] = useState(false);
   const [localThreadMails, setLocalThreadMails] = useState<RendererMailSummary[]>([]);
+  const [backupState, setBackupState] = useState<BackupUiState>(() => createInitialBackupState());
 
   const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
   const refreshPending = useRef(false);
@@ -418,6 +425,24 @@ function App() {
   }, [accounts]);
 
   useEffect(() => {
+    setBackupState((prev) => {
+      if (accounts.length === 0) {
+        return { ...prev, selectedAccountId: null, selectedFolderPaths: [] };
+      }
+
+      if (prev.selectedAccountId && accounts.some((account) => account.id === prev.selectedAccountId)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        selectedAccountId: currentAccount !== 'all' ? currentAccount.id : accounts[0].id,
+        selectedFolderPaths: [],
+      };
+    });
+  }, [accounts, currentAccount]);
+
+  useEffect(() => {
     if (accounts.length === 0) return;
     let cancelled = false;
 
@@ -443,6 +468,25 @@ function App() {
       cancelled = true;
     };
   }, [accounts]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onBackupProgress((progress: MailBackupProgress) => {
+      setBackupState((prev) => {
+        if (prev.taskId && progress.taskId !== prev.taskId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          taskId: progress.taskId,
+          isRunning: !progress.cancelled && progress.stage !== 'finalizing',
+          progress,
+        };
+      });
+    });
+
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (selectedFolder === 'sent' || selectedFolder === 'drafts') {
@@ -1478,6 +1522,132 @@ function App() {
     }
   }, []);
 
+  const backupFolders = useMemo(
+    () => (backupState.selectedAccountId ? accountFoldersById[backupState.selectedAccountId] || [] : []),
+    [accountFoldersById, backupState.selectedAccountId]
+  );
+
+  const handleBackupAccountChange = useCallback((accountId: number) => {
+    setBackupState((prev) => ({
+      ...prev,
+      selectedAccountId: Number.isFinite(accountId) ? accountId : null,
+      selectedFolderPaths: [],
+      lastResult: null,
+    }));
+  }, []);
+
+  const handleBackupScopeChange = useCallback((scope: BackupUiState['exportScope']) => {
+    setBackupState((prev) => ({
+      ...prev,
+      exportScope: scope,
+      lastResult: null,
+    }));
+  }, []);
+
+  const handleBackupFolderToggle = useCallback((folderPath: string) => {
+    setBackupState((prev) => ({
+      ...prev,
+      selectedFolderPaths: prev.selectedFolderPaths.includes(folderPath)
+        ? prev.selectedFolderPaths.filter((value) => value !== folderPath)
+        : [...prev.selectedFolderPaths, folderPath],
+      lastResult: null,
+    }));
+  }, []);
+
+  const handleBackupPickDestination = useCallback(async () => {
+    const response = await window.electronAPI.invoke('file:pickDirectory') as {
+      success: boolean;
+      paths?: string[];
+    };
+
+    if (response.success && response.paths?.[0]) {
+      setBackupState((prev) => ({
+        ...prev,
+        destinationPath: response.paths![0],
+        lastResult: null,
+      }));
+    }
+  }, []);
+
+  const handleCancelBackupExport = useCallback(async () => {
+    if (!backupState.taskId) return;
+    await window.electronAPI.invoke('mail:cancelBackup', backupState.taskId);
+  }, [backupState.taskId]);
+
+  const handleOpenBackupFolder = useCallback(async () => {
+    const targetPath = backupState.lastResult?.outputPath || backupState.destinationPath;
+    if (!targetPath) return;
+    await window.electronAPI.invoke('file:openPath', targetPath);
+  }, [backupState.destinationPath, backupState.lastResult?.outputPath]);
+
+  const handleStartBackupExport = useCallback(async () => {
+    const currentBackupState = backupState;
+    if (!canStartBackupExport(currentBackupState) || !currentBackupState.selectedAccountId) {
+      return;
+    }
+
+    const taskId = `backup-${Date.now()}`;
+    const selectedAccount = accountList.find((account) => account.id === currentBackupState.selectedAccountId);
+    const folderPaths = currentBackupState.exportScope === 'account'
+      ? backupFolders.map((folder) => folder.path)
+      : currentBackupState.selectedFolderPaths;
+    const request: MailExportRequest = {
+      mode: 'export',
+      taskId,
+      destinationPath: currentBackupState.destinationPath,
+      scope: {
+        accountId: currentBackupState.selectedAccountId,
+        accountLabel: selectedAccount?.email || selectedAccount?.name || `account-${currentBackupState.selectedAccountId}`,
+        folderPaths,
+      },
+      filters: {
+        readState: currentBackupState.readState,
+        startDate: currentBackupState.startDate ? new Date(`${currentBackupState.startDate}T00:00:00`).toISOString() : undefined,
+        endDate: currentBackupState.endDate ? new Date(`${currentBackupState.endDate}T23:59:59.999`).toISOString() : undefined,
+      },
+    };
+
+    setBackupState((prev) => ({
+      ...prev,
+      taskId,
+      isRunning: true,
+      lastResult: null,
+      progress: {
+        taskId,
+        mode: 'export',
+        stage: 'preparing',
+        processed: 0,
+        total: 0,
+        message: 'Preparing export',
+      },
+    }));
+
+    const response = await window.electronAPI.invoke('mail:exportEml', request) as {
+      success: boolean;
+      data?: MailBackupResult;
+      error?: string;
+    };
+
+    setBackupState((prev) => ({
+      ...prev,
+      taskId,
+      isRunning: false,
+      lastResult: response.success && response.data
+        ? response.data
+        : {
+            taskId,
+            success: false,
+            mode: 'export',
+            processed: prev.progress.processed,
+            imported: 0,
+            exported: prev.progress.processed,
+            skipped: 0,
+            error: response.error || 'Export failed',
+            outputPath: prev.destinationPath,
+          },
+    }));
+  }, [accountList, backupFolders, backupState]);
+
   const handleSaveDraft = useCallback(async (options: {
     accountId: number;
     to: string[];
@@ -1751,6 +1921,19 @@ function App() {
           onMailHistoryRangeChange={handleMailHistoryRangeChange}
           autoFetchInterval={autoFetchMinutes}
           onAutoFetchIntervalChange={handleAutoFetchIntervalChange}
+          backupState={backupState}
+          backupAccounts={accountList}
+          backupFolders={backupFolders}
+          onBackupAccountChange={handleBackupAccountChange}
+          onBackupScopeChange={handleBackupScopeChange}
+          onBackupFolderToggle={handleBackupFolderToggle}
+          onBackupReadStateChange={(readState) => setBackupState((prev) => ({ ...prev, readState, lastResult: null }))}
+          onBackupStartDateChange={(value) => setBackupState((prev) => ({ ...prev, startDate: value, lastResult: null }))}
+          onBackupEndDateChange={(value) => setBackupState((prev) => ({ ...prev, endDate: value, lastResult: null }))}
+          onBackupPickDestination={handleBackupPickDestination}
+          onStartBackupExport={handleStartBackupExport}
+          onCancelBackupExport={handleCancelBackupExport}
+          onOpenBackupFolder={handleOpenBackupFolder}
         />
 
         <AddAccountDialog

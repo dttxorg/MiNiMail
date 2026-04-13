@@ -4,6 +4,7 @@ import { Notification, BrowserWindow } from 'electron';
 import { fetchMailList, fetchMailDetail, getMailFolders } from './mail';
 import { getAccountById, getAccountCredentials } from '../database';
 import type { MailSummary, MailDetail, FolderInfo } from './mail';
+import { buildMailNotificationKey, shouldNotifyMail } from './mailNotification';
 
 export interface MailSummaryStored {
   id: string;
@@ -24,6 +25,10 @@ export interface MailSummaryStored {
   inReplyTo?: string;
   /** RFC 2822 References header */
   references?: string;
+  /** Persisted body — written when full message is fetched */
+  bodyHtml?: string;
+  bodyText?: string;
+  category?: string;
 }
 
 export interface SyncResult {
@@ -31,6 +36,9 @@ export interface SyncResult {
   totalCached: number;
   errors: string[];
 }
+
+const appStartedAt = Date.now();
+const notifiedMailKeys = new Set<string>();
 
 // ─── SQLite mail cache helpers ───────────────────────────────────────────────
 
@@ -54,6 +62,9 @@ function migrateMailCacheTable(db: any) {
     'ALTER TABLE mail_cache ADD COLUMN message_id TEXT',
     'ALTER TABLE mail_cache ADD COLUMN in_reply_to TEXT',
     'ALTER TABLE mail_cache ADD COLUMN references_header TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN body_html TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN body_text TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN category TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists — safe to ignore */ }
@@ -78,6 +89,7 @@ function ensureMailCacheTable(db: any) {
       folder TEXT NOT NULL DEFAULT 'INBOX',
       account_id INTEGER NOT NULL,
       cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+      category TEXT,
       UNIQUE(account_id, folder, uid)
     )
   `);
@@ -97,15 +109,21 @@ function getCachedUids(accountId: number, folder: string): Set<number> {
 function upsertMailCache(mail: MailSummaryStored): void {
   const db = getMailCacheDb();
   ensureMailCacheTable(db);
+  const existing = db.prepare(`
+    SELECT message_id, in_reply_to, references_header, body_html, body_text, category
+    FROM mail_cache
+    WHERE account_id = ? AND folder = ? AND uid = ?
+  `).get(mail.accountId, mail.folder, mail.uid) as Record<string, unknown> | undefined;
+
   db.prepare(`
     INSERT OR REPLACE INTO mail_cache
       (id, uid, "from", from_name, "to", subject, date, snippet,
        has_attachments, is_read, is_starred, folder, account_id, cached_at,
-       message_id, in_reply_to, references_header)
+       message_id, in_reply_to, references_header, body_html, body_text, category)
     VALUES
       (@id, @uid, @from, @fromName, @to, @subject, @date, @snippet,
        @hasAttachments, @isRead, @isStarred, @folder, @accountId, @cachedAt,
-       @messageId, @inReplyTo, @references)
+       @messageId, @inReplyTo, @references, @bodyHtml, @bodyText, @category)
   `).run({
     id: mail.id,
     uid: mail.uid,
@@ -121,25 +139,37 @@ function upsertMailCache(mail: MailSummaryStored): void {
     folder: mail.folder,
     accountId: mail.accountId,
     cachedAt: new Date().toISOString(),
-    messageId: mail.messageId ?? null,
-    inReplyTo: mail.inReplyTo ?? null,
-    references: mail.references ?? null,
+    messageId: mail.messageId ?? existing?.message_id ?? null,
+    inReplyTo: mail.inReplyTo ?? existing?.in_reply_to ?? null,
+    references: mail.references ?? existing?.references_header ?? null,
+    bodyHtml: mail.bodyHtml ?? existing?.body_html ?? null,
+    bodyText: mail.bodyText ?? existing?.body_text ?? null,
+    category: mail.category ?? existing?.category ?? null,
   });
   db.close();
 }
 
-function getCachedMails(accountId: number, folder: string, limit: number = 50): MailSummaryStored[] {
+function getCachedMails(accountId: number, folder: string, limit?: number): MailSummaryStored[] {
   const db = getMailCacheDb();
   ensureMailCacheTable(db);
-  const rows = db.prepare(`
-    SELECT id, uid, "from", from_name, "to", subject, date, snippet,
-           has_attachments, is_read, is_starred, folder, account_id, cached_at,
-           message_id, in_reply_to, references_header
-    FROM mail_cache
-    WHERE account_id = ? AND folder = ?
-    ORDER BY uid DESC
-    LIMIT ?
-  `).all(accountId, folder, limit) as Record<string, unknown>[];
+  const rows = (limit == null
+    ? db.prepare(`
+        SELECT id, uid, "from", from_name, "to", subject, date, snippet,
+               has_attachments, is_read, is_starred, folder, account_id, cached_at,
+               message_id, in_reply_to, references_header, body_html, body_text, category
+        FROM mail_cache
+        WHERE account_id = ? AND folder = ?
+        ORDER BY uid DESC
+      `).all(accountId, folder)
+    : db.prepare(`
+        SELECT id, uid, "from", from_name, "to", subject, date, snippet,
+               has_attachments, is_read, is_starred, folder, account_id, cached_at,
+               message_id, in_reply_to, references_header, body_html, body_text, category
+        FROM mail_cache
+        WHERE account_id = ? AND folder = ?
+        ORDER BY uid DESC
+        LIMIT ?
+      `).all(accountId, folder, limit)) as Record<string, unknown>[];
   db.close();
   return rows.map(row => ({
     id: row.id as string,
@@ -159,14 +189,32 @@ function getCachedMails(accountId: number, folder: string, limit: number = 50): 
     messageId: row.message_id != null ? (row.message_id as string) : undefined,
     inReplyTo: row.in_reply_to != null ? (row.in_reply_to as string) : undefined,
     references: row.references_header != null ? (row.references_header as string) : undefined,
+    bodyHtml: row.body_html != null ? (row.body_html as string) : undefined,
+    bodyText: row.body_text != null ? (row.body_text as string) : undefined,
+    category: row.category != null ? (row.category as string) : undefined,
   }));
+}
+
+/** Fetch only the body fields from SQLite (for session reuse after first fetch) */
+export function getCachedBody(accountId: number, uid: number): { bodyHtml?: string; bodyText?: string } | null {
+  const db = getMailCacheDb();
+  ensureMailCacheTable(db);
+  const row = db.prepare(`
+    SELECT body_html, body_text FROM mail_cache WHERE account_id = ? AND uid = ?
+  `).get(accountId, uid) as Record<string, unknown> | undefined;
+  db.close();
+  if (!row) return null;
+  return {
+    bodyHtml: row.body_html != null ? (row.body_html as string) : undefined,
+    bodyText: row.body_text != null ? (row.body_text as string) : undefined,
+  };
 }
 
 // ─── IMAP fetch via existing mail.ts ────────────────────────────────────────
 
 async function fetchFromImap(accountId: number, folder: string): Promise<MailSummary[]> {
   // This calls the REAL imap-client based fetchMailList in mail.ts
-  const mailList = await fetchMailList(accountId, folder, { limit: 100, offset: 0 });
+  const mailList = await fetchMailList(accountId, folder, { limit: 200, offset: 0 });
   return mailList.map(m => ({
     id: m.id,
     uid: m.uid,
@@ -198,7 +246,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export async function syncMails(accountId: number, folder: string = 'INBOX'): Promise<SyncResult> {
+export async function syncMails(
+  accountId: number,
+  folder: string = 'INBOX',
+  options?: { notify?: boolean; folderKind?: 'inbox' | 'other' },
+): Promise<SyncResult> {
   console.log('[mailService] syncMails ENTER accountId=', accountId, 'folder=', folder);
   const errors: string[] = [];
 
@@ -239,7 +291,25 @@ export async function syncMails(accountId: number, folder: string = 'INBOX'): Pr
 
     // Step 4: Notify for new mails
     if (newMails.length > 0) {
-      triggerNativeNotification(newMails[0] as MailSummary & { accountId: number; folder: string });
+      const account = getAccountById(accountId);
+      const folderKind = options?.folderKind ?? (folder.toLowerCase() === 'inbox' ? 'inbox' : 'other');
+      const candidate = newMails.find((mail) => {
+        const key = buildMailNotificationKey(accountId, folder, mail);
+        return shouldNotifyMail({
+          notify: options?.notify !== false,
+          accountEmail: account?.email,
+          appStartedAt,
+          mail,
+          folderKind,
+          alreadyNotified: notifiedMailKeys.has(key),
+        });
+      });
+
+      if (candidate) {
+        const key = buildMailNotificationKey(accountId, folder, candidate);
+        notifiedMailKeys.add(key);
+        triggerNativeNotification(candidate as MailSummary & { accountId: number; folder: string });
+      }
     }
 
     console.log('[mailService] sync complete: newMails=', newMails.length, 'totalCached=', remoteMails.length);
@@ -266,6 +336,29 @@ export async function fetchFullMessage(
       15000
     );
     if (!detail) throw new Error('Message not found');
+
+    // Persist body to SQLite so future loads skip IMAP fetch
+    upsertMailCache({
+      id: detail.id,
+      uid: detail.uid,
+      from: detail.from,
+      fromName: detail.fromName,
+      to: detail.to,
+      subject: detail.subject,
+      date: typeof detail.date === 'string' ? detail.date : detail.date.toISOString(),
+      snippet: '',
+      hasAttachments: detail.attachments.length > 0,
+      isRead: detail.flags.includes('\\Seen'),
+      isStarred: detail.flags.includes('\\Flagged'),
+      folder,
+      accountId,
+      cachedAt: new Date().toISOString(),
+      messageId: (detail as any).messageId,
+      inReplyTo: (detail as any).inReplyTo,
+      bodyHtml: detail.bodyHtml,
+      bodyText: detail.bodyText,
+    } as unknown as MailSummaryStored);
+
     return detail;
   } catch (err) {
     if ((err as Error).message.includes('Timeout')) {
@@ -284,7 +377,7 @@ export async function getFolders(accountId: number): Promise<FolderInfo[]> {
 // Load cached mails on startup (for offline/initial render)
 export function loadCachedMails(accountId: number, folder: string = 'INBOX'): MailSummary[] {
   try {
-    const cached = getCachedMails(accountId, folder);
+    const cached = getCachedMails(accountId, folder, 200);
     return cached.map(c => ({
       id: c.id,
       uid: c.uid,
@@ -303,11 +396,80 @@ export function loadCachedMails(accountId: number, folder: string = 'INBOX'): Ma
       messageId: c.messageId,
       inReplyTo: c.inReplyTo,
       references: c.references,
+      category: c.category,
     } as MailSummary));
   } catch (err) {
     log.warn('[mailService] loadCachedMails failed:', err);
     return [];
   }
+}
+
+export function loadCachedMailRecords(accountId: number, folder: string = 'INBOX'): MailSummaryStored[] {
+  try {
+    return getCachedMails(accountId, folder);
+  } catch (err) {
+    log.warn('[mailService] loadCachedMailRecords failed:', err);
+    return [];
+  }
+}
+
+export function updateCachedMailCategory(
+  accountId: number,
+  folder: string,
+  uid: number,
+  category: string,
+): void {
+  const db = getMailCacheDb();
+  ensureMailCacheTable(db);
+  db.prepare(`
+    UPDATE mail_cache
+    SET category = ?, cached_at = ?
+    WHERE account_id = ? AND folder = ? AND uid = ?
+  `).run(category, new Date().toISOString(), accountId, folder, uid);
+  db.close();
+}
+
+export function updateCachedMailStar(
+  accountId: number,
+  folder: string,
+  uid: number,
+  isStarred: boolean,
+): void {
+  const db = getMailCacheDb();
+  ensureMailCacheTable(db);
+  db.prepare(`
+    UPDATE mail_cache
+    SET is_starred = ?, cached_at = ?
+    WHERE account_id = ? AND folder = ? AND uid = ?
+  `).run(isStarred ? 1 : 0, new Date().toISOString(), accountId, folder, uid);
+  db.close();
+}
+
+export function updateCachedMailRead(
+  accountId: number,
+  folder: string,
+  uid: number,
+  isRead: boolean,
+): void {
+  const db = getMailCacheDb();
+  ensureMailCacheTable(db);
+  db.prepare(`
+    UPDATE mail_cache
+    SET is_read = ?, cached_at = ?
+    WHERE account_id = ? AND folder = ? AND uid = ?
+  `).run(isRead ? 1 : 0, new Date().toISOString(), accountId, folder, uid);
+  db.close();
+}
+
+export function saveLocalMailToCache(mail: MailSummaryStored): void {
+  upsertMailCache(mail);
+}
+
+export function deleteCachedMailById(id: string): void {
+  const db = getMailCacheDb();
+  ensureMailCacheTable(db);
+  db.prepare('DELETE FROM mail_cache WHERE id = ?').run(id);
+  db.close();
 }
 
 // ─── Native notification ─────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
@@ -169,6 +169,28 @@ ipcMain.handle('file:writeFile', async (_event, options: { filePath: string; dat
       await fs.promises.writeFile(options.filePath, options.data, 'utf8');
     }
     return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('file:pickDirectory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return {
+    success: !result.canceled,
+    paths: result.filePaths,
+  };
+});
+
+ipcMain.handle('file:openPath', async (_event, targetPath: string) => {
+  try {
+    const response = await shell.openPath(targetPath);
+    return {
+      success: response.length === 0,
+      error: response || undefined,
+    };
   } catch (err) {
     return { success: false, error: String(err) };
   }
