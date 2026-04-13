@@ -1,7 +1,9 @@
 import {
+  buildSyntheticEml,
   buildExportFileName,
   filterMailSummariesForExport,
   getExportSubdirParts,
+  shouldFetchDetailForExport,
 } from '../src/main/services/mailBackup';
 import { createInitialBackupState } from '../src/renderer/utils/mailBackupUi';
 import type { MailExportRequest } from '../src/shared/backup';
@@ -74,6 +76,75 @@ function testExportLayoutHelpers() {
   );
 }
 
+function testDetailFetchPolicy() {
+  assertEqual(
+    shouldFetchDetailForExport(
+      {
+        bodyText: 'cached',
+      },
+      {},
+    ),
+    true,
+  );
+
+  assertEqual(
+    shouldFetchDetailForExport(
+      {
+        bodyText: 'cached',
+      },
+      { includeAttachments: false },
+    ),
+    false,
+  );
+}
+
+function testSyntheticEmlCcHeader() {
+  const eml = buildSyntheticEml(
+    {
+      id: 'mail-1',
+      uid: 1,
+      from: 'sender@example.com',
+      fromName: 'Sender',
+      to: 'to@example.com',
+      subject: 'Subject',
+      date: '2026-04-03T08:30:00.000Z',
+      snippet: 'snippet',
+      hasAttachments: true,
+      isRead: false,
+      isStarred: false,
+      folder: 'INBOX',
+      accountId: 3,
+      cachedAt: '2026-04-03T08:30:00.000Z',
+    },
+    {
+      id: 'mail-1',
+      uid: 1,
+      from: 'sender@example.com',
+      fromName: 'Sender',
+      to: 'to@example.com',
+      cc: 'cc@example.com',
+      subject: 'Subject',
+      date: new Date('2026-04-03T08:30:00.000Z'),
+      flags: [],
+      bodyText: 'Hello world',
+      attachments: [
+        { filename: 'file.txt', contentType: 'text/plain', size: 42 },
+      ],
+      headers: {
+        from: 'sender@example.com',
+        to: 'to@example.com',
+        cc: 'cc@example.com',
+        subject: 'Subject',
+        date: 'Thu, 03 Apr 2026 08:30:00 GMT',
+      },
+    },
+  );
+
+  if (!eml.includes('\r\nCc: cc@example.com\r\n')) {
+    throw new Error(`Expected synthetic EML to include Cc header, got: ${eml}`);
+  }
+}
+
 function testBackupUiDefaults() {
   const state = createInitialBackupState();
   assertEqual(state.exportScope, 'folders');
@@ -86,6 +157,8 @@ function testBackupUiDefaults() {
 function run() {
   testExportFilters();
   testExportLayoutHelpers();
+  testDetailFetchPolicy();
+  testSyntheticEmlCcHeader();
   testBackupUiDefaults();
   console.log('mail-backup tests passed');
 }

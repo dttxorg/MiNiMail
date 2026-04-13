@@ -220,7 +220,7 @@ export function registerMailHandlers(): void {
       const result = await exportMailsToEml(request, (progress) => {
         event.sender.send('mail:backup-progress', progress);
       });
-      return { success: result.success, data: result, error: result.error };
+      return { success: true, data: result };
     } catch (err) {
       const error = err as Error;
       log.error('Failed to export mail backup:', error);

@@ -111,7 +111,18 @@ function buildTextPart(contentType: string, body: string): string {
   ].join('\r\n');
 }
 
-function buildSyntheticEml(
+export function shouldFetchDetailForExport(
+  mail: Pick<MailSummaryStored, 'bodyHtml' | 'bodyText'>,
+  request: Pick<MailExportRequest, 'includeAttachments'>,
+): boolean {
+  if (request.includeAttachments !== false) {
+    return true;
+  }
+
+  return !mail.bodyHtml && !mail.bodyText;
+}
+
+export function buildSyntheticEml(
   mail: MailSummaryStored,
   detail: Awaited<ReturnType<typeof fetchFullMessage>> | null,
 ): string {
@@ -127,6 +138,9 @@ function buildSyntheticEml(
   const headerLines = [
     `From: ${messageHeaders.get('from') || encodeHeaderValue(mail.from)}`,
     `To: ${messageHeaders.get('to') || encodeHeaderValue(mail.to)}`,
+    detail?.cc || messageHeaders.get('cc')
+      ? `Cc: ${messageHeaders.get('cc') || encodeHeaderValue(detail?.cc)}`
+      : '',
     `Subject: ${messageHeaders.get('subject') || encodeHeaderValue(mail.subject, '(No Subject)')}`,
     `Date: ${messageHeaders.get('date') || formatRfc2822Date(mail.date)}`,
     `Message-ID: ${encodeHeaderValue(mail.messageId, `<${mail.accountId}.${mail.uid}@minnimail.local>`)}`,
@@ -277,9 +291,9 @@ export async function exportMailsToEml(
     });
 
     try {
-      const detail = (mail.bodyHtml || mail.bodyText)
-        ? null
-        : await fetchFullMessage(accountId, mail.uid, folderPath);
+      const detail = shouldFetchDetailForExport(mail, request)
+        ? await fetchFullMessage(accountId, mail.uid, folderPath)
+        : null;
       const destinationDir = path.join(request.destinationPath, ...getExportSubdirParts(normalizedRequest, folderPath));
       await ensureDir(destinationDir);
       const filePath = path.join(destinationDir, buildExportFileName(mail));

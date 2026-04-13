@@ -1632,7 +1632,7 @@ function App() {
       ...prev,
       taskId,
       isRunning: false,
-      lastResult: response.success && response.data
+      lastResult: response.data
         ? response.data
         : {
             taskId,
