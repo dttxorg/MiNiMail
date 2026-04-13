@@ -1,4 +1,4 @@
-import type { AppLanguage } from './aiLanguages';
+import type { AppLanguage } from '../../shared/mailFolders';
 import { MAIL_HISTORY_RANGE_VALUES, type MailHistoryRange } from '../../shared/mailSyncSettings';
 
 export interface Option<T> {

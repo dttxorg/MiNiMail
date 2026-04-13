@@ -92,7 +92,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: '深度扫描', sub: '清洗后正文前 800 字 / 每批 10 封' },
       },
       lookback: { '3d': '3 天', '7d': '7 天', '1mo': '1 个月' },
-      autoFetchOptions: { 0: '关闭', 5: '每 5 分钟', 10: '每 10 分钟', 15: '每 15 分钟', 30: '每 30 分钟', 60: '每 60 分钟' },
       appLanguages,
     },
     en: {
@@ -122,7 +121,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: 'Deep Scan', sub: 'First 800 chars of cleaned body / 10 emails per batch' },
       },
       lookback: { '3d': '3 days', '7d': '7 days', '1mo': '1 month' },
-      autoFetchOptions: { 0: 'Off', 5: 'Every 5 min', 10: 'Every 10 min', 15: 'Every 15 min', 30: 'Every 30 min', 60: 'Every 60 min' },
       appLanguages,
     },
     ja: {
@@ -152,7 +150,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: '詳細スキャン', sub: '洗浄済み本文の先頭 800 文字 / 1 バッチ 10 件' },
       },
       lookback: { '3d': '3日', '7d': '7日', '1mo': '1か月' },
-      autoFetchOptions: { 0: 'オフ', 5: '5分ごと', 10: '10分ごと', 15: '15分ごと', 30: '30分ごと', 60: '60分ごと' },
       appLanguages,
     },
     ko: {
@@ -182,7 +179,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: '심층 스캔', sub: '정리된 본문 앞 800자 / 배치당 10개' },
       },
       lookback: { '3d': '3일', '7d': '7일', '1mo': '1개월' },
-      autoFetchOptions: { 0: '끔', 5: '5분마다', 10: '10분마다', 15: '15분마다', 30: '30분마다', 60: '60분마다' },
       appLanguages,
     },
     es: {
@@ -212,7 +208,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: 'Escaneo profundo', sub: 'Primeros 800 caracteres del cuerpo limpio / 10 correos por lote' },
       },
       lookback: { '3d': '3 días', '7d': '7 días', '1mo': '1 mes' },
-      autoFetchOptions: { 0: 'Desactivado', 5: 'Cada 5 min', 10: 'Cada 10 min', 15: 'Cada 15 min', 30: 'Cada 30 min', 60: 'Cada 60 min' },
       appLanguages,
     },
     fr: {
@@ -242,7 +237,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: 'Analyse approfondie', sub: '800 premiers caractères du corps nettoyé / 10 mails par lot' },
       },
       lookback: { '3d': '3 jours', '7d': '7 jours', '1mo': '1 mois' },
-      autoFetchOptions: { 0: 'Désactivé', 5: 'Toutes les 5 min', 10: 'Toutes les 10 min', 15: 'Toutes les 15 min', 30: 'Toutes les 30 min', 60: 'Toutes les 60 min' },
       appLanguages,
     },
     de: {
@@ -272,7 +266,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: 'Tiefer Scan', sub: 'Erste 800 Zeichen des bereinigten Inhalts / 10 Mails pro Durchgang' },
       },
       lookback: { '3d': '3 Tage', '7d': '7 Tage', '1mo': '1 Monat' },
-      autoFetchOptions: { 0: 'Aus', 5: 'Alle 5 Min.', 10: 'Alle 10 Min.', 15: 'Alle 15 Min.', 30: 'Alle 30 Min.', 60: 'Alle 60 Min.' },
       appLanguages,
     },
     ru: {
@@ -302,7 +295,6 @@ function getSettingsText(appLanguage: AppLanguage) {
         deep: { label: 'Глубокое сканирование', sub: 'Первые 800 символов очищенного текста / 10 писем за пакет' },
       },
       lookback: { '3d': '3 дня', '7d': '7 дней', '1mo': '1 месяц' },
-      autoFetchOptions: { 0: 'Выключено', 5: 'Каждые 5 мин', 10: 'Каждые 10 мин', 15: 'Каждые 15 мин', 30: 'Каждые 30 мин', 60: 'Каждые 60 мин' },
       appLanguages,
     },
   };
@@ -345,7 +337,6 @@ function getSettingsText(appLanguage: AppLanguage) {
     appDescription: string;
     scanMode: Record<'light' | 'deep', { label: string; sub: string }>;
     lookback: Record<'3d' | '7d' | '1mo', string>;
-    autoFetchOptions: Record<number, string>;
     appLanguages: typeof appLanguages;
   };
 }

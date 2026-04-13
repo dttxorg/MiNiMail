@@ -30,7 +30,12 @@ import {
   getAiLanguageFromAppLanguage,
   resolveFolderPath,
 } from '../shared/mailFolders';
-import { coerceMailHistoryRange, type MailHistoryRange } from '../shared/mailSyncSettings';
+import type { MailHistoryRange } from '../shared/mailSyncSettings';
+import {
+  MAIL_AUTO_FETCH_INTERVAL_SETTING_KEY,
+  MAIL_FETCH_HISTORY_RANGE_SETTING_KEY,
+  normalizeMailSettingsSnapshot,
+} from './utils/mailSettings';
 import './i18n';
 
 type ScanMode = 'light' | 'deep';
@@ -355,20 +360,21 @@ function App() {
           setAiScanMode(res.data.scanMode);
           setAiLookback(res.data.lookback);
         }
-        const intervalRes = await window.electronAPI.invoke('settings:get', 'mail_auto_fetch_interval_minutes') as {
+        const intervalRes = await window.electronAPI.invoke('settings:get', MAIL_AUTO_FETCH_INTERVAL_SETTING_KEY) as {
           success: boolean;
           data?: string | null;
         };
-        if (intervalRes.success && intervalRes.data !== undefined && intervalRes.data !== null) {
-          const parsed = Number(intervalRes.data);
-          setAutoFetchMinutes(Number.isFinite(parsed) ? parsed : 0);
-        }
-        const historyRes = await window.electronAPI.invoke('settings:get', 'mail_fetch_history_range') as {
+        const historyRes = await window.electronAPI.invoke('settings:get', MAIL_FETCH_HISTORY_RANGE_SETTING_KEY) as {
           success: boolean;
           data?: string | null;
         };
-        if (historyRes.success) {
-          setMailFetchHistoryRange(coerceMailHistoryRange(historyRes.data));
+        if (intervalRes.success || historyRes.success) {
+          const snapshot = normalizeMailSettingsSnapshot({
+            mailAutoFetchIntervalMinutes: intervalRes.success ? intervalRes.data ?? null : null,
+            mailFetchHistoryRange: historyRes.success ? historyRes.data ?? null : null,
+          });
+          setAutoFetchMinutes(snapshot.mailAutoFetchIntervalMinutes);
+          setMailFetchHistoryRange(snapshot.mailFetchHistoryRange);
         }
       } catch (err) {
         console.error('[ai:getSettings]', err);
@@ -1457,18 +1463,18 @@ function App() {
   const handleAutoFetchIntervalChange = useCallback(async (minutes: number) => {
     setAutoFetchMinutes(minutes);
     try {
-      await window.electronAPI.invoke('settings:set', 'mail_auto_fetch_interval_minutes', String(minutes));
+      await window.electronAPI.invoke('settings:set', MAIL_AUTO_FETCH_INTERVAL_SETTING_KEY, String(minutes));
     } catch (err) {
-      console.error('[settings:set mail_auto_fetch_interval_minutes]', err);
+      console.error(`[settings:set ${MAIL_AUTO_FETCH_INTERVAL_SETTING_KEY}]`, err);
     }
   }, []);
 
   const handleMailHistoryRangeChange = useCallback(async (range: MailHistoryRange) => {
     setMailFetchHistoryRange(range);
     try {
-      await window.electronAPI.invoke('settings:set', 'mail_fetch_history_range', range);
+      await window.electronAPI.invoke('settings:set', MAIL_FETCH_HISTORY_RANGE_SETTING_KEY, range);
     } catch (err) {
-      console.error('[settings:set mail_fetch_history_range]', err);
+      console.error(`[settings:set ${MAIL_FETCH_HISTORY_RANGE_SETTING_KEY}]`, err);
     }
   }, []);
 

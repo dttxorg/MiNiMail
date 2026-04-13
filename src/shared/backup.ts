@@ -1,5 +1,10 @@
 import type { MailHistoryRange } from './mailSyncSettings';
 
+export interface MailBackupTaskBase {
+  taskId: string;
+  includeAttachments?: boolean;
+}
+
 export interface MailBackupScope {
   accountId?: number;
   folder?: string;
@@ -7,16 +12,24 @@ export interface MailBackupScope {
   historyRange?: MailHistoryRange;
 }
 
-export interface MailBackupRequest {
-  mode: 'export' | 'import';
-  sourcePath?: string;
-  destinationPath?: string;
+export interface MailExportRequest extends MailBackupTaskBase {
+  mode: 'export';
+  destinationPath: string;
   scope?: MailBackupScope;
-  includeAttachments?: boolean;
+}
+
+export interface MailImportRequest extends MailBackupTaskBase {
+  mode: 'import';
+  sourcePath: string;
+  targetAccountId?: number;
+  targetFolder?: string;
   overwriteExisting?: boolean;
 }
 
+export type MailBackupRequest = MailExportRequest | MailImportRequest;
+
 export interface MailBackupProgress {
+  taskId: string;
   mode: MailBackupRequest['mode'];
   stage: 'preparing' | 'reading' | 'writing' | 'finalizing';
   processed: number;
@@ -26,6 +39,7 @@ export interface MailBackupProgress {
 }
 
 export interface MailBackupResult {
+  taskId: string;
   success: boolean;
   mode: MailBackupRequest['mode'];
   processed: number;
