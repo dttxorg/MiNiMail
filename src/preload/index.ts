@@ -4,8 +4,12 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('app:get-version'),
   getUserDataPath: () => ipcRenderer.invoke('app:get-user-data-path'),
+  openExternal: (target: string) => ipcRenderer.invoke('app:openExternal', target),
+  downloadAttachment: (request: unknown) => ipcRenderer.invoke('mail:downloadAttachment', request),
+  openAttachment: (request: unknown) => ipcRenderer.invoke('mail:openAttachment', request),
   invoke: (channel: string, ...args: unknown[]) => {
     const validChannels = [
+      'app:openExternal',
       'accounts:getAll',
       'accounts:get',
       'accounts:create',
@@ -19,10 +23,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:getFolders',
       'mail:getList',
       'mail:getDetail',
+      'mail:downloadAttachment',
+      'mail:openAttachment',
       'mail:setFlags',
       'mail:setRead',
       'mail:setStarred',
       'mail:updateCategories',
+      'mail:clearScanResults',
       'mail:getCurrentFolder',
       'mail:send',
       'mail:testSmtp',
@@ -33,8 +40,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:getSettings',
       'ai:saveSettings',
       'ai:translate',
+      'ai:translateSegments',
       'ai:summarize',
       'ai:suggestReply',
+      'ai:suggestActions',
+      'ai:suggestQuickReplies',
+      'ai:extractKeyInfo',
       'ai:polish',
       'ai:classifyBatch',
       'oauth:startFlow',
@@ -43,13 +54,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:sync',
       'mail:fetchFull',
       'mail:loadCached',
+      'mail:loadLocalDrafts',
       'mail:loadCachedBody',
+      'mail:pruneCache',
       'mail:cacheLocal',
+      'mail:deleteCachedById',
       'mail:exportEml',
+      'mail:importEml',
       'mail:cancelBackup',
       'file:saveDialog',
       'file:writeFile',
       'file:pickDirectory',
+      'file:pickImportSources',
       'file:openPath',
     ];
     if (validChannels.includes(channel)) {
@@ -62,6 +78,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onMailSync: (callback: (mail: unknown) => void) => {
     ipcRenderer.on('mail:sync-new', (_event, mail) => callback(mail));
+  },
+  onMailStagedSyncProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+    ipcRenderer.on('mail:stagedSyncProgress', listener);
+    return () => ipcRenderer.removeListener('mail:stagedSyncProgress', listener);
   },
   onBackupProgress: (callback: (progress: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);

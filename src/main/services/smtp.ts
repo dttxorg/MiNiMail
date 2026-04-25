@@ -33,16 +33,17 @@ export async function sendMail(options: SendMailOptions): Promise<SendMailResult
     return { success: false, message: 'No credentials found' };
   }
 
-  // Create transporter based on account type
+  // Create transporter — use XOAUTH2 for OAuth accounts
+  const smtpAuth = account.auth_type === 'oauth' && credentials.oauth_token
+    ? { type: 'OAuth2' as const, user: account.username, accessToken: credentials.oauth_token }
+    : { user: account.username, pass: credentials.password };
+
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
     port: account.smtp_port,
-    secure: account.smtp_port === 465, // Use SSL for port 465
+    secure: account.smtp_port === 465,
     requireTLS: account.use_tls === 1,
-    auth: {
-      user: account.username,
-      pass: credentials.password,
-    },
+    auth: smtpAuth,
     connectionTimeout: 15000,
     greetingTimeout: 15000,
     socketTimeout: 15000,

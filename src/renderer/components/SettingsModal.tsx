@@ -13,6 +13,7 @@ import {
   Radar,
   Sparkles,
   Trash2,
+  Upload,
   User,
   X,
 } from 'lucide-react';
@@ -20,12 +21,16 @@ import { Modal } from './Modal';
 import { normalizeAppLanguage, type AppLanguage } from '../utils/aiLanguages';
 import {
   getAutoFetchIntervalOptions,
+  getMailCacheRangeOptions,
   getMailHistoryRangeOptions,
 } from '../utils/mailHistoryRange';
-import type { MailHistoryRange } from '../../shared/mailSyncSettings';
+import type { MailCacheRange, MailHistoryRange } from '../../shared/mailSyncSettings';
 import type { MailBackupReadState } from '../../shared/backup';
+import type { AiPrivacyMode } from '../../shared/email-ai';
 import {
+  canStartBackupImport,
   canStartBackupExport,
+  formatBackupProgress,
   getBackupReadStateOptions,
   summarizeBackupResult,
   type BackupExportScope,
@@ -51,14 +56,20 @@ interface SettingsModalProps {
   currentAccountId: number;
   aiAutoSort: boolean;
   onAiAutoSortChange: (v: boolean) => void;
-  aiScanMode: 'light' | 'deep';
-  onAiScanModeChange: (v: 'light' | 'deep') => void;
-  aiLookback: '3d' | '7d' | '1mo';
-  onAiLookbackChange: (v: '3d' | '7d' | '1mo') => void;
+  aiScanMode: 'smart' | 'light' | 'deep';
+  onAiScanModeChange: (v: 'smart' | 'light' | 'deep') => void;
+  aiLookback: '3d' | '7d' | '1mo' | '6mo' | 'all';
+  onAiLookbackChange: (v: '3d' | '7d' | '1mo' | '6mo' | 'all') => void;
+  aiPrivacyMode: AiPrivacyMode;
+  onAiPrivacyModeChange: (v: AiPrivacyMode) => void;
   mailHistoryRange: MailHistoryRange;
   onMailHistoryRangeChange: (v: MailHistoryRange) => void;
+  mailCacheRange: MailCacheRange;
+  onMailCacheRangeChange: (v: MailCacheRange) => void;
   autoFetchInterval: number;
   onAutoFetchIntervalChange: (minutes: number) => void;
+  githubNotificationsViewEnabled: boolean;
+  onGithubNotificationsViewEnabledChange: (enabled: boolean) => void;
   backupState: BackupUiState;
   backupAccounts: Array<{
     id: number;
@@ -78,12 +89,42 @@ interface SettingsModalProps {
   onBackupStartDateChange: (value: string) => void;
   onBackupEndDateChange: (value: string) => void;
   onBackupPickDestination: () => void;
+  onBackupPickImportSources: () => void;
+  onBackupImportTargetFolderChange: (folderPath: string) => void;
   onStartBackupExport: () => void;
+  onStartBackupImport: () => void;
   onCancelBackupExport: () => void;
   onOpenBackupFolder: () => void;
 }
 
 type NavId = 'accounts' | 'backup' | 'ai' | 'about';
+type AIConfigProfileId = 'primary' | 'secondary';
+
+type AIConfigProfileForm = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  hasApiKey?: boolean;
+};
+
+const EMPTY_AI_CONFIG_PROFILES: Record<AIConfigProfileId, AIConfigProfileForm> = {
+  primary: { baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+  secondary: { baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+};
+
+function getApiProfileText(appLanguage: AppLanguage) {
+  const texts = {
+    zh: { active: '当前使用', use: '设为当前', profileA: '配置 A', profileB: '配置 B', keySaved: '已保存 Key', keyEmpty: '未保存 Key' },
+    en: { active: 'Active', use: 'Use this', profileA: 'Profile A', profileB: 'Profile B', keySaved: 'Key saved', keyEmpty: 'No key' },
+    ja: { active: '使用中', use: '使用する', profileA: '設定 A', profileB: '設定 B', keySaved: 'キー保存済み', keyEmpty: 'キーなし' },
+    ko: { active: '사용 중', use: '사용', profileA: '구성 A', profileB: '구성 B', keySaved: '키 저장됨', keyEmpty: '키 없음' },
+    es: { active: 'Activa', use: 'Usar', profileA: 'Perfil A', profileB: 'Perfil B', keySaved: 'Clave guardada', keyEmpty: 'Sin clave' },
+    fr: { active: 'Actif', use: 'Utiliser', profileA: 'Profil A', profileB: 'Profil B', keySaved: 'Clé enregistrée', keyEmpty: 'Aucune clé' },
+    de: { active: 'Aktiv', use: 'Verwenden', profileA: 'Profil A', profileB: 'Profil B', keySaved: 'Key gespeichert', keyEmpty: 'Kein Key' },
+    ru: { active: 'Активно', use: 'Использовать', profileA: 'Профиль A', profileB: 'Профиль B', keySaved: 'Ключ сохранён', keyEmpty: 'Нет ключа' },
+  };
+  return texts[appLanguage] ?? texts.en;
+}
 
 function getSettingsText(appLanguage: AppLanguage) {
   const appLanguages = {
@@ -121,10 +162,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: '构建时间',
       appDescription: 'MiniMail 是一个基于 Electron、React 和 TypeScript 的轻量邮件客户端。',
       scanMode: {
-        light: { label: '轻量扫描', sub: '标题 + 发件人 / 每批 50 封' },
+        smart: { label: '智能扫描', sub: '先轻量评分，低置信度自动深度扫描' },
+        light: { label: '轻量扫描', sub: '仅标题 + 发件人 / 每批 50 封' },
         deep: { label: '深度扫描', sub: '清洗后正文前 800 字 / 每批 10 封' },
       },
-      lookback: { '3d': '3 天', '7d': '7 天', '1mo': '1 个月' },
+      lookback: { '3d': '3 天', '7d': '7 天', '1mo': '1 个月', '6mo': '半年', all: '全部' },
       appLanguages,
     },
     en: {
@@ -150,10 +192,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'Build Date',
       appDescription: 'MiniMail is a lightweight email client built with Electron, React, and TypeScript.',
       scanMode: {
-        light: { label: 'Light Scan', sub: 'Subject + sender / 50 emails per batch' },
+        smart: { label: 'Smart Scan', sub: 'Light scoring first, auto deep scan for low confidence' },
+        light: { label: 'Light Scan', sub: 'Subject + sender only / 50 emails per batch' },
         deep: { label: 'Deep Scan', sub: 'First 800 chars of cleaned body / 10 emails per batch' },
       },
-      lookback: { '3d': '3 days', '7d': '7 days', '1mo': '1 month' },
+      lookback: { '3d': '3 days', '7d': '7 days', '1mo': '1 month', '6mo': '6 months', all: 'All' },
       appLanguages,
     },
     ja: {
@@ -179,10 +222,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'ビルド日時',
       appDescription: 'MiniMail は Electron、React、TypeScript で構築された軽量メールクライアントです。',
       scanMode: {
-        light: { label: '軽量スキャン', sub: '件名 + 差出人 / 1 バッチ 50 件' },
+        smart: { label: 'スマートスキャン', sub: '軽量評価後、低信頼度は詳細スキャン' },
+        light: { label: '軽量スキャン', sub: '件名 + 差出人のみ / 1 バッチ 50 件' },
         deep: { label: '詳細スキャン', sub: '洗浄済み本文の先頭 800 文字 / 1 バッチ 10 件' },
       },
-      lookback: { '3d': '3日', '7d': '7日', '1mo': '1か月' },
+      lookback: { '3d': '3日', '7d': '7日', '1mo': '1か月', '6mo': '半年', all: 'すべて' },
       appLanguages,
     },
     ko: {
@@ -208,10 +252,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: '빌드 날짜',
       appDescription: 'MiniMail은 Electron, React, TypeScript로 만든 가벼운 메일 클라이언트입니다.',
       scanMode: {
-        light: { label: '가벼운 스캔', sub: '제목 + 발신자 / 배치당 50개' },
+        smart: { label: '스마트 스캔', sub: '가벼운 평가 후 낮은 신뢰도는 심층 스캔' },
+        light: { label: '가벼운 스캔', sub: '제목 + 발신자만 / 배치당 50개' },
         deep: { label: '심층 스캔', sub: '정리된 본문 앞 800자 / 배치당 10개' },
       },
-      lookback: { '3d': '3일', '7d': '7일', '1mo': '1개월' },
+      lookback: { '3d': '3일', '7d': '7일', '1mo': '1개월', '6mo': '반년', all: '전체' },
       appLanguages,
     },
     es: {
@@ -237,10 +282,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'Fecha de compilación',
       appDescription: 'MiniMail es un cliente de correo ligero creado con Electron, React y TypeScript.',
       scanMode: {
-        light: { label: 'Escaneo ligero', sub: 'Asunto + remitente / 50 correos por lote' },
+        smart: { label: 'Escaneo inteligente', sub: 'Puntuación ligera y profundo si hay baja confianza' },
+        light: { label: 'Escaneo ligero', sub: 'Solo asunto + remitente / 50 correos por lote' },
         deep: { label: 'Escaneo profundo', sub: 'Primeros 800 caracteres del cuerpo limpio / 10 correos por lote' },
       },
-      lookback: { '3d': '3 días', '7d': '7 días', '1mo': '1 mes' },
+      lookback: { '3d': '3 días', '7d': '7 días', '1mo': '1 mes', '6mo': '6 meses', all: 'Todo' },
       appLanguages,
     },
     fr: {
@@ -266,10 +312,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'Date de build',
       appDescription: 'MiniMail est un client mail léger construit avec Electron, React et TypeScript.',
       scanMode: {
-        light: { label: 'Analyse légère', sub: 'Objet + expéditeur / 50 mails par lot' },
+        smart: { label: 'Analyse intelligente', sub: 'Score léger puis approfondie si confiance faible' },
+        light: { label: 'Analyse légère', sub: 'Objet + expéditeur seulement / 50 mails par lot' },
         deep: { label: 'Analyse approfondie', sub: '800 premiers caractères du corps nettoyé / 10 mails par lot' },
       },
-      lookback: { '3d': '3 jours', '7d': '7 jours', '1mo': '1 mois' },
+      lookback: { '3d': '3 jours', '7d': '7 jours', '1mo': '1 mois', '6mo': '6 mois', all: 'Tout' },
       appLanguages,
     },
     de: {
@@ -295,10 +342,11 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'Build-Datum',
       appDescription: 'MiniMail ist ein leichtgewichtiger Mail-Client auf Basis von Electron, React und TypeScript.',
       scanMode: {
-        light: { label: 'Leichter Scan', sub: 'Betreff + Absender / 50 Mails pro Durchgang' },
+        smart: { label: 'Intelligenter Scan', sub: 'Erst leichte Bewertung, bei niedriger Sicherheit tief' },
+        light: { label: 'Leichter Scan', sub: 'Nur Betreff + Absender / 50 Mails pro Durchgang' },
         deep: { label: 'Tiefer Scan', sub: 'Erste 800 Zeichen des bereinigten Inhalts / 10 Mails pro Durchgang' },
       },
-      lookback: { '3d': '3 Tage', '7d': '7 Tage', '1mo': '1 Monat' },
+      lookback: { '3d': '3 Tage', '7d': '7 Tage', '1mo': '1 Monat', '6mo': '6 Monate', all: 'Alle' },
       appLanguages,
     },
     ru: {
@@ -324,15 +372,203 @@ function getSettingsText(appLanguage: AppLanguage) {
       buildDate: 'Дата сборки',
       appDescription: 'MiniMail — лёгкий почтовый клиент на Electron, React и TypeScript.',
       scanMode: {
-        light: { label: 'Лёгкое сканирование', sub: 'Тема + отправитель / 50 писем за пакет' },
+        smart: { label: 'Умное сканирование', sub: 'Сначала лёгкая оценка, затем глубокая при низкой уверенности' },
+        light: { label: 'Лёгкое сканирование', sub: 'Только тема + отправитель / 50 писем за пакет' },
         deep: { label: 'Глубокое сканирование', sub: 'Первые 800 символов очищенного текста / 10 писем за пакет' },
       },
-      lookback: { '3d': '3 дня', '7d': '7 дней', '1mo': '1 месяц' },
+      lookback: { '3d': '3 дня', '7d': '7 дней', '1mo': '1 месяц', '6mo': '6 месяцев', all: 'Все' },
       appLanguages,
     },
   };
 
   const baseText = (texts as Record<string, typeof texts.en>)[appLanguage] ?? texts.en;
+  const backupText = appLanguage === 'zh'
+    ? {
+      backupNav: '备份',
+      backupTitle: '邮件备份',
+      backupDescription: '导出当前缓存中的邮件为 EML 文件。导入功能将在后续任务中启用。',
+      backupAccount: '账号',
+      backupScope: '导出范围',
+      backupFolders: '文件夹',
+      backupDestination: '导出目录',
+      backupFilters: '筛选条件',
+      backupStart: '开始日期',
+      backupEnd: '结束日期',
+      backupPick: '选择文件夹',
+      backupStartExport: '开始导出',
+      backupCancel: '取消导出',
+      backupOpenFolder: '打开文件夹',
+      backupImportPlaceholder: 'EML 导入将在后续任务中启用。',
+      backupScopeAccount: '整个账号',
+      backupScopeFolders: '选中文件夹',
+      backupNoFolders: '当前账号没有可用文件夹。',
+      backupExportTitle: 'EML 导出',
+      backupImportTitle: 'EML 导入',
+    }
+    : appLanguage === 'ja'
+      ? {
+        backupNav: 'バックアップ',
+        backupTitle: 'メールバックアップ',
+        backupDescription: '現在のキャッシュ済みメールを EML として書き出します。インポートは次の段階で有効化します。',
+        backupAccount: 'アカウント',
+        backupScope: 'エクスポート範囲',
+        backupFolders: 'フォルダー',
+        backupDestination: '出力先',
+        backupFilters: 'フィルター',
+        backupStart: '開始日',
+        backupEnd: '終了日',
+        backupPick: 'フォルダーを選択',
+        backupStartExport: 'エクスポート開始',
+        backupCancel: 'キャンセル',
+        backupOpenFolder: 'フォルダーを開く',
+        backupImportPlaceholder: 'EML インポートは次の段階で有効化します。',
+        backupScopeAccount: 'アカウント全体',
+        backupScopeFolders: '選択したフォルダー',
+        backupNoFolders: 'このアカウントで利用できるフォルダーがありません。',
+        backupExportTitle: 'EML エクスポート',
+        backupImportTitle: 'EML インポート',
+      }
+      : appLanguage === 'ko'
+        ? {
+          backupNav: '백업',
+          backupTitle: '메일 백업',
+          backupDescription: '현재 캐시된 메일을 EML 파일로 내보냅니다. 가져오기는 다음 단계에서 활성화됩니다.',
+          backupAccount: '계정',
+          backupScope: '내보내기 범위',
+          backupFolders: '폴더',
+          backupDestination: '내보내기 위치',
+          backupFilters: '필터',
+          backupStart: '시작 날짜',
+          backupEnd: '종료 날짜',
+          backupPick: '폴더 선택',
+          backupStartExport: '내보내기 시작',
+          backupCancel: '취소',
+          backupOpenFolder: '폴더 열기',
+          backupImportPlaceholder: 'EML 가져오기는 다음 단계에서 활성화됩니다.',
+          backupScopeAccount: '전체 계정',
+          backupScopeFolders: '선택한 폴더',
+          backupNoFolders: '이 계정에서 사용할 수 있는 폴더가 없습니다.',
+          backupExportTitle: 'EML 내보내기',
+          backupImportTitle: 'EML 가져오기',
+        }
+        : appLanguage === 'es'
+          ? {
+            backupNav: 'Copia',
+            backupTitle: 'Copia de correo',
+            backupDescription: 'Exporta el correo almacenado en caché a archivos EML. La importación se habilitará más adelante.',
+            backupAccount: 'Cuenta',
+            backupScope: 'Ámbito de exportación',
+            backupFolders: 'Carpetas',
+            backupDestination: 'Destino',
+            backupFilters: 'Filtros',
+            backupStart: 'Fecha inicial',
+            backupEnd: 'Fecha final',
+            backupPick: 'Elegir carpeta',
+            backupStartExport: 'Iniciar exportación',
+            backupCancel: 'Cancelar',
+            backupOpenFolder: 'Abrir carpeta',
+            backupImportPlaceholder: 'La importación EML se habilitará más adelante.',
+            backupScopeAccount: 'Cuenta completa',
+            backupScopeFolders: 'Carpetas seleccionadas',
+            backupNoFolders: 'No hay carpetas disponibles para esta cuenta.',
+            backupExportTitle: 'Exportación EML',
+            backupImportTitle: 'Importación EML',
+          }
+          : appLanguage === 'fr'
+            ? {
+              backupNav: 'Sauvegarde',
+              backupTitle: 'Sauvegarde mail',
+              backupDescription: 'Exporte les mails du cache au format EML. L’import sera activé dans une prochaine étape.',
+              backupAccount: 'Compte',
+              backupScope: 'Portée de l’export',
+              backupFolders: 'Dossiers',
+              backupDestination: 'Destination',
+              backupFilters: 'Filtres',
+              backupStart: 'Date de début',
+              backupEnd: 'Date de fin',
+              backupPick: 'Choisir un dossier',
+              backupStartExport: 'Démarrer l’export',
+              backupCancel: 'Annuler',
+              backupOpenFolder: 'Ouvrir le dossier',
+              backupImportPlaceholder: 'L’import EML sera activé dans une prochaine étape.',
+              backupScopeAccount: 'Compte complet',
+              backupScopeFolders: 'Dossiers sélectionnés',
+              backupNoFolders: 'Aucun dossier disponible pour ce compte.',
+              backupExportTitle: 'Export EML',
+              backupImportTitle: 'Import EML',
+            }
+            : appLanguage === 'de'
+              ? {
+                backupNav: 'Backup',
+                backupTitle: 'Mail-Backup',
+                backupDescription: 'Exportiert gecachte Mails als EML-Dateien. Der Import wird später aktiviert.',
+                backupAccount: 'Konto',
+                backupScope: 'Exportbereich',
+                backupFolders: 'Ordner',
+                backupDestination: 'Ziel',
+                backupFilters: 'Filter',
+                backupStart: 'Startdatum',
+                backupEnd: 'Enddatum',
+                backupPick: 'Ordner wählen',
+                backupStartExport: 'Export starten',
+                backupCancel: 'Abbrechen',
+                backupOpenFolder: 'Ordner öffnen',
+                backupImportPlaceholder: 'Der EML-Import wird später aktiviert.',
+                backupScopeAccount: 'Gesamtes Konto',
+                backupScopeFolders: 'Ausgewählte Ordner',
+                backupNoFolders: 'Für dieses Konto sind keine Ordner verfügbar.',
+                backupExportTitle: 'EML-Export',
+                backupImportTitle: 'EML-Import',
+              }
+              : appLanguage === 'ru'
+                ? {
+                  backupNav: 'Резервная копия',
+                  backupTitle: 'Резервная копия почты',
+                  backupDescription: 'Экспортирует кэшированные письма в файлы EML. Импорт будет включён позже.',
+                  backupAccount: 'Аккаунт',
+                  backupScope: 'Область экспорта',
+                  backupFolders: 'Папки',
+                  backupDestination: 'Путь выгрузки',
+                  backupFilters: 'Фильтры',
+                  backupStart: 'Дата начала',
+                  backupEnd: 'Дата окончания',
+                  backupPick: 'Выбрать папку',
+                  backupStartExport: 'Начать экспорт',
+                  backupCancel: 'Отмена',
+                  backupOpenFolder: 'Открыть папку',
+                  backupImportPlaceholder: 'Импорт EML будет включён позже.',
+                  backupScopeAccount: 'Весь аккаунт',
+                  backupScopeFolders: 'Выбранные папки',
+                  backupNoFolders: 'Для этого аккаунта нет доступных папок.',
+                  backupExportTitle: 'Экспорт EML',
+                  backupImportTitle: 'Импорт EML',
+                }
+                : {
+                  backupNav: 'Backup',
+                  backupTitle: 'Mail Backup',
+                  backupDescription: 'Export cached mail to EML files. Import will be enabled in a later task.',
+                  backupAccount: 'Account',
+                  backupScope: 'Export Scope',
+                  backupFolders: 'Folders',
+                  backupDestination: 'Destination',
+                  backupFilters: 'Filters',
+                  backupStart: 'Start date',
+                  backupEnd: 'End date',
+                  backupPick: 'Choose folder',
+                  backupStartExport: 'Start export',
+                  backupCancel: 'Cancel export',
+                  backupOpenFolder: 'Open folder',
+                  backupImportPlaceholder: 'EML import will be enabled in a later task.',
+                  backupImportPick: 'Choose EML files',
+                  backupImportSources: 'Import sources',
+                  backupImportTargetFolder: 'Target folder',
+                  backupStartImport: 'Start import',
+                  backupScopeAccount: 'Full account',
+                  backupScopeFolders: 'Selected folders',
+                  backupNoFolders: 'No folders available for this account.',
+                  backupExportTitle: 'EML Export',
+                  backupImportTitle: 'EML Import',
+                };
 
   return {
     ...baseText,
@@ -355,10 +591,87 @@ function getSettingsText(appLanguage: AppLanguage) {
     backupOpenFolder: appLanguage === 'zh' ? '打开文件夹' : 'Open folder',
     backupImportPlaceholder:
       appLanguage === 'zh'
-        ? 'EML 导入将在后续任务中启用。'
-        : 'EML import will be enabled in a later task.',
+        ? '选择 EML 文件或目录后，可导入到目标 IMAP 文件夹。'
+        : appLanguage === 'ja'
+          ? 'EML ファイルまたはフォルダを選択すると、対象の IMAP フォルダへ取り込めます。'
+          : appLanguage === 'ko'
+            ? 'EML 파일 또는 폴더를 선택한 뒤 대상 IMAP 폴더로 가져올 수 있습니다.'
+            : appLanguage === 'es'
+              ? 'Selecciona archivos o carpetas EML para importarlos a la carpeta IMAP de destino.'
+              : appLanguage === 'fr'
+                ? 'Sélectionnez des fichiers ou dossiers EML puis importez-les dans le dossier IMAP cible.'
+                : appLanguage === 'de'
+                  ? 'Wähle EML-Dateien oder Ordner aus und importiere sie in den Ziel-IMAP-Ordner.'
+                  : appLanguage === 'ru'
+                    ? 'Выберите EML-файлы или папки, затем импортируйте их в целевую папку IMAP.'
+                    : 'Select EML files or folders, then import them into the target IMAP folder.',
+    backupImportPick:
+      appLanguage === 'zh'
+        ? '选择 EML 文件'
+        : appLanguage === 'ja'
+          ? 'EML を選択'
+          : appLanguage === 'ko'
+            ? 'EML 선택'
+            : appLanguage === 'es'
+              ? 'Elegir EML'
+              : appLanguage === 'fr'
+                ? 'Choisir EML'
+                : appLanguage === 'de'
+                  ? 'EML auswählen'
+                  : appLanguage === 'ru'
+                    ? 'Выбрать EML'
+                    : 'Choose EML files',
+    backupImportSources:
+      appLanguage === 'zh'
+        ? '导入来源'
+        : appLanguage === 'ja'
+          ? '取込元'
+          : appLanguage === 'ko'
+            ? '가져오기 원본'
+            : appLanguage === 'es'
+              ? 'Origen de importación'
+              : appLanguage === 'fr'
+                ? 'Sources d’import'
+                : appLanguage === 'de'
+                  ? 'Importquelle'
+                  : appLanguage === 'ru'
+                    ? 'Источник импорта'
+                    : 'Import sources',
+    backupImportTargetFolder:
+      appLanguage === 'zh'
+        ? '目标文件夹'
+        : appLanguage === 'ja'
+          ? '取込先フォルダ'
+          : appLanguage === 'ko'
+            ? '대상 폴더'
+            : appLanguage === 'es'
+              ? 'Carpeta de destino'
+              : appLanguage === 'fr'
+                ? 'Dossier cible'
+                : appLanguage === 'de'
+                  ? 'Zielordner'
+                  : appLanguage === 'ru'
+                    ? 'Целевая папка'
+                    : 'Target folder',
+    backupStartImport:
+      appLanguage === 'zh'
+        ? '开始导入'
+        : appLanguage === 'ja'
+          ? 'インポート開始'
+          : appLanguage === 'ko'
+            ? '가져오기 시작'
+            : appLanguage === 'es'
+              ? 'Iniciar importación'
+              : appLanguage === 'fr'
+                ? 'Démarrer l’import'
+                : appLanguage === 'de'
+                  ? 'Import starten'
+                  : appLanguage === 'ru'
+                    ? 'Начать импорт'
+                    : 'Start import',
     backupScopeAccount: appLanguage === 'zh' ? '整个账号' : 'Full account',
     backupScopeFolders: appLanguage === 'zh' ? '选中文件夹' : 'Selected folders',
+    ...backupText,
     mailHistoryRange:
       appLanguage === 'zh' ? '邮件历史范围'
       : appLanguage === 'ja' ? 'メール履歴範囲'
@@ -368,6 +681,89 @@ function getSettingsText(appLanguage: AppLanguage) {
       : appLanguage === 'de' ? 'Mail-Verlaufsbereich'
       : appLanguage === 'ru' ? 'Диапазон истории почты'
       : 'Mail Fetch History Range',
+    mailCacheRange:
+      appLanguage === 'zh' ? '邮件缓存范围'
+      : appLanguage === 'ja' ? 'メールキャッシュ範囲'
+      : appLanguage === 'ko' ? '메일 캐시 범위'
+      : appLanguage === 'es' ? 'Rango de caché de correo'
+      : appLanguage === 'fr' ? 'Période du cache mail'
+      : appLanguage === 'de' ? 'Mail-Cache-Bereich'
+      : appLanguage === 'ru' ? 'Диапазон кэша почты'
+      : 'Mail Cache Range',
+    mailCacheHint:
+      appLanguage === 'zh' ? '超出这个缓存范围的邮件会从本地缓存中清理。'
+      : appLanguage === 'ja' ? 'この範囲を超えたメールはローカルキャッシュから整理されます。'
+      : appLanguage === 'ko' ? '이 범위를 넘는 메일은 로컬 캐시에서 정리됩니다.'
+      : appLanguage === 'es' ? 'Los correos fuera de este rango se limpiarán del caché local.'
+      : appLanguage === 'fr' ? 'Les mails hors de cette période seront supprimés du cache local.'
+      : appLanguage === 'de' ? 'Mails außerhalb dieses Bereichs werden aus dem lokalen Cache entfernt.'
+      : appLanguage === 'ru' ? 'Письма вне этого диапазона будут очищены из локального кэша.'
+      : 'Mails outside this range are cleaned from local cache.',
+    githubNotificationsView:
+      appLanguage === 'zh' ? 'GitHub 通知视图'
+      : appLanguage === 'ja' ? 'GitHub 通知ビュー'
+      : appLanguage === 'ko' ? 'GitHub 알림 보기'
+      : appLanguage === 'es' ? 'Vista de notificaciones de GitHub'
+      : appLanguage === 'fr' ? 'Vue des notifications GitHub'
+      : appLanguage === 'de' ? 'GitHub-Benachrichtigungsansicht'
+      : appLanguage === 'ru' ? 'Вид уведомлений GitHub'
+      : 'GitHub Notifications View',
+    githubNotificationsHint:
+      appLanguage === 'zh' ? '启用后，侧栏会显示一个 GitHub 分栏，并将 GitHub 仓库通知聚合为独立会话视图。'
+      : appLanguage === 'ja' ? '有効にすると、サイドバーに GitHub セクションが表示され、GitHub 通知会話をまとめて確認できます。'
+      : appLanguage === 'ko' ? '켜면 사이드바에 GitHub 섹션이 나타나고 GitHub 저장소 알림 대화를 따로 볼 수 있습니다.'
+      : appLanguage === 'es' ? 'Al activarlo, la barra lateral mostrará una sección de GitHub con conversaciones agrupadas.'
+      : appLanguage === 'fr' ? 'Une fois activé, la barre latérale affiche une section GitHub avec les conversations regroupées.'
+      : appLanguage === 'de' ? 'Wenn aktiviert, zeigt die Seitenleiste einen GitHub-Bereich mit gebündelten Benachrichtigungs-Konversationen.'
+      : appLanguage === 'ru' ? 'После включения в боковой панели появится раздел GitHub с объединёнными цепочками уведомлений.'
+      : 'When enabled, the sidebar shows a GitHub section with grouped repository notification conversations.',
+    aiPrivacyMode:
+      appLanguage === 'zh' ? '云端隐私模式'
+      : appLanguage === 'ja' ? 'クラウドプライバシーモード'
+      : appLanguage === 'ko' ? '클라우드 개인정보 모드'
+      : appLanguage === 'es' ? 'Modo de privacidad en la nube'
+      : appLanguage === 'fr' ? 'Mode de confidentialité cloud'
+      : appLanguage === 'de' ? 'Cloud-Datenschutzmodus'
+      : appLanguage === 'ru' ? 'Режим приватности для облака'
+      : 'Cloud Privacy Mode',
+    aiPrivacyHint:
+      appLanguage === 'zh' ? '仅影响发送到云端 AI 的内容。本地渲染和本地缓存不会因为此设置被改写。'
+      : appLanguage === 'ja' ? 'クラウド AI に送る内容だけへ適用されます。ローカル表示やキャッシュは書き換えません。'
+      : appLanguage === 'ko' ? '클라우드 AI 로 전송되는 내용에만 적용됩니다. 로컬 표시와 캐시는 바꾸지 않습니다.'
+      : appLanguage === 'es' ? 'Solo afecta al contenido enviado al modelo en la nube. No modifica la vista ni la caché local.'
+      : appLanguage === 'fr' ? 'Affecte uniquement le contenu envoyé au modèle cloud. L’affichage et le cache local restent intacts.'
+      : appLanguage === 'de' ? 'Wirkt sich nur auf Inhalte aus, die an das Cloud-Modell gesendet werden. Lokale Anzeige und Cache bleiben unverändert.'
+      : appLanguage === 'ru' ? 'Влияет только на содержимое, отправляемое в облачную модель. Локальное отображение и кэш не меняются.'
+      : 'Only affects content sent to cloud AI. Local rendering and local cache stay unchanged.',
+    aiPrivacyOptions: {
+      local_raw:
+        appLanguage === 'zh' ? '本地不脱敏'
+        : appLanguage === 'ja' ? 'ローカルのみ（脱敏なし）'
+        : appLanguage === 'ko' ? '로컬 전용(비식별화 없음)'
+        : appLanguage === 'es' ? 'Solo local (sin redacción)'
+        : appLanguage === 'fr' ? 'Local uniquement (sans masquage)'
+        : appLanguage === 'de' ? 'Nur lokal (ohne Maskierung)'
+        : appLanguage === 'ru' ? 'Только локально (без маскировки)'
+        : 'Local only (no redaction)',
+      cloud_raw:
+        appLanguage === 'zh' ? '云端不脱敏'
+        : appLanguage === 'ja' ? 'クラウド送信（脱敏なし）'
+        : appLanguage === 'ko' ? '클라우드 전송(비식별화 없음)'
+        : appLanguage === 'es' ? 'Nube sin redacción'
+        : appLanguage === 'fr' ? 'Cloud sans masquage'
+        : appLanguage === 'de' ? 'Cloud ohne Maskierung'
+        : appLanguage === 'ru' ? 'Облако без маскировки'
+        : 'Cloud without redaction',
+      cloud_redacted:
+        appLanguage === 'zh' ? '云端脱敏'
+        : appLanguage === 'ja' ? 'クラウド送信（脱敏あり）'
+        : appLanguage === 'ko' ? '클라우드 전송(비식별화 적용)'
+        : appLanguage === 'es' ? 'Nube con redacción'
+        : appLanguage === 'fr' ? 'Cloud avec masquage'
+        : appLanguage === 'de' ? 'Cloud mit Maskierung'
+        : appLanguage === 'ru' ? 'Облако с маскировкой'
+        : 'Cloud with redaction',
+    },
   } as {
     groups: Record<'personal' | 'app' | 'system', string>;
     nav: Record<'accounts' | 'ai' | 'about', string>;
@@ -386,13 +782,24 @@ function getSettingsText(appLanguage: AppLanguage) {
     backupCancel: string;
     backupOpenFolder: string;
     backupImportPlaceholder: string;
+    backupImportPick: string;
+    backupImportSources: string;
+    backupImportTargetFolder: string;
+    backupStartImport: string;
     backupScopeAccount: string;
     backupScopeFolders: string;
+    backupNoFolders: string;
+    backupExportTitle: string;
+    backupImportTitle: string;
     systemLanguage: string;
     connectedAccounts: string;
     current: string;
     autoFetchInterval: string;
     mailHistoryRange: string;
+    mailCacheRange: string;
+    mailCacheHint: string;
+    githubNotificationsView: string;
+    githubNotificationsHint: string;
     autoFetchHint: string;
     aiTitle: string;
     aiDescription: string;
@@ -401,6 +808,9 @@ function getSettingsText(appLanguage: AppLanguage) {
     autoClassify: string;
     scanDepth: string;
     lookbackRange: string;
+    aiPrivacyMode: string;
+    aiPrivacyHint: string;
+    aiPrivacyOptions: Record<AiPrivacyMode, string>;
     save: string;
     saveAiSettings: string;
     about: string;
@@ -408,8 +818,8 @@ function getSettingsText(appLanguage: AppLanguage) {
     version: string;
     buildDate: string;
     appDescription: string;
-    scanMode: Record<'light' | 'deep', { label: string; sub: string }>;
-    lookback: Record<'3d' | '7d' | '1mo', string>;
+    scanMode: Record<'smart' | 'light' | 'deep', { label: string; sub: string }>;
+    lookback: Record<'3d' | '7d' | '1mo' | '6mo' | 'all', string>;
     appLanguages: typeof appLanguages;
   };
 }
@@ -437,10 +847,16 @@ export function SettingsModal({
   onAiScanModeChange,
   aiLookback,
   onAiLookbackChange,
+  aiPrivacyMode,
+  onAiPrivacyModeChange,
   mailHistoryRange,
   onMailHistoryRangeChange,
+  mailCacheRange,
+  onMailCacheRangeChange,
   autoFetchInterval,
   onAutoFetchIntervalChange,
+  githubNotificationsViewEnabled,
+  onGithubNotificationsViewEnabledChange,
   backupState,
   backupAccounts,
   backupFolders,
@@ -451,19 +867,26 @@ export function SettingsModal({
   onBackupStartDateChange,
   onBackupEndDateChange,
   onBackupPickDestination,
+  onBackupPickImportSources,
+  onBackupImportTargetFolderChange,
   onStartBackupExport,
+  onStartBackupImport,
   onCancelBackupExport,
   onOpenBackupFolder,
 }: SettingsModalProps) {
   const [activeNav, setActiveNav] = useState<NavId>('accounts');
   const [saved, setSaved] = useState(false);
-  const [apiUrl, setApiUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
+  const [apiSaveError, setApiSaveError] = useState<string | null>(null);
+  const [selectedApiProfile, setSelectedApiProfile] = useState<AIConfigProfileId>('primary');
+  const [activeApiProfile, setActiveApiProfile] = useState<AIConfigProfileId>('primary');
+  const [apiProfiles, setApiProfiles] = useState<Record<AIConfigProfileId, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
+  const apiProfileUi = useMemo(() => getApiProfileText(normalizedLanguage), [normalizedLanguage]);
+  const selectedApiProfileForm = apiProfiles[selectedApiProfile];
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
+  const cacheRangeOptions = useMemo(() => getMailCacheRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
   const backupReadOptions = useMemo(() => getBackupReadStateOptions(normalizedLanguage), [normalizedLanguage]);
   const backupSummary = useMemo(() => summarizeBackupResult(backupState.lastResult, normalizedLanguage), [backupState.lastResult, normalizedLanguage]);
@@ -474,6 +897,7 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
     setActiveNav('accounts');
+    setApiSaveError(null);
   }, [isOpen]);
 
   useEffect(() => {
@@ -482,12 +906,37 @@ export function SettingsModal({
       try {
         const cfg = await window.electronAPI.invoke('ai:getConfig') as {
           success: boolean;
-          data?: { baseUrl: string; model: string; hasApiKey: boolean };
+          data?: {
+            baseUrl: string;
+            model: string;
+            hasApiKey: boolean;
+            activeProfileId?: AIConfigProfileId;
+            profiles?: Record<AIConfigProfileId, {
+              baseUrl: string;
+              model: string;
+              hasApiKey: boolean;
+            }>;
+          };
         };
 
         if (cfg.success && cfg.data) {
-          setApiUrl(cfg.data.baseUrl || '');
-          setModel(cfg.data.model || '');
+          const activeProfileId = cfg.data.activeProfileId ?? 'primary';
+          setActiveApiProfile(activeProfileId);
+          setSelectedApiProfile(activeProfileId);
+          setApiProfiles({
+            primary: {
+              baseUrl: cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '',
+              apiKey: '',
+              model: cfg.data.profiles?.primary?.model || cfg.data.model || '',
+              hasApiKey: cfg.data.profiles?.primary?.hasApiKey ?? cfg.data.hasApiKey,
+            },
+            secondary: {
+              baseUrl: cfg.data.profiles?.secondary?.baseUrl || '',
+              apiKey: '',
+              model: cfg.data.profiles?.secondary?.model || '',
+              hasApiKey: cfg.data.profiles?.secondary?.hasApiKey ?? false,
+            },
+          });
         }
       } catch {
         // Keep current inputs when config fetch fails.
@@ -495,13 +944,68 @@ export function SettingsModal({
     })();
   }, [isOpen]);
 
+  function updateSelectedApiProfile(patch: Partial<AIConfigProfileForm>) {
+    setApiProfiles((prev) => ({
+      ...prev,
+      [selectedApiProfile]: {
+        ...prev[selectedApiProfile],
+        ...patch,
+      },
+    }));
+  }
+
   async function handleSaveApi() {
     try {
-      await window.electronAPI.invoke('ai:saveConfig', { baseUrl: apiUrl, apiKey, model });
+      setApiSaveError(null);
+      const payload: {
+        profileId: AIConfigProfileId;
+        activeProfileId: AIConfigProfileId;
+        baseUrl: string;
+        apiKey?: string;
+        model: string;
+      } = {
+        profileId: selectedApiProfile,
+        activeProfileId: activeApiProfile,
+        baseUrl: selectedApiProfileForm.baseUrl,
+        model: selectedApiProfileForm.model,
+      };
+      if (selectedApiProfileForm.apiKey.trim()) {
+        payload.apiKey = selectedApiProfileForm.apiKey;
+      }
+      const response = await window.electronAPI.invoke('ai:saveConfig', payload) as { success: boolean; error?: string };
+      if (!response.success) {
+        setApiSaveError(response.error || 'Failed to save AI config');
+        return;
+      }
+      setApiProfiles((prev) => ({
+        ...prev,
+        [selectedApiProfile]: {
+          ...prev[selectedApiProfile],
+          apiKey: '',
+          hasApiKey: Boolean(selectedApiProfileForm.apiKey.trim() || prev[selectedApiProfile].hasApiKey),
+        },
+      }));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {
-      // Keep silent until explicit error UI is added.
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    }
+  }
+
+  async function handleActivateApiProfile(profileId: AIConfigProfileId) {
+    try {
+      setApiSaveError(null);
+      const response = await window.electronAPI.invoke('ai:saveConfig', { activeProfileId: profileId }) as { success: boolean; error?: string };
+      if (!response.success) {
+        setApiSaveError(response.error || 'Failed to switch AI profile');
+        return;
+      }
+      setActiveApiProfile(profileId);
+      setSelectedApiProfile(profileId);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
     }
   }
 
@@ -511,6 +1015,7 @@ export function SettingsModal({
         autoSort: aiAutoSort,
         scanMode: aiScanMode,
         lookback: aiLookback,
+        privacyMode: aiPrivacyMode,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -538,7 +1043,7 @@ export function SettingsModal({
       </div>
       <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
         <nav
-          className="w-56 flex-shrink-0 overflow-y-scroll border-r border-zinc-800/80 px-2 py-3"
+          className="w-56 min-h-0 flex-shrink-0 overflow-y-auto border-r border-zinc-800/80 px-2 py-3"
           style={{ backgroundColor: '#1F2124', height: '100%' }}
         >
           {(['personal', 'app', 'system'] as const).map((group) => (
@@ -572,9 +1077,9 @@ export function SettingsModal({
           ))}
         </nav>
 
-        <div className="flex-1 overflow-y-scroll" style={{ backgroundColor: '#0d0d0f', height: '100%' }} id="settings-scroll">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain" style={{ backgroundColor: '#0d0d0f', height: '100%' }} id="settings-scroll">
           {activeNav === 'accounts' && (
-            <div className="min-h-full px-6 py-5">
+            <div className="px-6 py-5">
               <div className="mx-auto w-full max-w-[560px]">
               <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
                 <div className="flex items-center gap-2 mb-2">
@@ -632,6 +1137,51 @@ export function SettingsModal({
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <FolderOpen className="w-3 h-3" style={{ color: '#64d2ff' }} />
+                  <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                    {ui.mailCacheRange}
+                  </span>
+                </div>
+                <select
+                  value={mailCacheRange}
+                  onChange={(e) => onMailCacheRangeChange(e.target.value as MailCacheRange)}
+                  className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                  style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                >
+                  {cacheRangeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] mt-2" style={{ color: '#636366' }}>{ui.mailCacheHint}</p>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                      {ui.githubNotificationsView}
+                    </div>
+                    <p className="text-[10px] mt-1 leading-4" style={{ color: '#636366' }}>
+                      {ui.githubNotificationsHint}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onGithubNotificationsViewEnabledChange(!githubNotificationsViewEnabled)}
+                    className="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors cursor-pointer"
+                    style={{ backgroundColor: githubNotificationsViewEnabled ? '#0071e3' : '#2c2c2e' }}
+                    aria-pressed={githubNotificationsViewEnabled}
+                  >
+                    <span
+                      className="absolute top-[2px] h-5 w-5 rounded-full bg-white transition-transform"
+                      style={{ transform: githubNotificationsViewEnabled ? 'translateX(22px)' : 'translateX(2px)' }}
+                    />
+                  </button>
+                </div>
               </div>
 
               <div className="mb-3">
@@ -694,7 +1244,7 @@ export function SettingsModal({
             </div>
           )}
           {activeNav === 'backup' && (
-            <div className="min-h-full px-6 py-5">
+            <div className="px-6 py-5">
               <div className="mx-auto w-full max-w-[560px]">
                 <div className="mb-4">
                   <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>
@@ -763,7 +1313,7 @@ export function SettingsModal({
                       );
                     })}
                     {backupFolders.length === 0 && (
-                      <div className="text-[11px]" style={{ color: '#636366' }}>No folders available for this account.</div>
+                      <div className="text-[11px]" style={{ color: '#636366' }}>{ui.backupNoFolders}</div>
                     )}
                   </div>
                 </div>
@@ -819,7 +1369,7 @@ export function SettingsModal({
 
                 <div className="rounded-xl px-3 py-3 mb-4" style={{ backgroundColor: '#161618' }}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[11px] font-medium text-white">EML Export</div>
+                    <div className="text-[11px] font-medium text-white">{ui.backupExportTitle}</div>
                     {backupState.isRunning && (
                       <div className="text-[10px]" style={{ color: '#64d2ff' }}>
                         {backupState.progress.processed}/{backupState.progress.total}
@@ -833,7 +1383,9 @@ export function SettingsModal({
                     />
                   </div>
                   <p className="text-[10px] mb-3" style={{ color: '#636366' }}>
-                    {backupState.progress.message || backupSummary || ui.backupImportPlaceholder}
+                    {backupState.isRunning
+                      ? formatBackupProgress(backupState.progress, normalizedLanguage)
+                      : backupSummary || ui.backupDescription}
                   </p>
                   <div className="flex gap-2">
                     <button
@@ -873,15 +1425,65 @@ export function SettingsModal({
                 <div className="rounded-xl px-3 py-3" style={{ backgroundColor: '#161618' }}>
                   <div className="flex items-center gap-2 mb-2">
                     <Info className="w-3 h-3" style={{ color: '#636366' }} />
-                    <span className="text-[11px] font-medium text-white">EML Import</span>
+                    <span className="text-[11px] font-medium text-white">{ui.backupImportTitle}</span>
                   </div>
-                  <p className="text-[11px]" style={{ color: '#636366' }}>{ui.backupImportPlaceholder}</p>
+                  <p className="text-[11px] mb-3" style={{ color: '#636366' }}>{ui.backupImportPlaceholder}</p>
+                  <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div className="text-[11px] font-medium text-white mb-2">{ui.backupImportSources}</div>
+                    <div className="text-[11px] whitespace-pre-wrap break-all mb-2" style={{ color: backupState.importSourcePaths.length > 0 ? '#f5f5f7' : '#636366' }}>
+                      {backupState.importSourcePaths.length > 0
+                        ? backupState.importSourcePaths.join('\n')
+                        : ui.backupImportPick}
+                    </div>
+                    <button
+                      onClick={onBackupPickImportSources}
+                      disabled={backupState.isRunning}
+                      className="px-3 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <Upload className="w-3 h-3 inline-block mr-1.5" />
+                      {ui.backupImportPick}
+                    </button>
+                  </div>
+                  <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div className="text-[11px] font-medium text-white mb-2">{ui.backupImportTargetFolder}</div>
+                    <select
+                      value={backupState.importTargetFolderPath}
+                      onChange={(e) => onBackupImportTargetFolderChange(e.target.value)}
+                      className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                      style={{ backgroundColor: '#161618' }}
+                    >
+                      <option value="">{ui.backupNoFolders}</option>
+                      {backupFolders.map((folder) => (
+                        <option key={folder.path} value={folder.path}>{folder.name || folder.path}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={onStartBackupImport}
+                      disabled={!canStartBackupImport(backupState)}
+                      className="flex-1 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#30d158' }}
+                    >
+                      {ui.backupStartImport}
+                    </button>
+                    <button
+                      onClick={onCancelBackupExport}
+                      disabled={!backupState.isRunning}
+                      className="px-3 py-2 rounded-lg text-[11px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <Ban className="w-3 h-3 inline-block mr-1.5" />
+                      {ui.backupCancel}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
           {activeNav === 'ai' && (
-            <div className="min-h-full px-6 py-5">
+            <div className="px-6 py-5">
               <div className="mx-auto w-full max-w-[560px]">
               <div className="mb-4">
                 <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>
@@ -898,32 +1500,69 @@ export function SettingsModal({
                   </span>
                   <span className="text-[10px] ml-auto" style={{ color: '#48484a' }}>OpenAI / OpenRouter / Groq</span>
                 </div>
+                <div className="mb-2 grid grid-cols-2 gap-1.5">
+                  {(['primary', 'secondary'] as AIConfigProfileId[]).map((profileId) => {
+                    const isSelected = selectedApiProfile === profileId;
+                    const isActive = activeApiProfile === profileId;
+                    const profile = apiProfiles[profileId];
+                    return (
+                      <button
+                        key={profileId}
+                        type="button"
+                        onClick={() => setSelectedApiProfile(profileId)}
+                        className="rounded-lg px-2.5 py-2 text-left text-[11px] cursor-pointer"
+                        style={{
+                          backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
+                          border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
+                          color: '#f5f5f7',
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{profileId === 'primary' ? apiProfileUi.profileA : apiProfileUi.profileB}</span>
+                          {isActive && <span style={{ color: '#64d2ff' }}>{apiProfileUi.active}</span>}
+                        </div>
+                        <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                          {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
                 <div className="space-y-1.5">
                   <input
                     type="text"
                     placeholder="https://api.openai.com/v1"
-                    value={apiUrl}
-                    onChange={(e) => setApiUrl(e.target.value)}
+                    value={selectedApiProfileForm.baseUrl}
+                    onChange={(e) => updateSelectedApiProfile({ baseUrl: e.target.value })}
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
                   <input
                     type="password"
                     placeholder="API Key"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    value={selectedApiProfileForm.apiKey}
+                    onChange={(e) => updateSelectedApiProfile({ apiKey: e.target.value })}
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
                   <input
                     type="text"
                     placeholder="Model (gpt-4o-mini)"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
+                    value={selectedApiProfileForm.model}
+                    onChange={(e) => updateSelectedApiProfile({ model: e.target.value })}
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
                 </div>
+                {activeApiProfile !== selectedApiProfile && (
+                  <button
+                    onClick={() => void handleActivateApiProfile(selectedApiProfile)}
+                    className="w-full mt-2 py-1.5 rounded-lg text-[11px] font-medium text-white transition-colors cursor-pointer"
+                    style={{ backgroundColor: '#2a2a2d', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                  >
+                    {apiProfileUi.use}
+                  </button>
+                )}
                 <button
                   onClick={handleSaveApi}
                   className="w-full mt-2.5 py-1.5 rounded-lg text-[11px] font-medium text-white transition-colors cursor-pointer"
@@ -933,6 +1572,11 @@ export function SettingsModal({
                 >
                   {ui.save}
                 </button>
+                {apiSaveError && (
+                  <p className="mt-2 text-[10px] leading-relaxed" style={{ color: '#ff6b6b' }}>
+                    {apiSaveError}
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl" style={{ backgroundColor: '#161618' }}>
@@ -958,8 +1602,8 @@ export function SettingsModal({
                     {ui.scanDepth}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {(['light', 'deep'] as const).map((mode) => {
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['smart', 'light', 'deep'] as const).map((mode) => {
                     const active = aiScanMode === mode;
                     return (
                       <button
@@ -1003,7 +1647,7 @@ export function SettingsModal({
                   </span>
                 </div>
                 <div className="flex gap-1.5">
-                  {(['3d', '7d', '1mo'] as const).map((value) => (
+                  {(['3d', '7d', '1mo', '6mo', 'all'] as const).map((value) => (
                     <button
                       key={value}
                       onClick={() => onAiLookbackChange(value)}
@@ -1017,6 +1661,26 @@ export function SettingsModal({
                     </button>
                   ))}
                 </div>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Ban className="w-3 h-3" style={{ color: '#ff9f0a' }} />
+                  <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                    {ui.aiPrivacyMode}
+                  </span>
+                </div>
+                <select
+                  value={aiPrivacyMode}
+                  onChange={(e) => onAiPrivacyModeChange(e.target.value as AiPrivacyMode)}
+                  className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                  style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                >
+                  {(Object.entries(ui.aiPrivacyOptions) as Array<[AiPrivacyMode, string]>).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] mt-2" style={{ color: '#636366' }}>{ui.aiPrivacyHint}</p>
               </div>
 
               <button
@@ -1037,7 +1701,7 @@ export function SettingsModal({
           )}
 
           {activeNav === 'about' && (
-            <div className="min-h-full px-6 py-5">
+            <div className="px-6 py-5">
               <div className="mx-auto w-full max-w-[560px]">
               <div className="mb-4">
                 <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>

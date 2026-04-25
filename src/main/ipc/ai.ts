@@ -1,87 +1,183 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
-import { getAIConfig, saveAIConfig, translateText, summarizeText, suggestReply, polishText } from '../services/ai';
+import {
+  getAIConfig,
+  getAIConfigSnapshot,
+  saveAIConfig,
+  getAISettings,
+  saveAISettings,
+  translateTextInput,
+  translateTextSegments,
+  summarizeText,
+  suggestReply,
+  suggestEmailActions,
+  suggestQuickReplies,
+  extractKeyInfo,
+  polishText,
+  batchClassifyMails,
+  type ScanMode,
+  type LookbackRange,
+  type AISettings,
+  type AIEmailSource,
+} from '../services/ai';
 
 export function registerAIHandlers(): void {
   log.info('Registering AI IPC handlers');
 
-  // Get AI config
+  // Get AI API config
   ipcMain.handle('ai:getConfig', async () => {
     try {
+      const snapshot = getAIConfigSnapshot();
       const config = getAIConfig();
-      // Don't expose the actual API key, just return whether it's set
       return {
         success: true,
         data: {
           baseUrl: config.baseUrl,
           model: config.model,
           hasApiKey: !!config.apiKey,
+          activeProfileId: snapshot.activeProfileId,
+          profiles: {
+            primary: {
+              baseUrl: snapshot.profiles.primary.baseUrl,
+              model: snapshot.profiles.primary.model,
+              hasApiKey: !!snapshot.profiles.primary.apiKey,
+            },
+            secondary: {
+              baseUrl: snapshot.profiles.secondary.baseUrl,
+              model: snapshot.profiles.secondary.model,
+              hasApiKey: !!snapshot.profiles.secondary.apiKey,
+            },
+          },
         },
       };
     } catch (err) {
-      const error = err as Error;
-      log.error('Failed to get AI config:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (err as Error).message };
     }
   });
 
-  // Save AI config
-  ipcMain.handle('ai:saveConfig', async (_event, config: { baseUrl?: string; apiKey?: string; model?: string }) => {
+  // Save AI API config
+  ipcMain.handle('ai:saveConfig', async (_event, config: {
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    profileId?: 'primary' | 'secondary';
+    activeProfileId?: 'primary' | 'secondary';
+  }) => {
     try {
       saveAIConfig(config);
       return { success: true };
     } catch (err) {
-      const error = err as Error;
-      log.error('Failed to save AI config:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // Get AI behavior settings (scan mode, lookback, auto sort)
+  ipcMain.handle('ai:getSettings', async () => {
+    try {
+      const settings = getAISettings();
+      return { success: true, data: settings };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // Save AI behavior settings
+  ipcMain.handle('ai:saveSettings', async (_event, settings: Partial<AISettings>) => {
+    try {
+      saveAISettings(settings);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
   });
 
   // Translate text
-  ipcMain.handle('ai:translate', async (_event, text: string, targetLang: string) => {
+  ipcMain.handle('ai:translate', async (_event, text: string | AIEmailSource, targetLang: string) => {
     try {
-      const result = await translateText(text, targetLang);
-      return result;
+      return await translateTextInput(text, targetLang);
     } catch (err) {
-      const error = err as Error;
-      log.error('Translation failed:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:translateSegments', async (_event, segments: string[], targetLang: string) => {
+    try {
+      return await translateTextSegments(segments, targetLang);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
   });
 
   // Summarize text
-  ipcMain.handle('ai:summarize', async (_event, text: string) => {
+  ipcMain.handle('ai:summarize', async (_event, text: string | AIEmailSource, targetLang?: string) => {
     try {
-      const result = await summarizeText(text);
-      return result;
+      return await summarizeText(text, targetLang);
     } catch (err) {
-      const error = err as Error;
-      log.error('Summarization failed:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (err as Error).message };
     }
   });
 
   // Suggest reply
-  ipcMain.handle('ai:suggestReply', async (_event, emailContent: string) => {
+  ipcMain.handle('ai:suggestReply', async (_event, emailContent: string | AIEmailSource, targetLang?: string) => {
     try {
-      const result = await suggestReply(emailContent);
-      return result;
+      return await suggestReply(emailContent, targetLang);
     } catch (err) {
-      const error = err as Error;
-      log.error('Reply suggestion failed:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:suggestActions', async (_event, emailContent: string | AIEmailSource, targetLang?: string) => {
+    try {
+      return await suggestEmailActions(emailContent, targetLang);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:suggestQuickReplies', async (_event, emailContent: string | AIEmailSource, targetLang?: string) => {
+    try {
+      return await suggestQuickReplies(emailContent, targetLang);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:extractKeyInfo', async (_event, emailContent: string | AIEmailSource, targetLang?: string) => {
+    try {
+      return await extractKeyInfo(emailContent, targetLang);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
   });
 
   // Polish text
-  ipcMain.handle('ai:polish', async (_event, text: string, style: 'formal' | 'friendly' | 'shorter' | 'longer') => {
+  ipcMain.handle(
+    'ai:polish',
+    async (
+      _event,
+      text: string,
+      style: 'formal' | 'friendly' | 'shorter' | 'longer',
+      targetLang?: string,
+    ) => {
     try {
-      const result = await polishText(text, style);
+        return await polishText(text, style, targetLang);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // Batch classify emails — accepts scanMode in payload
+  ipcMain.handle('ai:classifyBatch', async (_event, payload: {
+    emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; body_html?: string; body_text?: string; snippet: string }>;
+    scanMode: ScanMode;
+  }) => {
+    try {
+      const { emails, scanMode = 'light' } = payload;
+      const result = await batchClassifyMails(emails, scanMode);
       return result;
     } catch (err) {
-      const error = err as Error;
-      log.error('Text polishing failed:', error);
-      return { success: false, error: error.message };
+      log.error('[ai:classifyBatch]', err);
+      return { success: false, error: (err as Error).message };
     }
   });
 

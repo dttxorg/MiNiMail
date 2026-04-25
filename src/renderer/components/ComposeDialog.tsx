@@ -1,11 +1,128 @@
-import React, { useState, useEffect } from 'react';
-import { Loader2, X, Globe } from 'lucide-react';
-import type { Account } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
+import { ChevronDown, Globe, Languages, Loader2, X } from 'lucide-react';
+import type { AppLanguage } from '../../shared/mailFolders';
+import {
+  detectAiLanguageFromText,
+  getAiLanguageLabel,
+  getAiLanguageOptions,
+  normalizeAiLanguage,
+} from '../utils/aiLanguages';
+import {
+  buildFieldRowStyle,
+  buildIconButtonStyle,
+  buildModalShellStyle,
+  uiColor,
+  uiRadius,
+} from '../utils/uiDesignTokens';
+import {
+  buildComposeHtmlBody,
+  buildComposeRecipientOption,
+  buildComposeTextBody,
+  filterRecipientSuggestions,
+  normalizeComposeRecipientInput,
+  type ComposeDraftOption,
+  type ComposeQuotedOriginal,
+  type ComposeRecipientOption,
+} from '../utils/composeDraft';
+
+type ComposeUiLabels = {
+  composeTitle: string;
+  draftLabel: string;
+  fromLabel: string;
+  toLabel: string;
+  subjectLabel: string;
+  subjectPlaceholder: string;
+  bodyLabel: string;
+  bodyPlaceholder: string;
+  aiAssistantLabel: string;
+  aiPolishLabel: string;
+  aiTranslateLabel: string;
+  cancelLabel: string;
+  sendLabel: string;
+  sendingLabel: string;
+  saveDraftLabel: string;
+  savingDraftLabel: string;
+  draftSavedLabel: string;
+  chooseDraftLabel: string;
+  noDraftsLabel: string;
+  deleteDraftLabel: string;
+  recipientRequired: string;
+  subjectRequired: string;
+  accountRequired: string;
+  multipleRecipients: string;
+  helperSubtitle: string;
+  recipientsHint: string;
+  quotedOriginalLabel: string;
+  originalAttachmentsLabel: string;
+  originalAttachmentsNotIncluded: string;
+  showOriginal: string;
+  hideOriginal: string;
+  quickTranslate: string;
+  quickTranslateUnavailable: string;
+  quickTranslateTo: (language: string) => string;
+  quickTranslateBack: (language: string) => string;
+  polishFailed: string;
+  translateFailed: string;
+};
+
+type ComposeTranslator = (key: string, options?: Record<string, unknown>) => string;
+
+function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
+  return {
+    composeTitle: t('composeDialog.composeTitle'),
+    draftLabel: t('composeDialog.draftLabel'),
+    fromLabel: t('composeDialog.fromLabel'),
+    toLabel: t('composeDialog.toLabel'),
+    subjectLabel: t('composeDialog.subjectLabel'),
+    subjectPlaceholder: t('composeDialog.subjectPlaceholder'),
+    bodyLabel: t('composeDialog.bodyLabel'),
+    bodyPlaceholder: t('composeDialog.bodyPlaceholder'),
+    aiAssistantLabel: t('composeDialog.aiAssistantLabel'),
+    aiPolishLabel: t('composeDialog.aiPolishLabel'),
+    aiTranslateLabel: t('composeDialog.aiTranslateLabel'),
+    cancelLabel: t('composeDialog.cancelLabel'),
+    sendLabel: t('composeDialog.sendLabel'),
+    sendingLabel: t('composeDialog.sendingLabel'),
+    saveDraftLabel: t('composeDialog.saveDraftLabel'),
+    savingDraftLabel: t('composeDialog.savingDraftLabel'),
+    draftSavedLabel: t('composeDialog.draftSavedLabel'),
+    chooseDraftLabel: t('composeDialog.chooseDraftLabel'),
+    noDraftsLabel: t('composeDialog.noDraftsLabel'),
+    deleteDraftLabel: t('composeDialog.deleteDraftLabel'),
+    recipientRequired: t('composeDialog.recipientRequired'),
+    subjectRequired: t('composeDialog.subjectRequired'),
+    accountRequired: t('composeDialog.accountRequired'),
+    multipleRecipients: t('composeDialog.multipleRecipients'),
+    helperSubtitle: t('composeDialog.helperSubtitle'),
+    recipientsHint: t('composeDialog.recipientsHint'),
+    quotedOriginalLabel: t('composeDialog.quotedOriginalLabel'),
+    originalAttachmentsLabel: t('composeDialog.originalAttachmentsLabel'),
+    originalAttachmentsNotIncluded: t('composeDialog.originalAttachmentsNotIncluded'),
+    showOriginal: t('composeDialog.showOriginal'),
+    hideOriginal: t('composeDialog.hideOriginal'),
+    quickTranslate: t('composeDialog.quickTranslate'),
+    quickTranslateUnavailable: t('composeDialog.quickTranslateUnavailable'),
+    quickTranslateTo: (language) => t('composeDialog.quickTranslateTo', { language }),
+    quickTranslateBack: (language) => t('composeDialog.quickTranslateBack', { language }),
+    polishFailed: t('composeDialog.polishFailed'),
+    translateFailed: t('composeDialog.translateFailed'),
+  };
+}
 
 interface ComposeDialogProps {
-  t: (key: string) => string;
+  t: ComposeTranslator;
   isOpen: boolean;
   onClose: () => void;
+  onSaveDraft: (options: {
+    accountId: number;
+    to: string[];
+    subject: string;
+    body: string;
+    draftKey: string;
+    quotedOriginal?: ComposeQuotedOriginal | null;
+  }) => Promise<void> | void;
+  onDeleteDraft?: (draftId: string, draft?: ComposeDraftOption) => Promise<void> | void;
   accounts: Array<{
     id: number;
     email: string;
@@ -22,109 +139,202 @@ interface ComposeDialogProps {
     accountId: number;
     to: string[];
     subject: string;
-    body: string;
+    bodyText: string;
+    bodyHtml?: string;
+    editableBody: string;
+    draftKey: string;
+    sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
   }) => Promise<{ success: boolean; message: string }>;
-  initialTo?: string;
+  initialRecipients?: ComposeRecipientOption[];
   initialSubject?: string;
-  initialBody?: string;
+  initialEditableBody?: string;
+  initialQuotedOriginal?: ComposeQuotedOriginal | null;
+  draftOptions?: ComposeDraftOption[];
+  recipientSuggestions?: ComposeRecipientOption[];
+  appLanguage: AppLanguage;
   aiTargetLanguage: string;
+  sourceLanguageSample?: string;
 }
 
-const aiLanguages = [
-  { value: '中文', label: '中文' },
-  { value: 'English', label: 'English' },
-  { value: '日本語', label: '日本語' },
-  { value: '한국어', label: '한국어' },
-  { value: 'Español', label: 'Español' },
-  { value: 'Français', label: 'Français' },
-  { value: 'Deutsch', label: 'Deutsch' },
-  { value: 'Русский', label: 'Русский' },
-];
+function sanitizeQuotedOriginalHtml(value: string): string {
+  return DOMPurify.sanitize(value, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'span', 'div',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img', 'hr', 'pre', 'code',
+      'html', 'body', 'center',
+    ],
+    ALLOWED_ATTR: [
+      'href', 'src', 'alt', 'title', 'style', 'class', 'target',
+      'width', 'height', 'colspan', 'rowspan',
+      'bgcolor', 'align', 'valign', 'cellpadding', 'cellspacing', 'border', 'dir',
+    ],
+  });
+}
 
 export function ComposeDialog({
   t,
   isOpen,
   onClose,
+  onSaveDraft: _onSaveDraft,
   accounts,
   selectedAccount,
   onSend,
-  initialTo,
+  onDeleteDraft,
+  initialRecipients,
   initialSubject,
-  initialBody,
+  initialEditableBody,
+  initialQuotedOriginal,
+  draftOptions = [],
+  recipientSuggestions = [],
+  appLanguage,
   aiTargetLanguage,
+  sourceLanguageSample,
 }: ComposeDialogProps) {
   const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [recipients, setRecipients] = useState<ComposeRecipientOption[]>([]);
+  const [recipientInput, setRecipientInput] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [showDraftMenu, setShowDraftMenu] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [draftKey, setDraftKey] = useState('');
+  const [quickTranslateToggled, setQuickTranslateToggled] = useState(false);
+  const [showRecipientSuggestions, setShowRecipientSuggestions] = useState(false);
+  const [showQuotedOriginal, setShowQuotedOriginal] = useState(false);
+  const [currentQuotedOriginal, setCurrentQuotedOriginal] = useState<ComposeQuotedOriginal | null>(null);
+  const [activeDraftSource, setActiveDraftSource] = useState<ComposeDraftOption | null>(null);
+  const recipientInputRef = useRef<HTMLInputElement | null>(null);
+
+  const composeUi = useMemo(() => buildComposeUiLabels(t), [t, appLanguage]);
+  const aiLanguages = useMemo(() => getAiLanguageOptions(appLanguage), [appLanguage]);
+  const normalizedTargetLanguage = useMemo(
+    () => normalizeAiLanguage(aiTargetLanguage),
+    [aiTargetLanguage],
+  );
+  const sourceLanguage = useMemo(
+    () => detectAiLanguageFromText(sourceLanguageSample || ''),
+    [sourceLanguageSample],
+  );
+  const sourceLanguageLabel = sourceLanguage
+    ? getAiLanguageLabel(sourceLanguage, appLanguage)
+    : null;
+  const appTargetLanguageLabel = getAiLanguageLabel(normalizedTargetLanguage, appLanguage);
+  const quickTranslateTarget = quickTranslateToggled ? normalizedTargetLanguage : sourceLanguage;
+  const quickTranslateLabel = quickTranslateToggled
+    ? composeUi.quickTranslateBack(appTargetLanguageLabel)
+    : composeUi.quickTranslateTo(sourceLanguageLabel || appTargetLanguageLabel);
 
   useEffect(() => {
-    if (isOpen) {
-      setFrom(selectedAccount?.email || accounts[0]?.email || '');
-      setTo(initialTo || '');
-      setSubject(initialSubject || '');
-      setBody(initialBody || '');
-      setError(null);
-    }
-  }, [isOpen, selectedAccount, accounts, initialTo, initialSubject, initialBody]);
+    if (!isOpen) return;
 
-  const handleSend = async () => {
-    if (!to.trim()) {
-      setError(t('validateRecipientRequired') || '请输入收件人');
-      return;
-    }
-    if (!subject.trim()) {
-      setError(t('validateSubjectRequired') || '请输入主题');
-      return;
-    }
-
-    setSending(true);
+    setFrom(selectedAccount?.email || accounts[0]?.email || '');
+    setRecipients(initialRecipients || []);
+    setRecipientInput('');
+    setSubject(initialSubject || '');
+    setBody(initialEditableBody || '');
     setError(null);
+    setStatusMessage(null);
+    setShowLangMenu(false);
+    setShowDraftMenu(false);
+    setQuickTranslateToggled(false);
+    setShowRecipientSuggestions(false);
+    setShowQuotedOriginal(false);
+    setCurrentQuotedOriginal(initialQuotedOriginal || null);
+    setActiveDraftSource(null);
+    setDraftKey(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  }, [accounts, initialEditableBody, initialQuotedOriginal, initialRecipients, initialSubject, isOpen, selectedAccount]);
 
-    const toEmails = to.split(',').map(e => e.trim()).filter(e => e);
-    const account = accounts.find(a => a.email === from);
+  const filteredSuggestions = useMemo(
+    () => filterRecipientSuggestions(
+      recipientSuggestions,
+      recipientInput,
+      recipients.map((item) => item.email),
+    ),
+    [recipientInput, recipientSuggestions, recipients],
+  );
 
-    if (!account) {
-      setError(t('validateAccountRequired') || '请选择发件账号');
-      setSending(false);
-      return;
-    }
+  const sanitizedQuotedOriginalHtml = useMemo(
+    () => currentQuotedOriginal?.html ? sanitizeQuotedOriginalHtml(currentQuotedOriginal.html) : '',
+    [currentQuotedOriginal],
+  );
 
-    const result = await onSend({
-      accountId: account.id,
-      to: toEmails,
-      subject: subject.trim(),
-      body: body.trim(),
+  const addRecipient = (option: ComposeRecipientOption) => {
+    setRecipients((prev) => {
+      if (prev.some((item) => item.email === option.email)) return prev;
+      return [...prev, option];
     });
+    setRecipientInput('');
+    setShowRecipientSuggestions(false);
+    setTimeout(() => recipientInputRef.current?.focus(), 0);
+  };
 
-    setSending(false);
+  const removeRecipient = (email: string) => {
+    setRecipients((prev) => prev.filter((item) => item.email !== email));
+  };
 
-    if (result.success) {
-      onClose();
-    } else {
-      setError(result.message);
+  const applyDraft = (draft: ComposeDraftOption) => {
+    const account = accounts.find((item) => item.id === draft.accountId);
+    if (account) {
+      setFrom(account.email);
     }
+    setRecipients(draft.recipients);
+    setRecipientInput('');
+    setSubject(draft.subject);
+    setBody(draft.body);
+    setDraftKey(draft.draftKey);
+    setCurrentQuotedOriginal(draft.quotedOriginal || null);
+    setActiveDraftSource(draft);
+    setShowQuotedOriginal(false);
+    setShowDraftMenu(false);
+    setError(null);
+    setStatusMessage(null);
+  };
+
+  const resolveRecipientsForSend = (): ComposeRecipientOption[] => {
+    const pending = normalizeComposeRecipientInput(recipientInput)
+      .map((value) => buildComposeRecipientOption(value, value.split('@')[0]))
+      .filter((value): value is ComposeRecipientOption => Boolean(value));
+
+    const merged = [...recipients];
+    for (const option of pending) {
+      if (!merged.some((item) => item.email === option.email)) {
+        merged.push(option);
+      }
+    }
+    return merged;
   };
 
   const handlePolish = async () => {
     if (!body.trim()) return;
+
     setAiLoading(true);
     setError(null);
+
     try {
-      const res = await window.electronAPI.invoke('ai:polish', body, 'formal') as {
-        success: boolean; content?: string; error?: string;
+      const res = await window.electronAPI.invoke(
+        'ai:polish',
+        body,
+        'formal',
+        normalizeAiLanguage(aiTargetLanguage),
+      ) as {
+        success: boolean;
+        content?: string;
+        error?: string;
       };
+
       if (res.success && res.content) {
         setBody(res.content);
       } else {
-        setError(res.error || '润色失败，请检查 AI 配置');
+        setError(res.error || composeUi.polishFailed);
       }
     } catch (err) {
-      setError((err as Error).message || '润色请求异常');
+      setError((err as Error).message || composeUi.polishFailed);
     } finally {
       setAiLoading(false);
     }
@@ -132,169 +342,600 @@ export function ComposeDialog({
 
   const handleTranslate = async (targetLang: string) => {
     if (!body.trim()) return;
+
     setAiLoading(true);
     setError(null);
     setShowLangMenu(false);
 
-    const langMap: Record<string, string> = {
-      '中文': 'Chinese',
-      'English': 'English',
-      '日本語': 'Japanese',
-      '한국어': 'Korean',
-      'Español': 'Spanish',
-      'Français': 'French',
-      'Deutsch': 'German',
-      'Русский': 'Russian',
-    };
-    const apiLang = langMap[targetLang] || targetLang;
-
     try {
-      const res = await window.electronAPI.invoke('ai:translate', body, apiLang) as {
-        success: boolean; content?: string; error?: string;
+      const res = await window.electronAPI.invoke('ai:translate', body, normalizeAiLanguage(targetLang)) as {
+        success: boolean;
+        content?: string;
+        error?: string;
       };
+
       if (res.success && res.content) {
         setBody(res.content);
       } else {
-        setError(res.error || '翻译失败，请检查 AI 配置');
+        setError(res.error || composeUi.translateFailed);
       }
     } catch (err) {
-      setError((err as Error).message || '翻译请求异常');
+      setError((err as Error).message || composeUi.translateFailed);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleQuickTranslate = async () => {
+    if (!body.trim()) return;
+    if (!quickTranslateTarget) {
+      setError(composeUi.quickTranslateUnavailable);
+      return;
+    }
+
+    setAiLoading(true);
+    setError(null);
+    setShowLangMenu(false);
+
+    try {
+      const res = await window.electronAPI.invoke('ai:translate', body, quickTranslateTarget) as {
+        success: boolean;
+        content?: string;
+        error?: string;
+      };
+
+      if (res.success && res.content) {
+        setBody(res.content);
+        setQuickTranslateToggled((prev) => !prev);
+      } else {
+        setError(res.error || composeUi.translateFailed);
+      }
+    } catch (err) {
+      setError((err as Error).message || composeUi.translateFailed);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleCloseRequest = async () => {
+    if (sending) return;
+    onClose();
+  };
+
+  const handleSaveDraft = async () => {
+    if (sending || savingDraft) return;
+
+    const account = accounts.find((item) => item.email === from);
+    if (!account) {
+      setError(composeUi.accountRequired);
+      return;
+    }
+
+    setSavingDraft(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const resolvedRecipients = resolveRecipientsForSend();
+      setRecipients(resolvedRecipients);
+      setRecipientInput('');
+      await _onSaveDraft({
+        accountId: account.id,
+        to: resolvedRecipients.map((item) => item.email),
+        subject: subject.trim(),
+        body,
+        draftKey,
+        quotedOriginal: currentQuotedOriginal,
+      });
+      setStatusMessage(composeUi.draftSavedLabel);
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const handleDeleteDraft = async (draft: ComposeDraftOption) => {
+    if (!onDeleteDraft) return;
+    await onDeleteDraft(draft.id, draft);
+    if (draft.draftKey === draftKey) {
+      setDraftKey(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      setSubject('');
+      setBody('');
+      setRecipients([]);
+      setRecipientInput('');
+      setCurrentQuotedOriginal(null);
+      setActiveDraftSource(null);
+      setShowQuotedOriginal(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (sending) return;
+
+    const resolvedRecipients = resolveRecipientsForSend();
+    setRecipients(resolvedRecipients);
+    setRecipientInput('');
+
+    if (resolvedRecipients.length === 0) {
+      setError(composeUi.recipientRequired);
+      return;
+    }
+
+    if (!subject.trim()) {
+      setError(composeUi.subjectRequired);
+      return;
+    }
+
+    const account = accounts.find((item) => item.email === from);
+    if (!account) {
+      setError(composeUi.accountRequired);
+      return;
+    }
+
+    setSending(true);
+    setError(null);
+
+    try {
+      const result = await onSend({
+        accountId: account.id,
+        to: resolvedRecipients.map((item) => item.email),
+        subject: subject.trim(),
+        bodyText: buildComposeTextBody(body, currentQuotedOriginal),
+        bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(body, currentQuotedOriginal) : undefined,
+        editableBody: body,
+        draftKey,
+        sourceDraft: activeDraftSource
+          ? {
+              id: activeDraftSource.id,
+              accountId: activeDraftSource.accountId,
+              uid: activeDraftSource.uid,
+              folder: activeDraftSource.folder,
+              messageId: activeDraftSource.messageId,
+              localOnly: activeDraftSource.localOnly,
+              draftKey: activeDraftSource.draftKey,
+            }
+          : null,
+      });
+
+      if (result.success) {
+        onClose();
+      } else {
+        setError(result.message);
+      }
+    } finally {
+      setSending(false);
     }
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onClose}
-      />
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overflow-x-hidden px-4 py-6 isolation-isolate">
+      <div className="absolute inset-0 bg-black/70" onClick={() => void handleCloseRequest()} />
 
-      {/* Dialog */}
-      <div className="relative z-10 w-full max-w-2xl bg-zinc-900 rounded-2xl border border-zinc-800 shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-          <h2 className="text-lg font-bold text-zinc-100">{t('newMail')}</h2>
+      <div
+        className="relative z-10 w-full max-w-4xl max-h-[calc(100vh-48px)] overflow-y-auto overflow-x-hidden rounded-[24px] [-webkit-app-region:drag]"
+        style={{ ...buildModalShellStyle(), backgroundColor: '#08111F', borderColor: 'rgba(148,163,184,0.12)' }}
+      >
+        <div
+          className="flex items-center justify-between px-7 py-6"
+          style={{ borderBottom: `1px solid ${uiColor.borderSubtle}` }}
+        >
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.22em]" style={{ color: uiColor.textSubtle }}>
+              MiNiMail
+            </div>
+            <h2 className="mt-2 text-xl font-bold text-zinc-100">
+              {`${composeUi.composeTitle} · ${composeUi.draftLabel}`}
+            </h2>
+          </div>
           <button
-            onClick={onClose}
-            className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+            type="button"
+            onClick={() => void handleCloseRequest()}
+            disabled={sending}
+            className="p-2 transition-colors disabled:opacity-40 [-webkit-app-region:no-drag]"
+            style={buildIconButtonStyle()}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* From */}
-        <div className="flex items-center px-5 py-3 border-b border-zinc-800">
-          <label className="text-sm text-zinc-500 w-12 flex-shrink-0">{t('from')}</label>
-          <select
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="flex-1 bg-transparent text-zinc-100 text-sm focus:outline-none cursor-pointer"
-          >
-            {accounts.map((account) => (
-              <option key={account.id} value={account.email} className="bg-zinc-900">
-                {account.email}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* To */}
-        <div className="flex items-center px-5 py-3 border-b border-zinc-800">
-          <label className="text-sm text-zinc-500 w-12 flex-shrink-0">{t('to')}</label>
-          <input
-            type="text"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="flex-1 bg-transparent text-zinc-100 text-sm focus:outline-none"
-            placeholder={t('multipleRecipients')}
-          />
-        </div>
-
-        {/* Subject */}
-        <div className="flex items-center px-5 py-3 border-b border-zinc-800">
-          <label className="text-sm text-zinc-500 w-12 flex-shrink-0">{t('subject')}</label>
-          <input
-            type="text"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className="flex-1 bg-transparent text-zinc-100 text-sm focus:outline-none"
-            placeholder={t('subject')}
-          />
-        </div>
-
-        {/* AI Toolbar */}
-        <div className="flex items-center gap-2 px-5 py-2 border-b border-zinc-800 bg-zinc-950">
-          <span className="text-xs text-zinc-500 mr-2">{t('aiAssistant')}:</span>
-          <button
-            onClick={handlePolish}
-            disabled={aiLoading || !body.trim()}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded-lg text-xs transition-colors disabled:opacity-50"
-          >
-            ✨ {t('aiPolish')}
-          </button>
-          <div className="relative">
-            <button
-              onClick={() => setShowLangMenu(!showLangMenu)}
-              disabled={aiLoading || !body.trim()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded-lg text-xs transition-colors disabled:opacity-50"
+        <div
+          className="px-7 py-5 space-y-4 [-webkit-app-region:no-drag]"
+          style={{ background: 'linear-gradient(180deg, rgba(99,102,241,0.08), rgba(8,17,31,0))' }}
+        >
+          <div className="relative z-10 grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_1fr]">
+            <div
+              className="rounded-[20px] overflow-visible"
+              style={{ backgroundColor: '#0C1729', border: `1px solid ${uiColor.borderSubtle}` }}
             >
-              <Globe className="w-3 h-3" />
-              {t('aiTranslate')}
-            </button>
-            {showLangMenu && (
-              <div className="absolute top-full left-0 mt-1 bg-zinc-800 rounded-lg border border-zinc-700 overflow-hidden shadow-xl z-10">
-                {aiLanguages.map((lang) => (
-                  <button
-                    key={lang.value}
-                    onClick={() => handleTranslate(lang.value)}
-                    className="block w-full px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-700 transition-colors text-left"
-                  >
-                    {lang.label}
-                  </button>
-                ))}
+              <div className="flex items-center px-5 py-4" style={buildFieldRowStyle()}>
+                <label className="w-12 flex-shrink-0 text-sm text-zinc-500">{composeUi.fromLabel}</label>
+                <select
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="flex-1 cursor-pointer bg-transparent text-sm text-zinc-100 focus:outline-none"
+                >
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.email} className="bg-zinc-900">
+                      {account.email}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
+
+              <div className="flex items-start px-5 py-4" style={buildFieldRowStyle()}>
+                <label className="w-12 flex-shrink-0 pt-1.5 text-sm text-zinc-500">{composeUi.toLabel}</label>
+                <div className="relative z-20 flex-1 min-w-0">
+                  <div
+                    className="flex min-h-[28px] max-h-[96px] flex-wrap items-start gap-2 overflow-y-auto pr-1"
+                    style={{ scrollbarGutter: 'stable both-edges' }}
+                  >
+                    {recipients.map((recipient) => (
+                      <button
+                        key={recipient.email}
+                        type="button"
+                        onClick={() => removeRecipient(recipient.email)}
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs cursor-pointer"
+                        style={{
+                          backgroundColor: 'rgba(124,58,237,0.16)',
+                          color: '#EDE9FE',
+                          border: '1px solid rgba(196,181,253,0.22)',
+                        }}
+                        title={recipient.email}
+                      >
+                        <span className="max-w-[180px] truncate">{recipient.label}</span>
+                        <X className="w-3 h-3" />
+                      </button>
+                    ))}
+                    <input
+                      ref={recipientInputRef}
+                      type="text"
+                      value={recipientInput}
+                      onChange={(e) => {
+                        setRecipientInput(e.target.value);
+                        setShowRecipientSuggestions(true);
+                      }}
+                      onFocus={() => setShowRecipientSuggestions(true)}
+                      onBlur={() => {
+                        setTimeout(() => setShowRecipientSuggestions(false), 120);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === 'Tab' || e.key === ',') {
+                          e.preventDefault();
+                          if (filteredSuggestions.length > 0 && recipientInput.trim()) {
+                            addRecipient(filteredSuggestions[0]);
+                          } else {
+                            const values = normalizeComposeRecipientInput(recipientInput);
+                            if (!values.length) return;
+                            for (const value of values) {
+                              const option = buildComposeRecipientOption(value, value.split('@')[0]);
+                              if (option) addRecipient(option);
+                            }
+                          }
+                        }
+                        if (e.key === 'Backspace' && !recipientInput && recipients.length > 0) {
+                          removeRecipient(recipients[recipients.length - 1].email);
+                        }
+                      }}
+                      className="min-w-[160px] flex-1 bg-transparent text-sm text-zinc-100 focus:outline-none"
+                      placeholder={recipients.length === 0 ? composeUi.multipleRecipients : composeUi.recipientsHint}
+                    />
+                  </div>
+
+                  {showRecipientSuggestions && filteredSuggestions.length > 0 && (
+                    <div
+                      className="absolute left-0 right-0 top-full z-30 mt-2 overflow-hidden"
+                      style={{
+                        backgroundColor: '#2A303A',
+                        borderRadius: 16,
+                        border: `1px solid ${uiColor.borderSubtle}`,
+                        boxShadow: '0 16px 40px rgba(0,0,0,0.35)',
+                        maxHeight: 248,
+                        overflowY: 'auto',
+                        overscrollBehavior: 'contain',
+                      }}
+                    >
+                      {filteredSuggestions.map((option) => (
+                        <button
+                          key={option.email}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => addRecipient(option)}
+                          className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/6 cursor-pointer"
+                        >
+                          <span
+                            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
+                            style={{ background: 'linear-gradient(135deg, #60A5FA, #7C3AED)' }}
+                          >
+                            {option.label.slice(0, 2).toUpperCase()}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium text-zinc-100">{option.label}</div>
+                            <div className="truncate text-xs" style={{ color: uiColor.textSubtle }}>
+                              {option.email}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative flex items-center px-5 py-4">
+                <label className="w-12 flex-shrink-0 text-sm text-zinc-500">{composeUi.subjectLabel}</label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  className="flex-1 bg-transparent text-sm text-zinc-100 focus:outline-none"
+                  placeholder={composeUi.subjectPlaceholder}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowDraftMenu((prev) => !prev)}
+                  className="ml-2 flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 cursor-pointer"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: `1px solid ${uiColor.borderSubtle}` }}
+                  title={composeUi.chooseDraftLabel}
+                >
+                  {composeUi.draftLabel}
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showDraftMenu ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showDraftMenu && (
+                  <div
+                    className="absolute right-4 top-full z-30 mt-2 w-[360px] overflow-hidden rounded-2xl"
+                    style={{
+                      backgroundColor: '#202938',
+                      border: `1px solid ${uiColor.borderSubtle}`,
+                      boxShadow: '0 18px 44px rgba(0,0,0,0.38)',
+                    }}
+                  >
+                    <div
+                      className="px-4 py-3 text-xs font-semibold"
+                      style={{ color: '#DDD6FE', borderBottom: `1px solid ${uiColor.borderSubtle}` }}
+                    >
+                      {composeUi.chooseDraftLabel}
+                    </div>
+                    <div className="max-h-[260px] overflow-y-auto overscroll-contain">
+                      {draftOptions.length === 0 ? (
+                        <div className="px-4 py-4 text-sm" style={{ color: uiColor.textSubtle }}>
+                          {composeUi.noDraftsLabel}
+                        </div>
+                      ) : (
+                        draftOptions.map((draft) => (
+                          <div
+                            key={draft.id}
+                            className="flex items-start gap-2 px-4 py-3"
+                            style={{ borderBottom: `1px solid ${uiColor.borderSubtle}` }}
+                          >
+                            <button
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => applyDraft(draft)}
+                              className="min-w-0 flex-1 text-left cursor-pointer"
+                            >
+                              <div className="truncate text-sm font-semibold text-zinc-100">
+                                {draft.subject || composeUi.draftLabel}
+                              </div>
+                              <div className="mt-1 truncate text-xs" style={{ color: uiColor.textSubtle }}>
+                                {draft.body || draft.recipients.map((item) => item.label).join(', ')}
+                              </div>
+                            </button>
+                            {onDeleteDraft && (
+                              <button
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => void handleDeleteDraft(draft)}
+                                className="rounded-lg px-2 py-1 text-xs text-zinc-400 transition-colors hover:text-red-300 cursor-pointer"
+                                title={composeUi.deleteDraftLabel}
+                              >
+                                {composeUi.deleteDraftLabel}
+                              </button>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div
+              className="rounded-[20px] p-5"
+              style={{ backgroundColor: '#0B1527', border: `1px solid ${uiColor.borderSubtle}` }}
+            >
+              <div className="text-[12px] font-semibold" style={{ color: '#DDD6FE' }}>
+                {composeUi.aiAssistantLabel}
+              </div>
+              <div className="mt-1 text-[11px]" style={{ color: uiColor.textSubtle }}>
+                {composeUi.helperSubtitle}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePolish}
+                  disabled={aiLoading || !body.trim()}
+                  className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                >
+                  {composeUi.aiPolishLabel}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleQuickTranslate}
+                  disabled={aiLoading || !body.trim() || !quickTranslateTarget}
+                  className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                  title={quickTranslateLabel}
+                >
+                  <Languages className="h-3 w-3" />
+                  {composeUi.quickTranslate}
+                </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowLangMenu((prev) => !prev)}
+                    disabled={aiLoading || !body.trim()}
+                    className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                  >
+                    <Globe className="h-3 w-3" />
+                    {composeUi.aiTranslateLabel}
+                  </button>
+                  {showLangMenu && (
+                    <div className="absolute left-0 top-full z-20 mt-2 min-w-[140px] overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 shadow-xl">
+                      {aiLanguages.map((lang) => (
+                        <button
+                          type="button"
+                          key={lang.value}
+                          onClick={() => handleTranslate(lang.value)}
+                          className="block w-full px-4 py-2.5 text-left text-xs text-zinc-300 transition-colors hover:bg-zinc-700 cursor-pointer"
+                        >
+                          {lang.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {aiLoading && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+              </div>
+            </div>
           </div>
-          {aiLoading && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
         </div>
 
-        {/* Body */}
-        <div className="p-5">
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            className="w-full h-64 bg-transparent text-zinc-100 text-sm focus:outline-none resize-none placeholder:text-zinc-600"
-            placeholder={t('body')}
-          />
+        <div className="px-7 pb-6 [-webkit-app-region:no-drag]">
+          <div
+            className="overflow-hidden rounded-[20px] border"
+            style={{ borderColor: 'rgba(148,163,184,0.12)', backgroundColor: '#0B1527' }}
+          >
+            <div
+              className="px-5 py-3 text-[11px]"
+              style={{ color: uiColor.textSubtle, borderBottom: `1px solid ${uiColor.borderSubtle}` }}
+            >
+              {composeUi.bodyLabel}
+            </div>
+            <div className="p-5">
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                className="h-72 w-full resize-none bg-transparent px-3 py-2 text-sm leading-6 text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                placeholder={composeUi.bodyPlaceholder}
+                style={{ borderRadius: uiRadius.lg }}
+              />
+            </div>
+          </div>
+
+          {currentQuotedOriginal && (
+            <div
+              className="mt-4 overflow-hidden rounded-[20px] border"
+              style={{ borderColor: 'rgba(148,163,184,0.12)', backgroundColor: '#091321' }}
+            >
+              <button
+                type="button"
+                onClick={() => setShowQuotedOriginal((prev) => !prev)}
+                className="flex w-full items-center justify-between px-5 py-3 text-left cursor-pointer"
+                style={{ borderBottom: showQuotedOriginal ? `1px solid ${uiColor.borderSubtle}` : 'none' }}
+              >
+                <div className="min-w-0">
+                  <div className="text-[11px]" style={{ color: uiColor.textSubtle }}>
+                    {composeUi.quotedOriginalLabel}
+                  </div>
+                  <div className="mt-1 truncate text-sm font-medium text-zinc-100">{currentQuotedOriginal.title}</div>
+                  <div className="mt-1 truncate text-xs" style={{ color: uiColor.textSubtle }}>
+                    {currentQuotedOriginal.meta}
+                    {currentQuotedOriginal.previewText ? ` · ${currentQuotedOriginal.previewText}` : ''}
+                  </div>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-2 text-xs" style={{ color: '#C4B5FD' }}>
+                  <span>{showQuotedOriginal ? composeUi.hideOriginal : composeUi.showOriginal}</span>
+                  <ChevronDown className={`h-4 w-4 transition-transform ${showQuotedOriginal ? 'rotate-180' : ''}`} />
+                </div>
+              </button>
+
+              {showQuotedOriginal && (
+                <div
+                  className="compose-quoted-original max-h-[320px] overflow-auto p-4 text-sm"
+                  style={{ backgroundColor: '#0D1829' }}
+                >
+                  <div dangerouslySetInnerHTML={{ __html: sanitizedQuotedOriginalHtml }} />
+                  {currentQuotedOriginal.mode === 'forward' && (currentQuotedOriginal.attachments?.length ?? 0) > 0 && (
+                    <div
+                      className="mt-4 rounded-2xl p-3 text-xs"
+                      style={{
+                        border: `1px solid ${uiColor.borderSubtle}`,
+                        backgroundColor: 'rgba(251,191,36,0.08)',
+                        color: uiColor.textSubtle,
+                      }}
+                    >
+                      <div className="font-semibold text-amber-200">{composeUi.originalAttachmentsLabel}</div>
+                      <div className="mt-1 text-amber-100/80">{composeUi.originalAttachmentsNotIncluded}</div>
+                      <div className="mt-2 space-y-1">
+                        {currentQuotedOriginal.attachments?.map((attachment, index) => (
+                          <div
+                            key={`${attachment.cacheId || attachment.filename || 'attachment'}-${index}`}
+                            className="flex min-w-0 items-center justify-between gap-3 rounded-lg px-2 py-1"
+                            style={{ backgroundColor: 'rgba(255,255,255,0.04)' }}
+                          >
+                            <span className="min-w-0 truncate text-zinc-200">{attachment.filename || 'attachment'}</span>
+                            <span className="flex-shrink-0 text-zinc-500">{attachment.contentType || ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Error */}
         {error && (
-          <div className="mx-5 mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
+          <div className="mx-7 mb-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3.5 text-sm text-red-500">
             {error}
           </div>
         )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 py-4 border-t border-zinc-800">
+        {statusMessage && !error && (
+          <div className="mx-7 mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-sm text-emerald-300">
+            {statusMessage}
+          </div>
+        )}
+
+        <div
+          className="flex items-center justify-between px-7 py-5 [-webkit-app-region:no-drag]"
+          style={{ borderTop: `1px solid ${uiColor.borderSubtle}` }}
+        >
           <button
-            onClick={onClose}
-            className="px-4 py-2 text-zinc-400 hover:text-zinc-200 text-sm transition-colors"
-          >
-            {t('cancel')}
-          </button>
-          <button
-            onClick={handleSend}
+            type="button"
+            onClick={() => void handleCloseRequest()}
             disabled={sending}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg text-sm transition-colors disabled:opacity-50"
+            className="cursor-pointer px-4 py-2.5 text-sm text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
           >
-            {sending ? t('sending') : t('send')}
+            {composeUi.cancelLabel}
           </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleSaveDraft()}
+              disabled={sending || savingDraft}
+              className="cursor-pointer rounded-xl px-5 py-2.5 text-sm font-medium text-zinc-200 transition-colors disabled:opacity-50"
+              style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+            >
+              {savingDraft ? composeUi.savingDraftLabel : composeUi.saveDraftLabel}
+            </button>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={sending}
+              className="cursor-pointer rounded-xl px-6 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+              style={{ background: 'linear-gradient(135deg, #7C3AED, #6366F1)' }}
+            >
+              {sending ? composeUi.sendingLabel : composeUi.sendLabel}
+            </button>
+          </div>
         </div>
       </div>
     </div>

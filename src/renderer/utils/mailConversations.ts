@@ -1,4 +1,4 @@
-import { extractReadableEmailText } from './emailContent';
+export { formatQuotedOriginalBody } from './composeDraft';
 
 export type ConversationMail = {
   id: string;
@@ -20,13 +20,14 @@ export type ConversationMail = {
   references?: string;
   bodyText?: string;
   bodyHtml?: string;
-  deliveryState?: 'sending' | 'sent' | 'failed';
+  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
   deliveryError?: string;
   localDraftKey?: string;
+  localSendId?: string;
 };
 
-function splitAddresses(value: string): string[] {
-  return value
+function splitAddresses(value?: string | null): string[] {
+  return (typeof value === 'string' ? value : '')
     .split(',')
     .map((part) => {
       const match = part.match(/<([^>]+)>/);
@@ -43,7 +44,11 @@ export function getConversationCounterparty(
   mail: Pick<ConversationMail, 'from' | 'to' | 'accountId'>,
   accountEmails: string[] = []
 ): string {
-  const normalizedAccountEmails = new Set(accountEmails.map((email) => email.trim().toLowerCase()));
+  const normalizedAccountEmails = new Set(
+    accountEmails
+      .filter((email): email is string => typeof email === 'string' && email.trim().length > 0)
+      .map((email) => email.trim().toLowerCase())
+  );
   const from = firstAddress(mail.from) || '';
 
   if (normalizedAccountEmails.has(from)) {
@@ -61,11 +66,24 @@ export function getConversationKey(
   return `${mail.accountId}:${getConversationCounterparty(mail, accountEmails)}`;
 }
 
+export function buildClassifiedConversationKey(
+  mail: Pick<ConversationMail, 'from' | 'to' | 'accountId' | 'category'>,
+  accountEmails: string[] = []
+): string | null {
+  const contactKey = getConversationKey(mail, accountEmails);
+  if (!mail.category) return null;
+  return `${contactKey}::${mail.category}`;
+}
+
 export function isLocalSenderMail(
   mail: Pick<ConversationMail, 'from'>,
   accountEmails: string[] = []
 ): boolean {
-  const normalizedAccountEmails = new Set(accountEmails.map((email) => email.trim().toLowerCase()));
+  const normalizedAccountEmails = new Set(
+    accountEmails
+      .filter((email): email is string => typeof email === 'string' && email.trim().length > 0)
+      .map((email) => email.trim().toLowerCase())
+  );
   const from = firstAddress(mail.from) || '';
   return normalizedAccountEmails.has(from);
 }
@@ -78,6 +96,24 @@ export function buildSenderConversationRows(
 
   for (const mail of mails) {
     const key = getConversationKey(mail, accountEmails);
+    const current = latestByKey.get(key);
+    if (!current || mail.date.getTime() > current.date.getTime()) {
+      latestByKey.set(key, mail);
+    }
+  }
+
+  return Array.from(latestByKey.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
+}
+
+export function buildClassifiedConversationRows(
+  mails: ConversationMail[],
+  accountEmails: string[] = []
+): ConversationMail[] {
+  const latestByKey = new Map<string, ConversationMail>();
+
+  for (const mail of mails) {
+    const key = buildClassifiedConversationKey(mail, accountEmails);
+    if (!key) continue;
     const current = latestByKey.get(key);
     if (!current || mail.date.getTime() > current.date.getTime()) {
       latestByKey.set(key, mail);
@@ -103,6 +139,23 @@ export function findSenderConversationMails(
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 }
 
+export function findClassifiedConversationMails(
+  target: ConversationMail,
+  allMails: ConversationMail[],
+  accountEmails: string[] = []
+): ConversationMail[] {
+  const targetKey = buildClassifiedConversationKey(target, accountEmails);
+  if (!targetKey) return [];
+
+  return allMails
+    .filter((mail) =>
+      mail.id !== target.id &&
+      mail.accountId === target.accountId &&
+      buildClassifiedConversationKey(mail, accountEmails) === targetKey
+    )
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+}
+
 export function filterUnreadConversationRows(
   rows: ConversationMail[],
   allMails: ConversationMail[],
@@ -119,29 +172,51 @@ export function filterUnreadConversationRows(
   return rows.filter((row) => unreadKeys.has(getConversationKey(row, accountEmails)));
 }
 
-function quoteLines(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
+export function isGitHubNotificationMail(
+  mail: Pick<ConversationMail, 'from' | 'to' | 'subject' | 'snippet' | 'bodyText' | 'bodyHtml'>,
+): boolean {
+  const haystack = [
+    mail.from,
+    mail.to,
+    mail.subject,
+    mail.snippet,
+    mail.bodyText,
+    mail.bodyHtml,
+  ].filter(Boolean).join('\n').toLowerCase();
+
+  if (/@github\.com\b/.test(haystack)) return true;
+  if (/https:\/\/github\.com\//.test(haystack)) return true;
+  if (/^\[[^[\]]+\/[^[\]]+\]/.test(mail.subject || '')) return true;
+  return false;
 }
 
-export function formatQuotedOriginalBody({
-  mode,
-  email,
-}: {
-  mode: 'reply' | 'forward';
-  email: ConversationMail;
-}): string {
-  const readable = extractReadableEmailText(email, { stripUrls: true }).trim();
-  const fromLine = `${email.fromName || email.from} <${email.from}>`;
-  const toLine = email.to ? `To: ${email.to}\n` : '';
-  const dateLine = email.date.toLocaleString();
-  const subjectLine = email.subject;
+export function filterGitHubConversationRows(
+  rows: ConversationMail[],
+  allMails: ConversationMail[],
+  accountEmails: string[] = []
+): ConversationMail[] {
+  const githubKeys = new Set(
+    allMails
+      .filter((mail) => isGitHubNotificationMail(mail))
+      .map((mail) => getConversationKey(mail, accountEmails))
+  );
 
-  if (mode === 'reply') {
-    return `\n\nOn ${dateLine}, ${fromLine} wrote:\n${quoteLines(readable || email.subject)}`;
-  }
+  if (githubKeys.size === 0) return [];
 
-  return `\n\n---------- Forwarded message ----------\nFrom: ${fromLine}\n${toLine}Date: ${dateLine}\nSubject: ${subjectLine}\n\n${readable || email.subject}`;
+  return rows.filter((row) => githubKeys.has(getConversationKey(row, accountEmails)));
+}
+
+export function resolveConversationCategory(
+  target: Pick<ConversationMail, 'id' | 'from' | 'to' | 'accountId' | 'date' | 'category'>,
+  allMails: Array<Pick<ConversationMail, 'id' | 'from' | 'to' | 'accountId' | 'date' | 'category'>>,
+  accountEmails: string[] = []
+): string | undefined {
+  if (target.category) return target.category;
+
+  const targetKey = getConversationKey(target, accountEmails);
+  const candidates = allMails
+    .filter((mail) => getConversationKey(mail, accountEmails) === targetKey && mail.category)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  return candidates[0]?.category;
 }

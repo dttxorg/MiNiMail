@@ -32,7 +32,7 @@ export interface MailExportRequest extends MailBackupTaskBase {
 
 export interface MailImportRequest extends MailBackupTaskBase {
   mode: 'import';
-  sourcePath: string;
+  sourcePaths: string[];
   targetAccountId?: number;
   targetFolder?: string;
   overwriteExisting?: boolean;

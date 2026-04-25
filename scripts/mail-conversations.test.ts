@@ -1,9 +1,12 @@
 import {
   buildSenderConversationRows,
+  filterGitHubConversationRows,
   filterUnreadConversationRows,
   findSenderConversationMails,
   formatQuotedOriginalBody,
+  resolveConversationCategory,
 } from '../src/renderer/utils/mailConversations';
+import { normalizeMailSettingsSnapshot } from '../src/renderer/utils/mailSettings';
 
 type Mail = {
   id: string;
@@ -98,6 +101,38 @@ const threadFollowUp: Mail = {
   references: '<security-root@example.com>',
 };
 
+const githubInbound: Mail = {
+  id: 'mail-8',
+  uid: 8,
+  from: 'notifications@github.com',
+  fromName: 'GitHub',
+  to: 'me@example.com',
+  subject: '[owner/repo] Re: Improve parser (#42)',
+  date: new Date('2026-04-12T11:00:00Z'),
+  snippet: 'alice requested your review',
+  hasAttachments: false,
+  isRead: false,
+  isStarred: false,
+  folder: 'INBOX',
+  accountId: 1,
+};
+
+const githubLocalReply: Mail = {
+  id: 'mail-9',
+  uid: 9,
+  from: 'me@example.com',
+  fromName: 'Me',
+  to: 'notifications@github.com',
+  subject: '[owner/repo] Re: Improve parser (#42)',
+  date: new Date('2026-04-12T12:00:00Z'),
+  snippet: 'I replied by email',
+  hasAttachments: false,
+  isRead: true,
+  isStarred: false,
+  folder: 'Sent',
+  accountId: 1,
+};
+
 function testConversationRowsCollapseSameSender() {
   const rows = buildSenderConversationRows([olderInbound, newerInbound, anotherSender], ['me@example.com']);
 
@@ -137,11 +172,43 @@ function testUnreadConversationFilterKeepsThreadsWithAnyUnreadMail() {
   assert(unreadRows[0].id === threadFollowUp.id, 'Expected latest mail in the unread conversation to remain visible');
 }
 
+function testGitHubConversationFilterKeepsConversationWhenLatestMailIsLocal() {
+  const allMails = [githubInbound, githubLocalReply, anotherSender];
+  const rows = buildSenderConversationRows(allMails, ['me@example.com']);
+  const githubRows = filterGitHubConversationRows(rows, allMails, ['me@example.com']);
+
+  assert(githubRows.length === 1, `Expected one GitHub conversation row, got ${githubRows.length}`);
+  assert(githubRows[0].id === githubLocalReply.id, 'Expected latest mail in the GitHub conversation to remain the representative row');
+}
+
+function testConversationCategoryFallsBackToHiddenThreadMail() {
+  const categorizedInbound = {
+    ...githubInbound,
+    category: '通知类',
+  };
+  const allMails = [categorizedInbound, githubLocalReply];
+  const rows = buildSenderConversationRows(allMails, ['me@example.com']);
+  const representative = rows[0];
+  const visibleRowsOnlyCategory = resolveConversationCategory(representative, rows, ['me@example.com']);
+  const fullSourceCategory = resolveConversationCategory(representative, allMails, ['me@example.com']);
+
+  assert(visibleRowsOnlyCategory === undefined, 'Expected folded rows alone to miss the hidden categorized mail');
+  assert(fullSourceCategory === '通知类', 'Expected full source mails to preserve the conversation category');
+}
+
+function testGitHubSettingDefaultsToDisabled() {
+  const normalized = normalizeMailSettingsSnapshot({});
+  assert(normalized.githubNotificationsViewEnabled === false, 'Expected GitHub notifications view to default to disabled');
+}
+
 function run() {
   testConversationRowsCollapseSameSender();
   testConversationIncludesOutgoingRepliesToSameSender();
   testQuotedOriginalBodyUsesReadableContent();
   testUnreadConversationFilterKeepsThreadsWithAnyUnreadMail();
+  testGitHubConversationFilterKeepsConversationWhenLatestMailIsLocal();
+  testConversationCategoryFallsBackToHiddenThreadMail();
+  testGitHubSettingDefaultsToDisabled();
   console.log('mail-conversations tests passed');
 }
 

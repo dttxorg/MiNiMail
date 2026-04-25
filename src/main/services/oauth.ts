@@ -1,139 +1,256 @@
-import { OAuth2Client } from 'google-auth-library';
+// src/main/services/oauth.ts
+//
+// Provider registry + high-level OAuth flow orchestration.
+// Wraps oauthPkce.ts (PKCE engine) and owns:
+// - Provider configuration (endpoints, scopes, IMAP/SMTP presets)
+// - startOAuthFlow() — full authorization flow called from IPC
+// - refreshTokenForAccount() — silent token refresh before IMAP connections
+
 import log from 'electron-log';
+import { runOAuthFlow, OAuthTokens, ProviderOAuthConfig } from './oauthPkce';
+import {
+  getAccountById,
+  getAccountCredentials,
+  updateAccountCredentials,
+  getSetting,
+} from '../database';
 
-const GOOGLE_REDIRECT_URI = 'http://localhost:19737/oauth/callback';
+// ─── Provider types ───────────────────────────────────────────────────────────
 
-const SCOPES = [
-  'https://mail.google.com/',
-  'https://www.googleapis.com/auth/gmail.compose',
-  'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.send',
-  'https://www.googleapis.com/auth/gmail.modify',
-];
+export type OAuthProvider = 'gmail' | 'outlook' | 'yahoo';
 
-let oauth2Client: OAuth2Client | null = null;
-
-// Lazy import to avoid database access at module load time
-function getDatabase() {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const db = require('../database');
-  return db;
+interface FullProviderConfig extends ProviderOAuthConfig {
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
 }
 
-function getOAuthConfig(): { clientId: string; clientSecret: string } {
-  const db = getDatabase();
-  return {
-    clientId: db.getSetting('google_client_id') || '',
-    clientSecret: db.getSetting('google_client_secret') || '',
-  };
-}
+// ─── Provider Configuration Registry ─────────────────────────────────────────
 
-export function getOAuth2Client(): OAuth2Client {
-  const { clientId, clientSecret } = getOAuthConfig();
-  if (!oauth2Client) {
-    oauth2Client = new OAuth2Client(
+function buildProviderConfig(
+  provider: OAuthProvider,
+  clientId: string,
+  clientSecret?: string,
+): FullProviderConfig {
+  switch (provider) {
+
+  case 'gmail':
+    return {
+      // Google: Desktop App type in Cloud Console, no secret required for PKCE
+      // but Google still issues one for "Desktop app" clients — pass it when available.
+      authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+      tokenUrl: 'https://oauth2.googleapis.com/token',
+      scopes: ['https://mail.google.com/', 'openid', 'email', 'profile'],
       clientId,
       clientSecret,
-      GOOGLE_REDIRECT_URI
-    );
+      extraAuthParams: { access_type: 'offline', prompt: 'consent' },
+      imapHost: 'imap.gmail.com',
+      imapPort: 993,
+      smtpHost: 'smtp.gmail.com',
+      smtpPort: 587,
+    };
+
+  case 'outlook':
+    return {
+      // Microsoft: "Mobile and desktop applications" in Azure App Registrations.
+      // Personal accounts use the "common" tenant.
+      // Client secret is optional for public native clients (PKCE is sufficient).
+      authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+      tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+      scopes: [
+        'https://outlook.office.com/IMAP.AccessAsUser.All',
+        'https://outlook.office.com/SMTP.Send',
+        'offline_access',
+        'openid',
+        'email',
+        'profile',
+      ],
+      clientId,
+      clientSecret, // leave undefined for public native clients
+      extraAuthParams: { prompt: 'select_account' },
+      imapHost: 'outlook.office365.com',
+      imapPort: 993,
+      smtpHost: 'smtp.office365.com',
+      smtpPort: 587,
+    };
+
+  case 'yahoo':
+    return {
+      // Yahoo: "Installed Application" on developer.yahoo.com.
+      // Token endpoint requires HTTP Basic auth (client_id:client_secret).
+      authUrl: 'https://api.login.yahoo.com/oauth2/request_auth',
+      tokenUrl: 'https://api.login.yahoo.com/oauth2/get_token',
+      scopes: ['mail-w'],
+      clientId,
+      clientSecret,
+      tokenAuth: 'basic', // Yahoo requires Basic auth at token endpoint
+      imapHost: 'imap.mail.yahoo.com',
+      imapPort: 993,
+      smtpHost: 'smtp.mail.yahoo.com',
+      smtpPort: 465,
+    };
   }
-  return oauth2Client;
 }
 
-export function getAuthUrl(): string {
-  const client = getOAuth2Client();
-  return client.generateAuthUrl({
-    access_type: 'offline',
-    scope: SCOPES,
-    prompt: 'consent',
-  });
+// ─── Refresh Mutex (per-account) ─────────────────────────────────────────────
+// Prevents concurrent refresh requests for the same account.
+// When a refresh is in-flight, other callers wait and reuse the same Promise.
+const refreshLocks = new Map<number, Promise<boolean>>();
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export interface OAuthStartParams {
+  provider: OAuthProvider;
+  clientId: string;
+  clientSecret?: string;
 }
 
-export async function getTokenFromCode(code: string): Promise<{ success: boolean; message: string; tokens?: unknown }> {
-  try {
-    const db = getDatabase();
-    const client = getOAuth2Client();
-    const { tokens } = await client.getToken(code);
-    client.setCredentials(tokens);
-
-    // Store tokens in database
-    if (tokens.access_token) {
-      db.setSetting('google_access_token', tokens.access_token);
-    }
-    if (tokens.refresh_token) {
-      db.setSetting('google_refresh_token', tokens.refresh_token);
-    }
-    if (tokens.expiry_date) {
-      db.setSetting('google_token_expiry', String(tokens.expiry_date));
-    }
-
-    log.info('Google OAuth tokens obtained successfully');
-    return { success: true, message: 'OAuth认证成功', tokens };
-  } catch (err) {
-    const error = err as Error;
-    log.error('Failed to get OAuth token:', error);
-    return { success: false, message: error.message };
-  }
+export interface OAuthFlowResult extends OAuthTokens {
+  provider: OAuthProvider;
+  imapHost: string;
+  imapPort: number;
+  smtpHost: string;
+  smtpPort: number;
 }
 
-export function getStoredCredentials(): { access_token?: string; refresh_token?: string; expiry_date?: number } | null {
-  const db = getDatabase();
-  const access_token = db.getSetting('google_access_token');
-  const refresh_token = db.getSetting('google_refresh_token');
-  const expiry_date = db.getSetting('google_token_expiry');
+/**
+ * Runs the full OAuth 2.0 + PKCE flow for the given provider.
+ * Returns tokens + IMAP/SMTP presets so the renderer can create the account.
+ */
+export async function startOAuthFlow(params: OAuthStartParams): Promise<OAuthFlowResult> {
+  const { provider, clientId, clientSecret } = params;
 
-  if (!access_token && !refresh_token) {
-    return null;
-  }
+  if (!clientId.trim()) throw new Error('Client ID 不能为空');
+
+  log.info(`[oauth] Starting ${provider} OAuth flow`);
+
+  const config = buildProviderConfig(provider, clientId.trim(), clientSecret?.trim() || undefined);
+  const tokens = await runOAuthFlow(config);
+
+  log.info(`[oauth] ${provider} OAuth complete — email: ${tokens.email ?? '(unknown)'}`);
 
   return {
-    access_token: access_token || undefined,
-    refresh_token: refresh_token || undefined,
-    expiry_date: expiry_date ? parseInt(expiry_date) : undefined,
+    ...tokens,
+    provider,
+    imapHost: config.imapHost,
+    imapPort: config.imapPort,
+    smtpHost: config.smtpHost,
+    smtpPort: config.smtpPort,
   };
 }
 
-export async function refreshAccessToken(): Promise<{ success: boolean; message: string }> {
-  try {
-    const db = getDatabase();
-    const client = getOAuth2Client();
-    const credentials = getStoredCredentials();
-
-    if (!credentials?.refresh_token) {
-      return { success: false, message: 'No refresh token available' };
-    }
-
-    client.setCredentials({
-      refresh_token: credentials.refresh_token,
-    });
-
-    const { credentials: newTokens } = await client.refreshAccessToken();
-
-    if (newTokens.access_token) {
-      db.setSetting('google_access_token', newTokens.access_token);
-    }
-    if (newTokens.expiry_date) {
-      db.setSetting('google_token_expiry', String(newTokens.expiry_date));
-    }
-
-    log.info('Access token refreshed successfully');
-    return { success: true, message: 'Token refreshed' };
-  } catch (err) {
-    const error = err as Error;
-    log.error('Failed to refresh access token:', error);
-    return { success: false, message: error.message };
+/**
+ * Silently refreshes an OAuth access token for the given account.
+ * Reads the client credentials from Settings (saved on first successful login).
+ * Called automatically from mail.ts::createClient when the token is about to expire.
+ *
+ * MUTEX: Concurrent calls for the same account will wait for the in-flight
+ * refresh to complete and reuse its result, preventing duplicate network requests.
+ */
+export async function refreshTokenForAccount(accountId: number): Promise<boolean> {
+  // Check for in-flight refresh — reuse the Promise if one exists
+  const existingLock = refreshLocks.get(accountId);
+  if (existingLock) {
+    log.info(`[oauth] Waiting for in-flight refresh for account ${accountId}`);
+    return existingLock;
   }
-}
 
-export function isOAuthConfigured(): boolean {
-  const { clientId, clientSecret } = getOAuthConfig();
-  return Boolean(clientId && clientSecret);
-}
+  // Create the refresh Promise - it will NOT start executing until we await it
+  // We register the lock BEFORE the IIFE starts so any return path will clean up
+  let resolveLock: (value: boolean) => void;
+  const refreshPromise = new Promise<boolean>((resolve) => {
+    resolveLock = resolve;
+  });
 
-export function clearOAuthTokens(): void {
-  const db = getDatabase();
-  db.setSetting('google_access_token', '');
-  db.setSetting('google_refresh_token', '');
-  db.setSetting('google_token_expiry', '');
-  oauth2Client = null;
+  // Register the lock immediately so concurrent callers can reuse it
+  refreshLocks.set(accountId, refreshPromise);
+
+  // Now execute the actual refresh logic
+  (async () => {
+    try {
+      const account = getAccountById(accountId);
+      if (!account || account.auth_type !== 'oauth') {
+        resolveLock!(false);
+        return;
+      }
+
+      const creds = getAccountCredentials(accountId);
+      if (!creds?.oauth_refresh_token) {
+        log.warn(`[oauth] No refresh token for account ${accountId}`);
+        resolveLock!(false);
+        return;
+      }
+
+      const provider = account.provider as OAuthProvider;
+      const clientId = getSetting(`${provider}_client_id`) ?? '';
+      const clientSecret = getSetting(`${provider}_client_secret`) ?? undefined;
+
+      if (!clientId) {
+        log.warn(`[oauth] No client_id in settings for provider "${provider}" (account ${accountId})`);
+        resolveLock!(false);
+        return;
+      }
+
+      const config = buildProviderConfig(provider, clientId, clientSecret);
+
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: creds.oauth_refresh_token,
+        client_id: clientId,
+      });
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      };
+
+      if (config.tokenAuth === 'basic' && clientSecret) {
+        const b64 = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+        headers['Authorization'] = `Basic ${b64}`;
+      } else if (clientSecret) {
+        body.set('client_secret', clientSecret);
+      }
+
+      const response = await fetch(config.tokenUrl, {
+        method: 'POST',
+        headers,
+        body: body.toString(),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        log.error(`[oauth] Refresh failed (${response.status}): ${text.slice(0, 200)}`);
+        resolveLock!(false);
+        return;
+      }
+
+      const data = await response.json() as {
+        access_token: string;
+        refresh_token?: string;
+        expires_in?: number;
+      };
+
+      if (!data.access_token) {
+        resolveLock!(false);
+        return;
+      }
+
+      updateAccountCredentials(accountId, {
+        oauth_token: data.access_token,
+        oauth_expiry: Date.now() + ((data.expires_in ?? 3600) * 1000),
+        ...(data.refresh_token ? { oauth_refresh_token: data.refresh_token } : {}),
+      });
+
+      log.info(`[oauth] Token refreshed for account ${accountId}`);
+      resolveLock!(true);
+    } catch (err) {
+      log.error(`[oauth] Refresh error for account ${accountId}:`, err);
+      resolveLock!(false);
+    } finally {
+      // Always clean up the lock after completion
+      refreshLocks.delete(accountId);
+    }
+  })();
+
+  return refreshPromise;
 }

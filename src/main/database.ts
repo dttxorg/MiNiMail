@@ -83,6 +83,15 @@ export function initDatabase(): void {
     )
   `);
 
+  // Create secure settings table (encrypted values only)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS secure_settings (
+      key TEXT PRIMARY KEY,
+      value BLOB NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
   log.info('Database initialized successfully');
 }
 
@@ -149,6 +158,7 @@ export interface CreateAccountInput {
   password?: string;
   oauth_token?: string;
   oauth_refresh_token?: string;
+  oauth_expiry?: number;
   use_tls?: boolean;
 }
 
@@ -191,8 +201,8 @@ export function createAccount(input: CreateAccountInput): Account {
     } else if (input.auth_type === 'oauth' && (input.oauth_token || input.oauth_refresh_token)) {
       const encryptedToken = input.oauth_token ? encryptCredential(input.oauth_token) : null;
       const encryptedRefreshToken = input.oauth_refresh_token ? encryptCredential(input.oauth_refresh_token) : null;
-      db.prepare('INSERT INTO credentials (account_id, oauth_token, oauth_refresh_token) VALUES (?, ?, ?)')
-        .run(accountId, encryptedToken, encryptedRefreshToken);
+      db.prepare('INSERT INTO credentials (account_id, oauth_token, oauth_refresh_token, oauth_expiry) VALUES (?, ?, ?, ?)')
+        .run(accountId, encryptedToken, encryptedRefreshToken, input.oauth_expiry ?? null);
     }
   }
 
@@ -285,6 +295,72 @@ export function setSetting(key: string, value: string): void {
   const db = getDatabase();
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
   log.info(`Setting saved: ${key}`);
+}
+
+export function deleteSetting(key: string): void {
+  const db = getDatabase();
+  db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+  log.info(`Setting deleted: ${key}`);
+}
+
+export function getSecureSetting(key: string): string | null {
+  const stmt = getDatabase().prepare('SELECT value FROM secure_settings WHERE key = ?');
+  const row = stmt.get(key) as { value: Buffer } | undefined;
+  if (!row?.value) return null;
+  return decryptCredential(row.value);
+}
+
+export function setSecureSetting(key: string, value: string): void {
+  if (!isEncryptionAvailable()) {
+    throw new Error('Secure storage is unavailable on this system. AI API keys cannot be saved until Electron safeStorage is available.');
+  }
+  const db = getDatabase();
+  const encrypted = encryptCredential(value);
+  db.prepare(`
+    INSERT OR REPLACE INTO secure_settings (key, value, updated_at)
+    VALUES (?, ?, datetime('now'))
+  `).run(key, encrypted);
+  log.info(`Secure setting saved: ${key}`);
+}
+
+export function deleteSecureSetting(key: string): void {
+  const db = getDatabase();
+  db.prepare('DELETE FROM secure_settings WHERE key = ?').run(key);
+  log.info(`Secure setting deleted: ${key}`);
+}
+
+/** Update only the OAuth credential fields for an existing account. */
+export function updateAccountCredentials(
+  accountId: number,
+  creds: { oauth_token?: string; oauth_refresh_token?: string; oauth_expiry?: number },
+): void {
+  const db = getDatabase();
+
+  // Ensure the credentials row exists
+  db.prepare('INSERT OR IGNORE INTO credentials (account_id) VALUES (?)').run(accountId);
+
+  const updates: string[] = [];
+  const values: (Buffer | number | null)[] = [];
+
+  if (creds.oauth_token !== undefined) {
+    updates.push('oauth_token = ?');
+    values.push(creds.oauth_token ? encryptCredential(creds.oauth_token) : null);
+  }
+  if (creds.oauth_refresh_token !== undefined) {
+    updates.push('oauth_refresh_token = ?');
+    values.push(creds.oauth_refresh_token ? encryptCredential(creds.oauth_refresh_token) : null);
+  }
+  if (creds.oauth_expiry !== undefined) {
+    updates.push('oauth_expiry = ?');
+    values.push(creds.oauth_expiry);
+  }
+
+  if (updates.length > 0) {
+    (values as unknown[]).push(accountId);
+    db.prepare(`UPDATE credentials SET ${updates.join(', ')} WHERE account_id = ?`).run(...values);
+  }
+
+  log.info(`[db] OAuth credentials updated for account ${accountId}`);
 }
 
 export function closeDatabase(): void {

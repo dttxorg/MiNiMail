@@ -3,6 +3,9 @@ import { simpleParser } from 'mailparser';
 import log from 'electron-log';
 import { getAccountById, getAccountCredentials } from '../database';
 
+const OAUTH_FAILURE_COOLDOWN_MS = 2 * 60 * 1000;
+const oauthFailureCooldownUntil = new Map<number, number>();
+
 export interface MailSummary {
   id: string;
   uid: number;
@@ -18,6 +21,35 @@ export interface MailSummary {
   isStarred: boolean;
   messageId?: string;
   inReplyTo?: string;
+  references?: string;
+  bodyText?: string;
+  draftPayload?: string;
+  localDraftKey?: string;
+  localSendId?: string;
+  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  deliveryError?: string;
+  category?: string;
+  isScanned?: boolean;
+  scanResult?: string;
+}
+
+export interface MailAttachmentMetadata {
+  cacheId?: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  contentId?: string;
+  disposition?: string;
+  inline?: boolean;
+  cid?: string;
+  partId?: string;
+  attachmentId?: string;
+}
+
+export interface MailAttachmentContent {
+  filename: string;
+  contentType: string;
+  content: Buffer;
 }
 
 export interface MailDetail {
@@ -32,12 +64,7 @@ export interface MailDetail {
   flags: string[];
   bodyHtml?: string;
   bodyText?: string;
-  attachments: Array<{
-    filename: string;
-    contentType: string;
-    size: number;
-    contentId?: string;
-  }>;
+  attachments: MailAttachmentMetadata[];
   headers: Record<string, string>;
 }
 
@@ -56,6 +83,153 @@ function parseAddress(addr: { name?: string; address?: string } | null): { name:
   };
 }
 
+function normalizeContentId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim().replace(/^<|>$/g, '');
+  return trimmed || undefined;
+}
+
+export function sanitizeAttachmentFilename(filename?: string): string {
+  const fallback = 'attachment';
+  const withoutPaths = String(filename || fallback)
+    .replace(/\.\.[/\\]/g, '')
+    .replace(/[/\\]/g, ' ')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim();
+  const sanitized = withoutPaths || fallback;
+  const maxLength = 180;
+  return sanitized.length > maxLength ? sanitized.slice(0, maxLength).trim() || fallback : sanitized;
+}
+
+function getCacheIndex(cacheId?: string): number | null {
+  if (!cacheId) return null;
+  const separatorIndex = cacheId.lastIndexOf(':');
+  if (separatorIndex < 0) return null;
+  const index = Number(cacheId.slice(separatorIndex + 1));
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function normalizeAttachmentDisposition(value: unknown): string | undefined {
+  return typeof value === 'string' ? value.toLowerCase() : undefined;
+}
+
+function attachmentLooksSame(parsedAttachment: {
+  filename?: string;
+  contentType?: string;
+  size?: number;
+  contentId?: string;
+  contentDisposition?: string;
+  cid?: string;
+  related?: boolean;
+}, target: MailAttachmentMetadata): boolean {
+  const parsedContentId = normalizeContentId(parsedAttachment.contentId ?? parsedAttachment.cid);
+  const targetContentId = normalizeContentId(target.contentId ?? target.cid);
+  if (targetContentId && parsedContentId === targetContentId) return true;
+
+  const parsedFilename = sanitizeAttachmentFilename(parsedAttachment.filename || 'attachment');
+  const targetFilename = sanitizeAttachmentFilename(target.filename || 'attachment');
+  const filenameMatches = parsedFilename === targetFilename;
+  const contentTypeMatches = !target.contentType || parsedAttachment.contentType === target.contentType;
+  const sizeMatches = !target.size || !parsedAttachment.size || Number(parsedAttachment.size) === Number(target.size);
+  const disposition = normalizeAttachmentDisposition(parsedAttachment.contentDisposition);
+  const dispositionMatches = !target.disposition || disposition === target.disposition.toLowerCase();
+  return filenameMatches && contentTypeMatches && sizeMatches && dispositionMatches;
+}
+
+function findMatchingParsedAttachment(
+  parsedAttachments: Array<{
+    filename?: string;
+    contentType?: string;
+    size?: number;
+    content?: Buffer;
+    contentId?: string;
+    contentDisposition?: string;
+    cid?: string;
+    related?: boolean;
+  }>,
+  target: MailAttachmentMetadata,
+): typeof parsedAttachments[number] | null {
+  const index = getCacheIndex(target.cacheId);
+  if (index != null && parsedAttachments[index] && attachmentLooksSame(parsedAttachments[index], target)) {
+    return parsedAttachments[index];
+  }
+
+  if (target.contentId || target.cid) {
+    const targetContentId = normalizeContentId(target.contentId ?? target.cid);
+    const byContentId = parsedAttachments.find((attachment) =>
+      normalizeContentId(attachment.contentId ?? attachment.cid) === targetContentId
+    );
+    if (byContentId) return byContentId;
+  }
+
+  return parsedAttachments.find((attachment) => attachmentLooksSame(attachment, target)) ?? null;
+}
+
+function getBodyStructureDisposition(part: unknown): string | undefined {
+  const record = part as Record<string, unknown>;
+  const disposition = record.disposition ?? record.contentDisposition;
+  if (typeof disposition === 'string') return disposition.toLowerCase();
+  if (disposition && typeof disposition === 'object') {
+    const type = (disposition as Record<string, unknown>).type;
+    if (typeof type === 'string') return type.toLowerCase();
+  }
+  return undefined;
+}
+
+function getBodyStructureParam(part: unknown, key: string): string | undefined {
+  const record = part as Record<string, unknown>;
+  const candidates = [
+    record.parameters,
+    record.params,
+    record.dispositionParameters,
+    (record.disposition && typeof record.disposition === 'object')
+      ? (record.disposition as Record<string, unknown>).params
+      : undefined,
+    (record.contentDisposition && typeof record.contentDisposition === 'object')
+      ? (record.contentDisposition as Record<string, unknown>).params
+      : undefined,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const value = (candidate as Record<string, unknown>)[key] ?? (candidate as Record<string, unknown>)[key.toLowerCase()];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+
+  return undefined;
+}
+
+function getBodyStructureChildren(part: unknown): unknown[] {
+  if (!part || typeof part !== 'object') return [];
+  const record = part as Record<string, unknown>;
+  const children = record.childNodes ?? record.children ?? record.parts;
+  return Array.isArray(children) ? children : [];
+}
+
+export function bodyStructureHasDownloadableAttachment(bodyStructure: unknown): boolean {
+  const visit = (part: unknown): boolean => {
+    if (!part || typeof part !== 'object') return false;
+    const record = part as Record<string, unknown>;
+    const disposition = getBodyStructureDisposition(part);
+    const filename = getBodyStructureParam(part, 'filename')
+      ?? getBodyStructureParam(part, 'name')
+      ?? (typeof record.filename === 'string' ? record.filename : undefined);
+    const contentId = normalizeContentId(record.id ?? record.contentId ?? record.cid);
+    const mediaType = String(record.type ?? record.contentType ?? '').toLowerCase();
+    const isImage = mediaType.startsWith('image/');
+    const isInlineCidImage = Boolean(contentId) && (disposition === 'inline' || isImage);
+
+    if ((disposition === 'attachment' || Boolean(filename)) && !isInlineCidImage) {
+      return true;
+    }
+
+    return getBodyStructureChildren(part).some(visit);
+  };
+
+  return visit(bodyStructure);
+}
+
 async function createClient(accountId: number): Promise<ImapFlow> {
   console.log('[mail.createClient] ENTER accountId=', accountId);
   const account = getAccountById(accountId);
@@ -64,15 +238,25 @@ async function createClient(accountId: number): Promise<ImapFlow> {
   let credentials = getAccountCredentials(accountId);
   if (!credentials) throw new Error('No credentials found');
 
-  // Auto-refresh OAuth tokens that expire within the next 5 minutes
+  if (account.auth_type === 'oauth') {
+    const cooldownUntil = oauthFailureCooldownUntil.get(accountId) ?? 0;
+    if (cooldownUntil > Date.now()) {
+      throw new Error('OAuth account temporarily unavailable. Please reconnect this account or wait a moment before retrying.');
+    }
+  }
+
   if (account.auth_type === 'oauth' && credentials.oauth_expiry) {
     const fiveMinMs = 5 * 60 * 1000;
     if (Date.now() > credentials.oauth_expiry - fiveMinMs) {
-      log.info(`[mail] Token expiring soon for account ${accountId}, refreshing…`);
+      log.info(`[mail] Token expiring soon for account ${accountId}, refreshing...`);
       const { refreshTokenForAccount } = await import('./oauth');
       const refreshed = await refreshTokenForAccount(accountId);
       if (refreshed) {
         credentials = getAccountCredentials(accountId) ?? credentials;
+        oauthFailureCooldownUntil.delete(accountId);
+      } else {
+        oauthFailureCooldownUntil.set(accountId, Date.now() + OAUTH_FAILURE_COOLDOWN_MS);
+        throw new Error('OAuth token refresh failed. Please reconnect this account.');
       }
     }
   }
@@ -82,16 +266,26 @@ async function createClient(accountId: number): Promise<ImapFlow> {
     : { user: account.username, pass: credentials.password };
 
   const client = new ImapFlow({
-    host:              account.imap_host,
-    port:              account.imap_port,
-    secure:            account.use_tls === 1,
+    host: account.imap_host,
+    port: account.imap_port,
+    secure: account.use_tls === 1,
     auth,
-    logger:            false,
+    logger: false,
     connectionTimeout: 15000,
   });
 
   console.log('[mail.createClient] connecting to', `${account.imap_host}:${account.imap_port}`, account.auth_type);
-  await client.connect();
+  try {
+    await client.connect();
+    if (account.auth_type === 'oauth') {
+      oauthFailureCooldownUntil.delete(accountId);
+    }
+  } catch (error) {
+    if (account.auth_type === 'oauth') {
+      oauthFailureCooldownUntil.set(accountId, Date.now() + OAUTH_FAILURE_COOLDOWN_MS);
+    }
+    throw error;
+  }
   console.log('[mail.createClient] connected OK');
   return client;
 }
@@ -104,7 +298,7 @@ export async function getMailFolders(accountId: number): Promise<FolderInfo[]> {
     client = await createClient(accountId);
     const list = await client.list();
 
-    const folders: FolderInfo[] = list.map(mb => ({
+    const folders: FolderInfo[] = list.map((mb) => ({
       name: mb.name || mb.path,
       path: mb.path,
       delimiter: mb.delimiter || '.',
@@ -126,43 +320,44 @@ export async function getMailFolders(accountId: number): Promise<FolderInfo[]> {
 export async function fetchMailList(
   accountId: number,
   folder: string = 'INBOX',
-  options: { limit?: number; offset?: number } = {}
+  options: { limit?: number; offset?: number; historySince?: Date | null } = {},
 ): Promise<MailSummary[]> {
-  const { limit = 50, offset = 0 } = options;
+  const { limit = 50, offset = 0, historySince = null } = options;
 
   console.log('[mail.fetchMailList] ENTER accountId=', accountId, 'folder=', folder);
   log.info(`[mail] Fetching mail list for account ${accountId} from ${folder}`);
 
   let client: ImapFlow | null = null;
   try {
-    console.log('[mail.fetchMailList] calling createClient...');
     client = await createClient(accountId);
-    console.log('[mail.fetchMailList] createClient returned, client=', !!client);
-
-    // Open mailbox to access messages
     const lock = await client.getMailboxLock(folder);
     try {
-      // Get total message count
-      const status = await client.status(folder, { messages: true });
-      const total = status.messages || 0;
+      let fetchQuery: string | number[];
+      if (historySince) {
+        const uids = await client.search({ since: historySince }, { uid: true });
+        if (!Array.isArray(uids) || uids.length === 0) return [];
+        fetchQuery = [...uids].sort((a, b) => b - a).slice(offset, offset + limit);
+        if (fetchQuery.length === 0) return [];
+      } else {
+        const status = await client.status(folder, { messages: true });
+        const total = status.messages || 0;
+        if (total === 0) return [];
 
-      if (total === 0) return [];
-
-      // Calculate range — fetch last N messages (newest first)
-      const end = total - offset;
-      const start = Math.max(1, end - limit + 1);
-
-      if (start > end) return [];
+        const end = total - offset;
+        const start = Math.max(1, end - limit + 1);
+        if (start > end) return [];
+        fetchQuery = `${start}:${end}`;
+      }
 
       const summaries: MailSummary[] = [];
-
-      // fetch returns AsyncIterableIterator<FetchMessageObject>
-      for await (const msg of client.fetch(`${start}:${end}`, {
+      const fetchOptions = historySince ? { uid: true } : undefined;
+      for await (const msg of client.fetch(fetchQuery, {
         envelope: true,
         uid: true,
         flags: true,
         size: false,
-      })) {
+        bodyStructure: true,
+      }, fetchOptions)) {
         const fromParsed = parseAddress(msg.envelope?.from?.[0] || null);
         const toParsed = (msg.envelope?.to || [])
           .map((a: { name?: string; address?: string }) => a.address || '')
@@ -182,7 +377,7 @@ export async function fetchMailList(
           date: msg.envelope?.date ? new Date(msg.envelope.date) : new Date(),
           flags,
           snippet: '',
-          hasAttachments: false,
+          hasAttachments: bodyStructureHasDownloadableAttachment((msg as typeof msg & { bodyStructure?: unknown }).bodyStructure),
           isRead: flags.includes('\\Seen'),
           isStarred: flags.includes('\\Flagged'),
           messageId: msg.envelope?.messageId,
@@ -190,10 +385,7 @@ export async function fetchMailList(
         });
       }
 
-      // Sort by UID descending (newest first)
       summaries.sort((a, b) => b.uid - a.uid);
-
-      log.info(`[mail] Fetched ${summaries.length} messages from ${folder}`);
       return summaries;
     } finally {
       try { lock.release(); } catch { /* ignore */ }
@@ -211,23 +403,16 @@ export async function fetchMailList(
 export async function fetchMailDetail(
   accountId: number,
   messageUid: number,
-  folder: string = 'INBOX'
+  folder: string = 'INBOX',
 ): Promise<MailDetail | null> {
   log.info(`[mail] Fetching full message UID=${messageUid} for account ${accountId}`);
 
   let client: ImapFlow | null = null;
   try {
     client = await createClient(accountId);
-
-    // Normalize folder: IMAP INBOX is case-insensitive per spec, but some
-    // servers (Dovecot, QQ Mail) are strict — always uppercase INBOX.
     const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
     const lock = await client.getMailboxLock(imapFolder);
     try {
-      // CRITICAL: third argument { uid: true } tells ImapFlow to treat the
-      // first argument as a UID, NOT a sequence number.
-      // Without it, fetchOne(45) fetches the 45th message in sequence order,
-      // which is a completely different (or non-existent) message.
       const msg = await client.fetchOne(String(messageUid), {
         envelope: true,
         flags: true,
@@ -253,14 +438,33 @@ export async function fetchMailDetail(
       if (msg.source) {
         try {
           const parsed = await simpleParser(msg.source as Buffer);
-          bodyHtml = parsed.html || undefined;
+          bodyHtml = typeof parsed.html === 'string' ? parsed.html : undefined;
           bodyText = parsed.text || undefined;
-          parsedAttachments = parsed.attachments.map(att => ({
-            filename: att.filename || 'attachment',
-            contentType: att.contentType || 'application/octet-stream',
-            size: att.size,
-            contentId: att.contentId || undefined,
-          }));
+          parsedAttachments = parsed.attachments.map((att) => {
+            const extra = att as typeof att & {
+              contentDisposition?: string;
+              related?: boolean;
+              cid?: string;
+              partId?: string;
+              attachmentId?: string;
+            };
+            const contentId = normalizeContentId(att.contentId);
+            const cid = normalizeContentId(extra.cid) ?? contentId;
+            const disposition = typeof extra.contentDisposition === 'string'
+              ? extra.contentDisposition.toLowerCase()
+              : undefined;
+            return {
+              filename: att.filename || 'attachment',
+              contentType: att.contentType || 'application/octet-stream',
+              size: att.size,
+              contentId,
+              disposition,
+              inline: disposition === 'inline' || Boolean(extra.related),
+              cid,
+              partId: extra.partId,
+              attachmentId: extra.attachmentId,
+            };
+          });
         } catch (parseErr) {
           log.warn('[mail] Failed to parse message body:', parseErr);
         }
@@ -299,20 +503,58 @@ export async function fetchMailDetail(
   }
 }
 
-export async function setMessageFlags(
+export async function fetchMailAttachmentContent(
   accountId: number,
   messageUid: number,
-  flags: string[],
-  folder: string = 'INBOX'
-): Promise<void> {
-  log.info(`[mail] Setting flags for account ${accountId}, UID ${messageUid}`);
+  folder: string,
+  targetAttachment: MailAttachmentMetadata,
+): Promise<MailAttachmentContent> {
+  log.info(`[mail] Fetching attachment UID=${messageUid} for account ${accountId}`);
 
   let client: ImapFlow | null = null;
   try {
     client = await createClient(accountId);
-    await client.messageFlagsSet(messageUid, flags, { uid: true });
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    const lock = await client.getMailboxLock(imapFolder);
+    try {
+      const msg = await client.fetchOne(String(messageUid), {
+        source: true,
+      }, { uid: true });
+
+      if (!msg || !msg.source) throw new Error('Message source not found');
+
+      const parsed = await simpleParser(msg.source as Buffer);
+      const parsedAttachments = parsed.attachments.map((att) => {
+        const extra = att as typeof att & {
+          contentDisposition?: string;
+          related?: boolean;
+          cid?: string;
+        };
+        return {
+          filename: att.filename,
+          contentType: att.contentType,
+          size: att.size,
+          content: att.content,
+          contentId: att.contentId,
+          contentDisposition: extra.contentDisposition,
+          cid: extra.cid,
+          related: extra.related,
+        };
+      });
+
+      const matched = findMatchingParsedAttachment(parsedAttachments, targetAttachment);
+      if (!matched?.content) throw new Error('Attachment content not found');
+
+      return {
+        filename: sanitizeAttachmentFilename(matched.filename || targetAttachment.filename),
+        contentType: matched.contentType || targetAttachment.contentType || 'application/octet-stream',
+        content: matched.content,
+      };
+    } finally {
+      try { lock.release(); } catch { /* ignore */ }
+    }
   } catch (err) {
-    log.error('[mail] setFlags failed:', err);
+    log.error('[mail] fetchMailAttachmentContent failed:', err);
     throw err;
   } finally {
     if (client) {
@@ -321,25 +563,106 @@ export async function setMessageFlags(
   }
 }
 
+export async function setMessageFlags(
+  accountId: number,
+  messageUid: number,
+  flags: string[],
+  folder: string = 'INBOX',
+): Promise<void> {
+  log.info(`[mail] Setting flags for account ${accountId}, UID ${messageUid}, folder=${folder}`);
+
+  let client: ImapFlow | null = null;
+  let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | null = null;
+  try {
+    client = await createClient(accountId);
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    lock = await client.getMailboxLock(imapFolder);
+    await client.messageFlagsSet(messageUid, flags, { uid: true });
+  } catch (err) {
+    log.error('[mail] setFlags failed:', err);
+    throw err;
+  } finally {
+    if (lock) { try { lock.release(); } catch { /* ignore */ } }
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
+  }
+}
+
+export async function setMessageStarred(
+  accountId: number,
+  messageUid: number,
+  starred: boolean,
+  folder: string = 'INBOX',
+): Promise<void> {
+  log.info(`[mail] Setting starred=${starred} for account ${accountId}, UID ${messageUid}, folder=${folder}`);
+
+  let client: ImapFlow | null = null;
+  let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | null = null;
+  try {
+    client = await createClient(accountId);
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    lock = await client.getMailboxLock(imapFolder);
+    if (starred) {
+      await client.messageFlagsAdd(messageUid, ['\\Flagged'], { uid: true });
+    } else {
+      await client.messageFlagsRemove(messageUid, ['\\Flagged'], { uid: true });
+    }
+  } catch (err) {
+    log.error('[mail] setMessageStarred failed:', err);
+    throw err;
+  } finally {
+    if (lock) { try { lock.release(); } catch { /* ignore */ } }
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
+  }
+}
+
+export async function setMessageRead(
+  accountId: number,
+  messageUid: number,
+  read: boolean,
+  folder: string = 'INBOX',
+): Promise<void> {
+  log.info(`[mail] Setting read=${read} for account ${accountId}, UID ${messageUid}, folder=${folder}`);
+
+  let client: ImapFlow | null = null;
+  let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | null = null;
+  try {
+    client = await createClient(accountId);
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    lock = await client.getMailboxLock(imapFolder);
+    if (read) {
+      await client.messageFlagsAdd(messageUid, ['\\Seen'], { uid: true });
+    } else {
+      await client.messageFlagsRemove(messageUid, ['\\Seen'], { uid: true });
+    }
+  } catch (err) {
+    log.error('[mail] setMessageRead failed:', err);
+    throw err;
+  } finally {
+    if (lock) { try { lock.release(); } catch { /* ignore */ } }
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
+  }
+}
+
 export async function deleteMessage(
   accountId: number,
   messageUid: number,
-  folder: string = 'INBOX'
+  folder: string = 'INBOX',
 ): Promise<void> {
-  log.info(`[mail] Deleting message UID=${messageUid} for account ${accountId}`);
+  log.info(`[mail] Deleting message UID=${messageUid} for account ${accountId}, folder=${folder}`);
 
   let client: ImapFlow | null = null;
+  let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | null = null;
   try {
     client = await createClient(accountId);
+    const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    lock = await client.getMailboxLock(imapFolder);
     await client.messageDelete(messageUid, { uid: true });
-    log.info(`[mail] Message ${messageUid} deleted`);
   } catch (err) {
     log.error('[mail] deleteMessage failed:', err);
     throw err;
   } finally {
-    if (client) {
-      try { await client.logout(); } catch { /* ignore */ }
-    }
+    if (lock) { try { lock.release(); } catch { /* ignore */ } }
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
   }
 }
 
@@ -347,21 +670,52 @@ export async function moveMessage(
   accountId: number,
   messageUid: number,
   fromFolder: string,
-  toFolder: string
+  toFolder: string,
 ): Promise<void> {
   log.info(`[mail] Moving message ${messageUid} from ${fromFolder} to ${toFolder}`);
 
   let client: ImapFlow | null = null;
+  let lock: Awaited<ReturnType<ImapFlow['getMailboxLock']>> | null = null;
   try {
     client = await createClient(accountId);
+    const imapFolder = fromFolder.toLowerCase() === 'inbox' ? 'INBOX' : fromFolder;
+    lock = await client.getMailboxLock(imapFolder);
     await client.messageMove(messageUid, toFolder, { uid: true });
-    log.info(`[mail] Message ${messageUid} moved to ${toFolder}`);
   } catch (err) {
     log.error('[mail] moveMessage failed:', err);
     throw err;
   } finally {
-    if (client) {
-      try { await client.logout(); } catch { /* ignore */ }
+    if (lock) { try { lock.release(); } catch { /* ignore */ } }
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
+  }
+}
+
+export async function appendMessage(
+  accountId: number,
+  folder: string,
+  content: string | Buffer,
+  flags: string[] = [],
+  internalDate?: Date,
+): Promise<{ uid?: number; destination: string }> {
+  log.info(`[mail] Appending message for account ${accountId} into ${folder}`);
+
+  let client: ImapFlow | null = null;
+  try {
+    client = await createClient(accountId);
+    const destinationFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
+    const result = await client.append(destinationFolder, content, flags, internalDate);
+    if (!result) {
+      return { destination: destinationFolder };
     }
+
+    return {
+      uid: result.uid,
+      destination: result.destination,
+    };
+  } catch (err) {
+    log.error('[mail] appendMessage failed:', err);
+    throw err;
+  } finally {
+    if (client) { try { await client.logout(); } catch { /* ignore */ } }
   }
 }

@@ -28,6 +28,7 @@ export interface CreateAccountInput {
   password?: string;
   oauth_token?: string;
   oauth_refresh_token?: string;
+  oauth_expiry?: number;
   use_tls?: boolean;
 }
 

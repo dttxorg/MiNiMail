@@ -23,10 +23,9 @@ export async function testImapConnection(config: ImapConnectionConfig): Promise<
     host: config.host,
     port: config.port,
     secure: config.useTLS,
-    auth: {
-      user: config.username,
-      pass: config.password,
-    },
+    auth: config.oauthToken
+      ? { user: config.username, accessToken: config.oauthToken }
+      : { user: config.username, pass: config.password },
     logger: false,
     connectionTimeout: 15000,
   });

@@ -10,6 +10,7 @@
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
     "build:electron": "tsc -p tsconfig.main.json",
+    "test:release": "node scripts/test-release.cjs",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir"
   },
@@ -58,7 +59,7 @@
   },
   "build": {
     "appId": "com.minimail.email",
-    "productName": "MinNiMail",
+    "productName": "MiNiMail",
     "icon": "build/icons/icon.ico",
     "directories": {
       "output": "release8"
@@ -83,7 +84,11 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "installerIcon": "build/icons/icon.ico",
+      "uninstallerIcon": "build/icons/icon.ico",
+      "installerHeaderIcon": "build/icons/icon.ico",
+      "shortcutName": "MiNiMail"
     }
   }
 }

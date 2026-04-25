@@ -1,55 +1,57 @@
-import { ipcMain, BrowserWindow, shell } from 'electron';
+// src/main/ipc/oauth.ts
+import { ipcMain } from 'electron';
 import log from 'electron-log';
-import { getAuthUrl, getTokenFromCode, isOAuthConfigured, getStoredCredentials, refreshAccessToken } from '../services/oauth';
-
-let authWindow: BrowserWindow | null = null;
+import { startOAuthFlow, OAuthStartParams, refreshTokenForAccount } from '../services/oauth';
+import { getSetting, setSetting } from '../database';
 
 export function registerOAuthHandlers(): void {
   log.info('Registering OAuth IPC handlers');
 
-  // Check if OAuth is configured
-  ipcMain.handle('oauth:isConfigured', async () => {
-    return isOAuthConfigured();
-  });
-
-  // Get OAuth configuration status
-  ipcMain.handle('oauth:getStatus', async () => {
-    const credentials = getStoredCredentials();
-    return {
-      configured: isOAuthConfigured(),
-      authenticated: Boolean(credentials?.access_token || credentials?.refresh_token),
-    };
-  });
-
-  // Start OAuth flow
-  ipcMain.handle('oauth:startFlow', async (event) => {
-    if (!isOAuthConfigured()) {
-      return { success: false, message: 'OAuth not configured. Please set Client ID and Secret in Settings.' };
-    }
-
+  /**
+   * oauth:startFlow
+   * Initiates the PKCE + loopback OAuth flow for Gmail / Outlook / Yahoo.
+   * The IPC handler returns a Promise — Electron keeps it pending until the user
+   * finishes in the browser (or the 5-minute timeout fires).
+   *
+   * Params: { provider: 'gmail'|'outlook'|'yahoo', clientId: string, clientSecret?: string }
+   * Returns: { success, data: OAuthFlowResult } | { success: false, error: string }
+   */
+  ipcMain.handle('oauth:startFlow', async (_event, params: OAuthStartParams) => {
     try {
-      const authUrl = getAuthUrl();
-      log.info('Opening OAuth auth window');
+      const result = await startOAuthFlow(params);
 
-      // Open external browser for OAuth
-      await shell.openExternal(authUrl);
+      // Persist client credentials so refreshTokenForAccount can use them later
+      setSetting(`${params.provider}_client_id`, params.clientId.trim());
+      if (params.clientSecret?.trim()) {
+        setSetting(`${params.provider}_client_secret`, params.clientSecret.trim());
+      }
 
-      return { success: true, message: 'Please authorize in your browser.' };
+      return { success: true, data: result };
     } catch (err) {
       const error = err as Error;
-      log.error('OAuth flow error:', error);
-      return { success: false, message: error.message };
+      log.error('[oauth:startFlow]', error.message);
+      return { success: false, error: error.message };
     }
   });
 
-  // Handle OAuth callback (not typically used with shell.openExternal)
-  ipcMain.handle('oauth:handleCallback', async (_event, code: string) => {
-    return await getTokenFromCode(code);
+  /**
+   * oauth:refreshToken
+   * Silently refresh the access token for an already-stored account.
+   */
+  ipcMain.handle('oauth:refreshToken', async (_event, accountId: number) => {
+    const ok = await refreshTokenForAccount(accountId);
+    return { success: ok };
   });
 
-  // Refresh access token
-  ipcMain.handle('oauth:refreshToken', async () => {
-    return await refreshAccessToken();
+  /**
+   * oauth:getClientConfig
+   * Returns the saved client_id / client_secret for a provider so the
+   * AddAccountDialog can pre-populate the fields.
+   */
+  ipcMain.handle('oauth:getClientConfig', async (_event, provider: string) => {
+    const clientId     = getSetting(`${provider}_client_id`)     ?? '';
+    const clientSecret = getSetting(`${provider}_client_secret`) ?? '';
+    return { success: true, data: { clientId, clientSecret } };
   });
 
   log.info('OAuth IPC handlers registered');
