@@ -129,6 +129,7 @@ function createFetchResponse(payload, status = 200) {
     ok: status >= 200 && status < 300,
     status,
     json: async () => payload,
+    text: async () => JSON.stringify(payload),
   };
 }
 
@@ -209,7 +210,10 @@ function testProviderPresetCatalog() {
 
 function testProviderPresetEndpointNormalization() {
   const { aiModule } = loadAiService();
-  const { OPENAI_COMPATIBLE_PROVIDER_PRESETS } = loadProviderPresets();
+  const {
+    OPENAI_COMPATIBLE_PROVIDER_PRESETS,
+    normalizeOpenAICompatibleChatEndpoint,
+  } = loadProviderPresets();
   const endpoints = Object.fromEntries(
     OPENAI_COMPATIBLE_PROVIDER_PRESETS
       .filter((preset) => !preset.isCustom)
@@ -225,6 +229,16 @@ function testProviderPresetEndpointNormalization() {
   assert.strictEqual(endpoints.ollama, 'http://localhost:11434/v1/chat/completions');
   assert.strictEqual(endpoints['lm-studio'], 'http://localhost:1234/v1/chat/completions');
   assert.strictEqual(endpoints.vllm, 'http://localhost:8000/v1/chat/completions');
+  assert.strictEqual(
+    normalizeOpenAICompatibleChatEndpoint('https://generativelanguage.googleapis.com/v1beta/openai/'),
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    'renderer endpoint preview must preserve Gemini /v1beta/openai path',
+  );
+  assert.strictEqual(
+    normalizeOpenAICompatibleChatEndpoint('https://api.siliconflow.cn/v1/chat/completions'),
+    'https://api.siliconflow.cn/v1/chat/completions',
+    'renderer endpoint preview must not duplicate full chat completions endpoint',
+  );
 }
 
 function testConfigSaveReadPreservesBaseUrlPathname() {
@@ -547,6 +561,182 @@ async function testProviderTemporaryError503Hint() {
   assert(!String(response.error).includes('missing /v1beta/openai'), '503 must not be reported as a Gemini base path error');
 }
 
+async function testConnectionUsesMinimalPromptAndSanitizedResult() {
+  const apiKey = 'secret-compatible-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey,
+  });
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({
+      choices: [{ message: { content: 'OK' } }],
+    });
+  };
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(response.endpointHost, 'api.siliconflow.cn');
+  assert.strictEqual(response.endpointPath, '/v1/chat/completions');
+  assert.strictEqual(response.status, 200);
+  assert.strictEqual(response.parsedPreview, 'OK');
+  assert.strictEqual(calls.length, 1);
+  const body = JSON.parse(calls[0].options.body);
+  assert.deepStrictEqual(body.messages, [{ role: 'user', content: 'Reply with OK.' }]);
+  assert.strictEqual(body.model, 'Pro/zai-org/GLM-4.7');
+  assert.strictEqual(body.temperature, 0);
+  assert.strictEqual(body.max_tokens, 512);
+  for (const field of ['reasoning_effort', 'enable_thinking', 'thinking', 'response_format', 'tools', 'max_completion_tokens']) {
+    assert(!(field in body), `test connection request body must not contain ${field}`);
+  }
+  assert(!JSON.stringify(logs).includes(apiKey), 'test connection logs must not leak API key');
+  assert(!JSON.stringify(response).includes(apiKey), 'test connection response must not leak API key');
+}
+
+async function testConnectionProviderErrorDoesNotLeakApiKey() {
+  const apiKey = 'secret-compatible-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash',
+    apiKey,
+  });
+  global.fetch = async () => createFetchResponse({
+    error: {
+      message: `bad key ${apiKey}`,
+      type: 'invalid_api_key',
+    },
+  }, 401);
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    profileId: 'primary',
+    providerId: 'gemini',
+    providerLabel: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.endpointHost, 'generativelanguage.googleapis.com');
+  assert.strictEqual(response.endpointPath, '/v1beta/openai/chat/completions');
+  assert.strictEqual(response.status, 401);
+  assert(String(response.error).includes('[REDACTED_API_KEY]'), 'test connection error should redact API key');
+  assert(!JSON.stringify(response).includes(apiKey), 'test connection result must not leak API key');
+  assert(!JSON.stringify(logs).includes(apiKey), 'test connection logs must not leak API key');
+}
+
+async function testConnectionGemini429JsonErrorBodyIsParsedAndRedacted() {
+  const apiKey = 'secret-gemini-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash-lite',
+    apiKey,
+  });
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    text: async () => JSON.stringify({
+      error: {
+        code: 429,
+        message: `Quota exceeded for API key ${apiKey}`,
+        status: 'RESOURCE_EXHAUSTED',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+            violations: [
+              {
+                quotaMetric: 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  });
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    profileId: 'primary',
+    providerId: 'gemini',
+    providerLabel: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash-lite',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.status, 429);
+  assert(String(response.error).includes('Quota exceeded'), 'Gemini 429 message should be visible');
+  assert(String(response.error).includes('status: RESOURCE_EXHAUSTED'), 'Gemini 429 status should be visible');
+  assert(String(response.error).includes('code: 429'), 'Gemini 429 code should be visible');
+  assert(String(response.error).includes('HTTP 429'), 'HTTP status should be visible');
+  assert(String(response.error).includes('QuotaFailure'), 'Gemini 429 details should be summarized');
+  assert(String(response.error).includes('[REDACTED_API_KEY]'), 'Gemini 429 error should redact API key');
+  assert(!JSON.stringify(response).includes(apiKey), 'test connection result must not leak API key');
+  assert(!JSON.stringify(logs).includes(apiKey), 'test connection logs must not leak API key');
+}
+
+async function testConnectionPlainTextErrorBodyIsRedactedAndTruncated() {
+  const apiKey = 'secret-compatible-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey,
+  });
+  const longErrorText = `bad key ${apiKey} ${'x'.repeat(400)}`;
+  global.fetch = async () => ({
+    ok: false,
+    status: 500,
+    text: async () => longErrorText,
+  });
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.status, 500);
+  assert(String(response.error).includes('[REDACTED_API_KEY]'), 'plain text error should redact API key');
+  assert(String(response.error).includes('HTTP 500'), 'HTTP status should be visible');
+  assert(!String(response.error).includes('x'.repeat(301)), 'plain text error body should be truncated');
+  assert(!JSON.stringify(response).includes(apiKey), 'test connection result must not leak API key');
+  assert(!JSON.stringify(logs).includes(apiKey), 'test connection logs must not leak API key');
+}
+
+async function testConnectionReasoningOnlyResponseFailsCleanly() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen3.6-35B-A3B',
+    apiKey: 'secret-compatible-key',
+  });
+  global.fetch = async () => createFetchResponse({
+    choices: [{ message: { reasoning_content: 'hidden reasoning only' } }],
+  });
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen3.6-35B-A3B',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.error, 'Provider returned reasoning content without final answer.');
+  assert(!JSON.stringify(response).includes('hidden reasoning only'), 'reasoning content must not be returned to renderer');
+}
+
 async function run() {
   await testEndpointNormalization();
   testProviderPresetCatalog();
@@ -564,6 +754,11 @@ async function run() {
   await testProviderErrorDoesNotLeakApiKey();
   await testGeminiMissingBasePath404Hint();
   await testProviderTemporaryError503Hint();
+  await testConnectionUsesMinimalPromptAndSanitizedResult();
+  await testConnectionProviderErrorDoesNotLeakApiKey();
+  await testConnectionGemini429JsonErrorBodyIsParsedAndRedacted();
+  await testConnectionPlainTextErrorBodyIsRedactedAndTruncated();
+  await testConnectionReasoningOnlyResponseFailsCleanly();
   console.log('openai compatible provider tests passed');
 }
 

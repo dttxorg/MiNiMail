@@ -5,6 +5,8 @@ export type {
   AIConfigSnapshot,
   AIConfigSaveInput,
   AIEmailSource,
+  AIProviderTestConnectionRequest,
+  AIProviderTestConnectionResult,
   AIRequest,
   AIResponse,
   AITranslateSegmentsResponse,
@@ -14,6 +16,7 @@ export type {
 export { DEFAULT_CONFIG } from './types';
 export {
   getAIConfig,
+  getAIConfigForProfile,
   getAIConfigSnapshot,
   initializeAISecretStorage,
   normalizeAIConfigProfileId,
@@ -30,7 +33,12 @@ export {
   appendProviderErrorHint,
   getEndpointLogFields,
   getOpenAICompatibleProviderErrorHint,
+  readProviderErrorResponse,
   redactApiKey,
+  sanitizeProviderErrorBody,
   sanitizeProviderError,
 } from './providerDiagnostics';
-export { callAI } from './providerManager';
+export {
+  callAI,
+  testOpenAICompatibleConnection,
+} from './providerManager';

@@ -29,6 +29,7 @@ import type { MailBackupReadState } from '../../shared/backup';
 import type { AiPrivacyMode } from '../../shared/email-ai';
 import {
   findOpenAICompatiblePresetByBaseUrl,
+  normalizeOpenAICompatibleChatEndpoint,
   OPENAI_COMPATIBLE_PROVIDER_PRESETS,
   type OpenAICompatibleProviderPresetId,
 } from '../../shared/openaiCompatibleProviderPresets';
@@ -111,6 +112,20 @@ type AIConfigProfileForm = {
   apiKey: string;
   model: string;
   hasApiKey?: boolean;
+};
+
+type AIProviderConnectionTestResult = {
+  success: boolean;
+  provider?: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost?: string;
+  endpointPath?: string;
+  model?: string;
+  status?: number;
+  parsedPreview?: string;
+  error?: string;
 };
 
 const EMPTY_AI_CONFIG_PROFILES: Record<AIConfigProfileId, AIConfigProfileForm> = {
@@ -890,12 +905,23 @@ export function SettingsModal({
   const [selectedApiProfile, setSelectedApiProfile] = useState<AIConfigProfileId>('primary');
   const [activeApiProfile, setActiveApiProfile] = useState<AIConfigProfileId>('primary');
   const [apiProfiles, setApiProfiles] = useState<Record<AIConfigProfileId, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<AIProviderConnectionTestResult | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
   const apiProfileUi = useMemo(() => getApiProfileText(normalizedLanguage), [normalizedLanguage]);
   const selectedApiProfileForm = apiProfiles[selectedApiProfile];
   const selectedProviderPreset = getOpenAICompatiblePresetById(selectedApiProfileForm.providerPresetId);
+  const chatEndpointPreview = useMemo(() => {
+    try {
+      return selectedApiProfileForm.baseUrl.trim()
+        ? normalizeOpenAICompatibleChatEndpoint(selectedApiProfileForm.baseUrl)
+        : '';
+    } catch {
+      return '';
+    }
+  }, [selectedApiProfileForm.baseUrl]);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const cacheRangeOptions = useMemo(() => getMailCacheRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
@@ -909,6 +935,7 @@ export function SettingsModal({
     if (!isOpen) return;
     setActiveNav('accounts');
     setApiSaveError(null);
+    setConnectionTestResult(null);
   }, [isOpen]);
 
   useEffect(() => {
@@ -958,6 +985,7 @@ export function SettingsModal({
   }, [isOpen]);
 
   function updateSelectedApiProfile(patch: Partial<AIConfigProfileForm>) {
+    setConnectionTestResult(null);
     setApiProfiles((prev) => ({
       ...prev,
       [selectedApiProfile]: {
@@ -965,6 +993,31 @@ export function SettingsModal({
         ...patch,
       },
     }));
+  }
+
+  async function handleTestConnection() {
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:testConnection', {
+        profileId: selectedApiProfile,
+        providerId: selectedProviderPreset.id,
+        providerLabel: selectedProviderPreset.label,
+        baseUrl: selectedApiProfileForm.baseUrl,
+        apiKey: selectedApiProfileForm.apiKey.trim() || undefined,
+        model: selectedApiProfileForm.model,
+      }) as AIProviderConnectionTestResult;
+      setConnectionTestResult(response);
+    } catch (error) {
+      setConnectionTestResult({
+        success: false,
+        provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        error: (error as Error).message,
+      });
+    } finally {
+      setIsTestingConnection(false);
+    }
   }
 
   function handleProviderPresetChange(presetId: OpenAICompatibleProviderPresetId) {
@@ -1609,6 +1662,43 @@ export function SettingsModal({
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
+                </div>
+                <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]" style={{ color: '#8e8e93' }}>Chat Completions endpoint</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleTestConnection()}
+                      disabled={isTestingConnection || !selectedApiProfileForm.baseUrl.trim() || !selectedApiProfileForm.model.trim()}
+                      className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                    </button>
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: chatEndpointPreview ? '#c7c7cc' : '#636366' }}>
+                    {chatEndpointPreview || 'Enter a Base URL to preview the final endpoint.'}
+                  </div>
+                  {connectionTestResult && (
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
+                      <div>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</div>
+                      {(connectionTestResult.endpointHost || connectionTestResult.endpointPath) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {connectionTestResult.endpointHost || 'unknown-host'} {connectionTestResult.endpointPath || ''}
+                          {connectionTestResult.status !== undefined ? ` · HTTP ${connectionTestResult.status}` : ''}
+                        </div>
+                      )}
+                      {connectionTestResult.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {connectionTestResult.model}</div>
+                      )}
+                      {connectionTestResult.parsedPreview && (
+                        <div style={{ color: '#c7c7cc' }}>Preview: {connectionTestResult.parsedPreview}</div>
+                      )}
+                      {connectionTestResult.error && (
+                        <div>{connectionTestResult.error}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {selectedProviderPreset.note && (
                   <p className="mt-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>

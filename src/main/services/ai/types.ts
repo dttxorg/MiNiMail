@@ -66,6 +66,29 @@ export type AIConfigSaveInput = Partial<AIConfig> & {
   activeProfileId?: AIConfigProfileId;
 };
 
+export interface AIProviderTestConnectionRequest {
+  profileId?: AIConfigProfileId;
+  providerId?: string;
+  providerLabel?: string;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+}
+
+export interface AIProviderTestConnectionResult {
+  success: boolean;
+  provider: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost: string;
+  endpointPath: string;
+  model: string;
+  status?: number;
+  parsedPreview?: string;
+  error?: string;
+}
+
 export const DEFAULT_CONFIG: AIConfig = {
   baseUrl: 'https://api.openai.com/v1',
   apiKey: '',

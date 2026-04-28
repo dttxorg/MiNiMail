@@ -72,7 +72,7 @@ export function initializeAISecretStorage(): void {
   }
 }
 
-function getAIConfigForProfile(profileId: AIConfigProfileId): AIConfigProfile {
+export function getAIConfigForProfile(profileId: AIConfigProfileId): AIConfigProfile {
   const baseUrl = getSetting(getAIProfileSettingKey(profileId, 'baseUrl'));
   const apiKey = getAIProfileApiKey(profileId);
   const model = getSetting(getAIProfileSettingKey(profileId, 'model'));

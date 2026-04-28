@@ -4,6 +4,7 @@ import {
   getAIConfig,
   getAIConfigSnapshot,
   saveAIConfig,
+  testOpenAICompatibleConnection,
   getAISettings,
   saveAISettings,
   translateTextInput,
@@ -19,6 +20,7 @@ import {
   type LookbackRange,
   type AISettings,
   type AIEmailSource,
+  type AIProviderTestConnectionRequest,
 } from '../services/ai';
 
 export function registerAIHandlers(): void {
@@ -66,6 +68,14 @@ export function registerAIHandlers(): void {
     try {
       saveAIConfig(config);
       return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:testConnection', async (_event, request: AIProviderTestConnectionRequest) => {
+    try {
+      return await testOpenAICompatibleConnection(request);
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }
