@@ -1,6 +1,13 @@
 import nodemailer from 'nodemailer';
 import log from 'electron-log';
-import { getAccountById, getAccountCredentials } from '../database';
+import { getAccountById, getAccountCredentials, type Account } from '../database';
+import { refreshTokenForAccount } from './oauth';
+
+export interface SendMailAttachment {
+  filename: string;
+  contentType?: string;
+  content: Buffer;
+}
 
 export interface SendMailOptions {
   accountId: number;
@@ -10,6 +17,7 @@ export interface SendMailOptions {
   subject: string;
   body: string;
   isHtml?: boolean;
+  attachments?: SendMailAttachment[];
 }
 
 export interface SendMailResult {
@@ -18,8 +26,60 @@ export interface SendMailResult {
   messageId?: string;
 }
 
+type AccountCredentials = NonNullable<ReturnType<typeof getAccountCredentials>>;
+type SmtpAuth =
+  | { type: 'OAuth2'; user: string; accessToken: string }
+  | { user: string; pass?: string };
+
+async function getFreshSmtpCredentials(accountId: number, account: Account): Promise<AccountCredentials | null> {
+  let credentials = getAccountCredentials(accountId);
+  if (!credentials || account.auth_type !== 'oauth') {
+    return credentials;
+  }
+
+  const fiveMinMs = 5 * 60 * 1000;
+  const tokenMissingOrExpiring = !credentials.oauth_token
+    || !credentials.oauth_expiry
+    || Date.now() > credentials.oauth_expiry - fiveMinMs;
+
+  if (tokenMissingOrExpiring) {
+    log.info(`[smtp] OAuth token missing or expiring for account ${accountId}, refreshing before SMTP`);
+    const refreshed = await refreshTokenForAccount(accountId);
+    if (refreshed) {
+      credentials = getAccountCredentials(accountId) ?? credentials;
+    }
+  }
+
+  return credentials;
+}
+
+function buildSmtpAuth(account: Account, credentials: AccountCredentials): { auth?: SmtpAuth; error?: string } {
+  if (account.auth_type === 'oauth') {
+    if (!credentials.oauth_token) {
+      return {
+        error: 'OAuth account temporarily unavailable. Please reconnect this account or wait a moment before retrying.',
+      };
+    }
+
+    return {
+      auth: {
+        type: 'OAuth2',
+        user: account.username || account.email,
+        accessToken: credentials.oauth_token,
+      },
+    };
+  }
+
+  return {
+    auth: {
+      user: account.username || account.email,
+      pass: credentials.password,
+    },
+  };
+}
+
 export async function sendMail(options: SendMailOptions): Promise<SendMailResult> {
-  const { accountId, to, cc, bcc, subject, body, isHtml = false } = options;
+  const { accountId, to, cc, bcc, subject, body, isHtml = false, attachments = [] } = options;
 
   log.info(`Sending email for account ${accountId}`);
 
@@ -28,15 +88,15 @@ export async function sendMail(options: SendMailOptions): Promise<SendMailResult
     return { success: false, message: 'Account not found' };
   }
 
-  const credentials = getAccountCredentials(accountId);
+  const credentials = await getFreshSmtpCredentials(accountId, account);
   if (!credentials) {
     return { success: false, message: 'No credentials found' };
   }
 
-  // Create transporter — use XOAUTH2 for OAuth accounts
-  const smtpAuth = account.auth_type === 'oauth' && credentials.oauth_token
-    ? { type: 'OAuth2' as const, user: account.username, accessToken: credentials.oauth_token }
-    : { user: account.username, pass: credentials.password };
+  const { auth: smtpAuth, error: authError } = buildSmtpAuth(account, credentials);
+  if (!smtpAuth) {
+    return { success: false, message: authError || 'SMTP authentication is unavailable' };
+  }
 
   const transporter = nodemailer.createTransport({
     host: account.smtp_host,
@@ -50,11 +110,9 @@ export async function sendMail(options: SendMailOptions): Promise<SendMailResult
   });
 
   try {
-    // Verify connection first
     await transporter.verify();
     log.info('SMTP connection verified');
 
-    // Send mail
     const info = await transporter.sendMail({
       from: `"${account.display_name || account.email}" <${account.email}>`,
       to: to.join(', '),
@@ -63,6 +121,11 @@ export async function sendMail(options: SendMailOptions): Promise<SendMailResult
       subject,
       text: isHtml ? undefined : body,
       html: isHtml ? body : undefined,
+      attachments: attachments.map((attachment) => ({
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        content: attachment.content,
+      })),
     });
 
     log.info(`Email sent successfully. MessageId: ${info.messageId}`);
@@ -84,9 +147,14 @@ export async function testSmtpConnection(accountId: number): Promise<{ success: 
     return { success: false, message: 'Account not found' };
   }
 
-  const credentials = getAccountCredentials(accountId);
+  const credentials = await getFreshSmtpCredentials(accountId, account);
   if (!credentials) {
     return { success: false, message: 'No credentials found' };
+  }
+
+  const { auth: smtpAuth, error: authError } = buildSmtpAuth(account, credentials);
+  if (!smtpAuth) {
+    return { success: false, message: authError || 'SMTP authentication is unavailable' };
   }
 
   const transporter = nodemailer.createTransport({
@@ -94,10 +162,7 @@ export async function testSmtpConnection(accountId: number): Promise<{ success: 
     port: account.smtp_port,
     secure: account.smtp_port === 465,
     requireTLS: account.use_tls === 1,
-    auth: {
-      user: account.username,
-      pass: credentials.password,
-    },
+    auth: smtpAuth,
     connectionTimeout: 10000,
   });
 

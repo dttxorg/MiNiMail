@@ -30,6 +30,7 @@ import { extractReadableEmailText } from '../utils/emailContent';
 import { isLocalSenderMail } from '../utils/mailConversations';
 import type { MailRoutingDiagnostics } from '../utils/mailRoutingExplanationAdapter';
 import { buildIconButtonStyle, buildPanelStyle, uiColor } from '../utils/uiDesignTokens';
+import { parseKeyInfoItems, resolveKeyInfoFieldLabel, type KeyInfoItem } from '../utils/keyInfoItems';
 import { folderMatches } from '../../shared/mailFolders';
 import { translateHtmlPreservingMarkup } from '../../shared/email-ai/translateHtmlPreservingMarkup';
 import { sanitizeMailHtml } from '../utils/mailHtmlSanitizer';
@@ -41,11 +42,6 @@ type MailEmail = RendererMailSummary | RendererMailDetail;
 
 type AssistantStatus = 'idle' | 'loading' | 'ready' | 'error';
 type AttachmentActionStatus = 'downloading' | 'opening' | 'done' | 'error';
-
-interface KeyInfoItem {
-  label: string;
-  value: string;
-}
 
 interface MailAssistantState {
   status: AssistantStatus;
@@ -170,18 +166,6 @@ function parseActionSuggestionLines(value: string, maxItems: number): string[] {
     .map((line) => stripRepeatedHandlingLevelPrefix(line))
     .filter(Boolean)
     .slice(0, maxItems);
-}
-
-function parseKeyInfoLines(value: string): KeyInfoItem[] {
-  return parseAiLines(value, 6).map((line) => {
-    const separator = line.match(/[:：]/);
-    if (!separator || separator.index === undefined) {
-      return { label: '淇℃伅', value: line };
-    }
-    const label = line.slice(0, separator.index).trim() || '淇℃伅';
-    const itemValue = line.slice(separator.index + separator[0].length).trim();
-    return { label, value: itemValue || line };
-  });
 }
 
 const ROUTING_FOLDER_LABELS_ZH: Record<string, string> = {
@@ -772,6 +756,9 @@ function ConversationMessageCard({
   } as const;
   const assistantLabels = assistantLabelsByLanguage[normalizedLanguage] ?? assistantLabelsByLanguage.en;
   const translateButtonLabel = isTranslated ? assistantLabels.original : t('translate');
+  const getKeyInfoFieldLabel = useCallback((item: KeyInfoItem) => {
+    return resolveKeyInfoFieldLabel(item, normalizedLanguage, t);
+  }, [normalizedLanguage, t]);
 
   const ensureDetailLoaded = useCallback(async (): Promise<MailEmail> => {
     if (detail) return detail;
@@ -986,7 +973,7 @@ function ConversationMessageCard({
         summary: summaryResult.trim(),
         actions: parseActionSuggestionLines(actionsResult, 4),
         quickReplies: parseAiLines(repliesResult, 3),
-        keyInfo: parseKeyInfoLines(keyInfoResult),
+        keyInfo: parseKeyInfoItems(keyInfoResult),
       };
       rememberAssistantState(cacheKey, readyState, ASSISTANT_RESULT_TTL_MS);
       setAssistantState(readyState);
@@ -1513,7 +1500,7 @@ function ConversationMessageCard({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {assistantState.keyInfo.map((item, index) => (
                         <div key={`${item.label}-${index}`} className="min-w-0">
-                          <div className="text-[10px]" style={{ color: uiColor.textSubtle }}>{item.label}</div>
+                          <div className="text-[10px]" style={{ color: uiColor.textSubtle }}>{getKeyInfoFieldLabel(item)}</div>
                           <div className="text-[12px] truncate" style={{ color: '#E5E7EB' }}>{item.value}</div>
                         </div>
                       ))}

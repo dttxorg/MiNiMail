@@ -291,9 +291,11 @@ function ensureMailAttachmentTable(db: any): void {
       inline INTEGER NOT NULL DEFAULT 0,
       part_id TEXT,
       attachment_id TEXT,
+      local_cache_path TEXT,
       cached_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  try { db.exec('ALTER TABLE mail_attachments ADD COLUMN local_cache_path TEXT'); } catch { /* column already exists */ }
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_mail_attachments_mail
     ON mail_attachments(account_id, folder, uid)
@@ -318,6 +320,25 @@ function replaceCachedAttachments(
 ): void {
   if (!Array.isArray(mail.attachments)) return;
 
+  const existingRows = db.prepare(`
+    SELECT id, filename, size, local_cache_path
+    FROM mail_attachments
+    WHERE account_id = ? AND folder = ? AND uid = ?
+  `).all(mail.accountId, mail.folder, mail.uid) as Array<{
+    id?: string | null;
+    filename?: string | null;
+    size?: number | null;
+    local_cache_path?: string | null;
+  }>;
+  const existingLocalPathById = new Map<string, string>();
+  const existingLocalPathBySignature = new Map<string, string>();
+  for (const row of existingRows) {
+    const localCachePath = row.local_cache_path ? String(row.local_cache_path) : '';
+    if (!localCachePath) continue;
+    if (row.id) existingLocalPathById.set(String(row.id), localCachePath);
+    existingLocalPathBySignature.set(`${row.filename || 'attachment'}:${Number(row.size || 0)}`, localCachePath);
+  }
+
   db.prepare(`
     DELETE FROM mail_attachments
     WHERE account_id = ? AND folder = ? AND uid = ?
@@ -327,27 +348,35 @@ function replaceCachedAttachments(
 
   const insert = db.prepare(`
     INSERT OR REPLACE INTO mail_attachments
-      (id, account_id, folder, uid, message_id, filename, content_type, size, content_id, disposition, inline, part_id, attachment_id, cached_at)
+      (id, account_id, folder, uid, message_id, filename, content_type, size, content_id, disposition, inline, part_id, attachment_id, local_cache_path, cached_at)
     VALUES
-      (@id, @accountId, @folder, @uid, @messageId, @filename, @contentType, @size, @contentId, @disposition, @inline, @partId, @attachmentId, @cachedAt)
+      (@id, @accountId, @folder, @uid, @messageId, @filename, @contentType, @size, @contentId, @disposition, @inline, @partId, @attachmentId, @localCachePath, @cachedAt)
   `);
 
   const cachedAt = new Date().toISOString();
   mail.attachments.forEach((attachment, index) => {
+    const id = attachment.cacheId || `${mail.accountId}:${mail.folder}:${mail.uid}:${index}`;
+    const size = Number.isFinite(attachment.size) ? Math.max(0, Math.floor(attachment.size)) : 0;
+    const filename = attachment.filename || 'attachment';
+    const localCachePath = attachment.localCachePath
+      ?? existingLocalPathById.get(id)
+      ?? existingLocalPathBySignature.get(`${filename}:${size}`)
+      ?? null;
     insert.run({
-      id: `${mail.accountId}:${mail.folder}:${mail.uid}:${index}`,
+      id,
       accountId: mail.accountId,
       folder: mail.folder,
       uid: mail.uid,
       messageId: mail.messageId ?? null,
-      filename: attachment.filename || 'attachment',
+      filename,
       contentType: attachment.contentType || 'application/octet-stream',
-      size: Number.isFinite(attachment.size) ? Math.max(0, Math.floor(attachment.size)) : 0,
+      size,
       contentId: attachment.contentId ?? null,
       disposition: attachment.disposition ?? null,
       inline: attachment.inline ? 1 : 0,
       partId: attachment.partId ?? null,
       attachmentId: attachment.attachmentId ?? null,
+      localCachePath,
       cachedAt,
     });
   });
@@ -387,7 +416,7 @@ export function getCachedAttachmentMetadata(
 ): MailAttachmentMetadata | null {
   const db = getMailCacheDb();
   const row = db.prepare(`
-    SELECT id, filename, content_type, size, content_id, disposition, inline, part_id, attachment_id
+    SELECT id, filename, content_type, size, content_id, disposition, inline, part_id, attachment_id, local_cache_path
     FROM mail_attachments
     WHERE account_id = ? AND folder = ? AND uid = ? AND id = ?
     LIMIT 1
@@ -407,7 +436,23 @@ export function getCachedAttachmentMetadata(
     cid: contentId,
     partId: row.part_id != null ? String(row.part_id) : undefined,
     attachmentId: row.attachment_id != null ? String(row.attachment_id) : undefined,
+    localCachePath: row.local_cache_path != null ? String(row.local_cache_path) : undefined,
   };
+}
+
+export function updateCachedAttachmentLocalCachePath(
+  accountId: number,
+  folder: string,
+  uid: number,
+  attachmentCacheId: string,
+  localCachePath: string,
+): void {
+  const db = getMailCacheDb();
+  db.prepare(`
+    UPDATE mail_attachments
+    SET local_cache_path = ?, cached_at = ?
+    WHERE account_id = ? AND folder = ? AND uid = ? AND id = ?
+  `).run(localCachePath, new Date().toISOString(), accountId, folder, uid, attachmentCacheId);
 }
 
 function getCachedUids(accountId: number, folder: string): Set<number> {
@@ -1371,11 +1416,29 @@ export function deleteCachedMailById(id: string): void {
     return;
   }
 
-  db.prepare(`
-    DELETE FROM mail_cache
-    WHERE id = ?
-      AND local_draft_id IS NULL
-  `).run(id);
+  const transaction = db.transaction(() => {
+    const rows = db.prepare(`
+      SELECT account_id, folder, uid
+      FROM mail_cache
+      WHERE id = ?
+        AND local_draft_id IS NULL
+    `).all(id) as Array<{ account_id: number; folder: string; uid: number }>;
+
+    for (const row of rows) {
+      db.prepare(`
+        DELETE FROM mail_attachments
+        WHERE account_id = ? AND folder = ? AND uid = ?
+      `).run(row.account_id, row.folder, row.uid);
+    }
+
+    db.prepare(`
+      DELETE FROM mail_cache
+      WHERE id = ?
+        AND local_draft_id IS NULL
+    `).run(id);
+  });
+
+  transaction();
 }
 
 // ─── Native notification ─────────────────────────────────────────────────────

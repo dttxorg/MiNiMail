@@ -30,6 +30,7 @@ export interface RendererMailSummary {
   draftPayload?: string;
   bodyText?: string;
   bodyHtml?: string;
+  attachments?: RendererMailAttachment[];
 }
 
 export interface RendererMailAttachment {

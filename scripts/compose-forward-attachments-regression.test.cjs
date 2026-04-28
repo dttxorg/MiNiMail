@@ -23,18 +23,30 @@ assert(
   'forward quote should include only non-inline original attachments',
 );
 assert(
-  composeDialog.includes('originalAttachmentsNotIncluded'),
-  'compose dialog should warn when original attachments are not automatically forwarded',
+  composeDialog.includes('attachmentUnavailableLabel'),
+  'compose dialog should warn when an original attachment cannot be forwarded automatically',
 );
 assert(
   composeDialog.includes('currentQuotedOriginal.mode === \'forward\'') && composeDialog.includes('currentQuotedOriginal.attachments'),
   'compose dialog should render original attachment metadata for forwards',
 );
 assert(
-  !composeDialog.includes('attachments: currentQuotedOriginal.attachments'),
-  'send payload should not pretend original attachments are included',
+  composeDialog.includes('outgoingAttachments') && composeDialog.includes('originalMailAttachment'),
+  'send payload should include forwardable original attachments through unified outgoingAttachments',
 );
-for (const key of ['originalAttachmentsLabel', 'originalAttachmentsNotIncluded']) {
+assert(
+  composeDialog.includes('handleAddAttachments') && composeDialog.includes('mail:selectOutgoingAttachments'),
+  'compose dialog should let users add local outgoing attachments through IPC',
+);
+assert(
+  composeDialog.includes("quotedOriginal?.mode !== 'forward'"),
+  'only forward compose mode should auto include original attachment references',
+);
+assert(
+  !composeDialog.includes('originalAttachmentsNotIncluded'),
+  'forward attachments should not be presented as visible-but-not-sent anymore',
+);
+for (const key of ['originalAttachmentsLabel']) {
   const matches = i18n.match(new RegExp(`${key}:`, 'g')) || [];
   assert(matches.length >= 8, `${key} should be localized for all supported languages`);
 }

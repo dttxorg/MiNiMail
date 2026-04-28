@@ -36,19 +36,14 @@ function strictTargetLanguageInstruction(targetLang: string): string {
   return `All user-facing output must be natural ${targetLang}. Do not use English labels unless ${targetLang} is English. Use localized labels such as ${labels}. Do not mix languages except for original names, product names, code, URLs, or quoted text from the email.`;
 }
 
-function labelValueFormatInstruction(targetLang: string): string {
-  const examples: Record<string, string> = {
-    Chinese: '标签: 值',
-    English: 'Label: Value',
-    Japanese: 'ラベル: 値',
-    Korean: '라벨: 값',
-    Spanish: 'Etiqueta: Valor',
-    French: 'Libellé: Valeur',
-    German: 'Bezeichnung: Wert',
-    Russian: 'Метка: Значение',
-  };
-
-  return `Return up to 6 lines using localized "${examples[targetLang] || examples.English}" format.`;
+function keyInfoJsonInstruction(targetLang: string): string {
+  return [
+    `Return all user-facing text in the current app language: ${targetLang}.`,
+    'Return one JSON object only. Do not wrap it in markdown.',
+    'Use these stable English JSON keys only: keyInfo, action, evidence, time, link.',
+    'Do not translate JSON keys. Translate only the values.',
+    'If a field is not available, use an empty string for that field.',
+  ].join(' ');
 }
 
 function getHandlingLevel(score: number, targetLang: string): string {
@@ -316,11 +311,11 @@ export function buildKeyInfoPrompt(source: EmailAiPromptSource, targetLang = 'En
 
   return {
     system: [
-      `You extract high-signal key information from emails in ${targetLang}.`,
-      strictTargetLanguageInstruction(targetLang),
-      labelValueFormatInstruction(targetLang),
+      `You extract high-signal key information from emails.`,
+      keyInfoJsonInstruction(targetLang),
       'Prioritize actionable facts: required action, deadline, account or service affected, security/billing risk, amount, order/reference id, link purpose, project/repo, assignee, or decision needed.',
-      'Do not fill the output with obvious metadata like subject or received time unless it is the actual key event. If there is no meaningful key information, return one line: 关键信息: 无明确可提取信息.',
+      'Do not fill the output with obvious metadata like subject or received time unless it is the actual key event. If there is no meaningful key information, set keyInfo to a natural-language "no meaningful key information" message in the target language and keep other unavailable fields empty.',
+      'For bounce or delivery-failure emails, never treat mailer-daemon, postmaster, or MAILER-DAEMON as the original target recipient. Extract the failed recipient from Final-Recipient, Original-Recipient, Diagnostic-Code, failed recipient, or recipient address rejected fields. If it cannot be found, say to check the original recipient address.',
       'Do not invent fields.',
     ].join(' '),
     prompt: [

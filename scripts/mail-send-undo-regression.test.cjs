@@ -99,6 +99,22 @@ function testDeliveredSendDoesNotRemainDraftRecoverable() {
   assert(source.includes('sourceDraftTokens'), 'successful send should hide selected server draft identity from local draft lists');
 }
 
+function testFailedSendKeepsDraftAndRecoverablePayload() {
+  const source = extractHandleSendMailSource();
+  const failureStart = source.indexOf('if (!result.success) {');
+  const failureEnd = source.indexOf('\n      }\n\n      activeScheduledSendsRef.current.delete(localSendId);', failureStart);
+  assert(failureStart >= 0 && failureEnd > failureStart, 'failed send block should be discoverable');
+
+  const failureBlock = source.slice(failureStart, failureEnd);
+  assert(failureBlock.includes("deliveryState: 'failed'"), 'failed send should persist failed delivery state');
+  assert(failureBlock.includes('...optimisticMail'), 'failed send should preserve scheduled metadata including attachments');
+  assert(failureBlock.includes('bodyText: options.bodyText'), 'failed send should preserve plain text body');
+  assert(failureBlock.includes('bodyHtml: options.bodyHtml'), 'failed send should preserve HTML body');
+  assert(failureBlock.includes('await cacheLocalMail(failedMail)'), 'failed send should persist the failed local record');
+  assert(!failureBlock.includes("mail:deleteCachedDraft"), 'failed send must not delete the draft identity');
+  assert(!failureBlock.includes("mail:delete'"), 'failed send must not delete a server draft');
+}
+
 function testComposePassesEditableBodyForUndoRestore() {
   const compose = read('src/renderer/components/ComposeDialog.tsx');
   assert(compose.includes('editableBody: string'), 'ComposeDialog onSend payload should include editableBody');
@@ -113,6 +129,7 @@ testUndoCancelsTimerAndRestoresComposeWithoutSmtp();
 testStateMachinePersistsLocalSendIdentity();
 testScheduledStartupDoesNotSilentlySend();
 testDeliveredSendDoesNotRemainDraftRecoverable();
+testFailedSendKeepsDraftAndRecoverablePayload();
 testComposePassesEditableBodyForUndoRestore();
 
 console.log('mail send undo regression tests passed');

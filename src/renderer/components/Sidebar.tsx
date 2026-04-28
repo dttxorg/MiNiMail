@@ -44,7 +44,7 @@ interface SidebarProps {
     email: string;
     name: string;
     avatar?: string;
-  } | 'all';
+  } | 'all' | null;
   accounts: Array<{
     id: number;
     email: string;
@@ -339,6 +339,7 @@ export function Sidebar({
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [isAiCollapsed, setIsAiCollapsed] = useState(false);
   const isAllAccounts = currentAccount === 'all';
+  const hasNoAccounts = currentAccount === null && accounts.length === 0;
   const appLanguage = normalizeAppLanguage(appLanguageSetting || i18n.language);
   const labelLanguage = getSidebarLabelLanguage(appLanguage);
   const ui = useMemo(() => getUi(appLanguage), [appLanguage]);
@@ -557,8 +558,8 @@ export function Sidebar({
           >
             <span className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ color: '#C4B5FD', backgroundColor: 'rgba(124,58,237,0.22)' }}>{navIcons.users}</span>
             <div className="flex-1 min-w-0 text-left">
-              <p className="text-white text-xs font-medium truncate">{isAllAccounts ? t('allAccounts') : (currentAccount && 'name' in currentAccount ? currentAccount.name : '')}</p>
-              <p className="text-[11px] truncate" style={{ color: uiColor.textSubtle }}>{isAllAccounts ? ui.globalView : (currentAccount && 'email' in currentAccount ? currentAccount.email : '')}</p>
+              <p className="text-white text-xs font-medium truncate">{hasNoAccounts ? 'No account connected' : isAllAccounts ? t('allAccounts') : (currentAccount && 'name' in currentAccount ? currentAccount.name : '')}</p>
+              <p className="text-[11px] truncate" style={{ color: uiColor.textSubtle }}>{hasNoAccounts ? '请添加邮箱账号' : isAllAccounts ? ui.globalView : (currentAccount && 'email' in currentAccount ? currentAccount.email : '')}</p>
             </div>
             <span className="w-4 h-4 flex items-center justify-center flex-shrink-0" style={{ color: uiColor.textSubtle }}>
               <ChevronRight className="w-4 h-4" strokeWidth={1.8} />
@@ -576,6 +577,12 @@ export function Sidebar({
                 {isAllAccounts && <span className="w-4 h-4 flex" style={{ color: uiColor.accent }}><Check className="w-4 h-4" strokeWidth={2} /></span>}
               </button>
 
+              {accounts.length === 0 && (
+                <div className="px-4 py-3 text-xs" style={{ color: uiColor.textSubtle }}>
+                  No account connected / 请添加邮箱账号
+                </div>
+              )}
+
               {accounts.map((account) => (
                 <button key={account.id} onClick={() => { onSwitchAccount(account.id); setShowAccountMenu(false); }} className="w-full flex items-center gap-3 px-4 py-3 cursor-pointer [-webkit-app-region:no-drag]">
                   {account.avatar ? (
@@ -589,7 +596,7 @@ export function Sidebar({
                     <p className="text-white text-sm truncate">{account.name}</p>
                     <p className="text-xs truncate" style={{ color: uiColor.textSubtle }}>{account.email}</p>
                   </div>
-                  {!isAllAccounts && currentAccount !== 'all' && currentAccount.id === account.id && <span className="w-4 h-4 flex" style={{ color: uiColor.accent }}><Check className="w-4 h-4" strokeWidth={2} /></span>}
+                  {!isAllAccounts && currentAccount !== 'all' && currentAccount !== null && currentAccount.id === account.id && <span className="w-4 h-4 flex" style={{ color: uiColor.accent }}><Check className="w-4 h-4" strokeWidth={2} /></span>}
                 </button>
               ))}
 

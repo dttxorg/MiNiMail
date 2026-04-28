@@ -2,6 +2,7 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import log from 'electron-log';
 import { getAccountById, getAccountCredentials } from '../database';
+import type { Readable } from 'node:stream';
 
 const OAUTH_FAILURE_COOLDOWN_MS = 2 * 60 * 1000;
 const oauthFailureCooldownUntil = new Map<number, number>();
@@ -44,12 +45,20 @@ export interface MailAttachmentMetadata {
   cid?: string;
   partId?: string;
   attachmentId?: string;
+  /** Main-process only: durable local source for optimistic Sent attachments. */
+  localCachePath?: string;
 }
 
 export interface MailAttachmentContent {
   filename: string;
   contentType: string;
   content: Buffer;
+  diagnostics?: {
+    method: 'partId' | 'fallbackSource' | 'localCache';
+    fallbackReason?: 'missing_part_id' | 'part_fetch_failed';
+    fetchMs: number;
+    parseMs: number;
+  };
 }
 
 export interface MailDetail {
@@ -207,6 +216,92 @@ function getBodyStructureChildren(part: unknown): unknown[] {
   return Array.isArray(children) ? children : [];
 }
 
+function getBodyStructurePartId(part: unknown): string | undefined {
+  if (!part || typeof part !== 'object') return undefined;
+  const value = (part as Record<string, unknown>).part;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function getBodyStructureContentType(part: unknown): string {
+  if (!part || typeof part !== 'object') return '';
+  const record = part as Record<string, unknown>;
+  const type = record.type ?? record.contentType;
+  return typeof type === 'string' ? type.toLowerCase() : '';
+}
+
+export function collectBodyStructureAttachmentMetadata(bodyStructure: unknown): MailAttachmentMetadata[] {
+  const attachments: MailAttachmentMetadata[] = [];
+
+  const visit = (part: unknown, fallbackPath: string): void => {
+    if (!part || typeof part !== 'object') return;
+    const record = part as Record<string, unknown>;
+    const children = getBodyStructureChildren(part);
+    const partPath = getBodyStructurePartId(part) ?? fallbackPath;
+    const disposition = getBodyStructureDisposition(part);
+    const filename = getBodyStructureParam(part, 'filename')
+      ?? getBodyStructureParam(part, 'name')
+      ?? (typeof record.filename === 'string' ? record.filename : undefined);
+    const contentId = normalizeContentId(record.id ?? record.contentId ?? record.cid);
+    const contentType = getBodyStructureContentType(part) || 'application/octet-stream';
+    const isImage = contentType.startsWith('image/');
+    const isInlineCidImage = Boolean(contentId) && (disposition === 'inline' || isImage);
+
+    if ((disposition === 'attachment' || Boolean(filename)) && partPath) {
+      attachments.push({
+        filename: filename || 'attachment',
+        contentType,
+        size: typeof record.size === 'number' ? record.size : Number(record.size || 0),
+        contentId,
+        disposition,
+        inline: isInlineCidImage || disposition === 'inline',
+        cid: contentId,
+        partId: partPath,
+      });
+    }
+
+    children.forEach((child, index) => {
+      const childFallbackPath = partPath ? `${partPath}.${index + 1}` : `${index + 1}`;
+      visit(child, childFallbackPath);
+    });
+  };
+
+  const rootChildren = getBodyStructureChildren(bodyStructure);
+  if (rootChildren.length === 0) {
+    visit(bodyStructure, getBodyStructurePartId(bodyStructure) ?? '1');
+  } else {
+    rootChildren.forEach((child, index) => visit(child, getBodyStructurePartId(child) ?? `${index + 1}`));
+  }
+
+  return attachments;
+}
+
+function findMatchingBodyStructureAttachment(
+  bodyStructureAttachments: MailAttachmentMetadata[],
+  parsedAttachment: {
+    filename?: string;
+    contentType?: string;
+    size?: number;
+    contentId?: string;
+    contentDisposition?: string;
+    cid?: string;
+    related?: boolean;
+  },
+  index: number,
+): MailAttachmentMetadata | undefined {
+  const parsedContentId = normalizeContentId(parsedAttachment.contentId ?? parsedAttachment.cid);
+  if (parsedContentId) {
+    const byContentId = bodyStructureAttachments.find((attachment) =>
+      normalizeContentId(attachment.contentId ?? attachment.cid) === parsedContentId
+    );
+    if (byContentId) return byContentId;
+  }
+
+  const byMetadata = bodyStructureAttachments.find((attachment) => attachmentLooksSame(parsedAttachment, attachment));
+  if (byMetadata) return byMetadata;
+
+  return bodyStructureAttachments[index];
+}
+
 export function bodyStructureHasDownloadableAttachment(bodyStructure: unknown): boolean {
   const visit = (part: unknown): boolean => {
     if (!part || typeof part !== 'object') return false;
@@ -230,7 +325,15 @@ export function bodyStructureHasDownloadableAttachment(bodyStructure: unknown): 
   return visit(bodyStructure);
 }
 
-async function createClient(accountId: number): Promise<ImapFlow> {
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function createClient(accountId: number, options: { bypassOAuthCooldown?: boolean } = {}): Promise<ImapFlow> {
   console.log('[mail.createClient] ENTER accountId=', accountId);
   const account = getAccountById(accountId);
   if (!account) throw new Error('Account not found');
@@ -240,8 +343,11 @@ async function createClient(accountId: number): Promise<ImapFlow> {
 
   if (account.auth_type === 'oauth') {
     const cooldownUntil = oauthFailureCooldownUntil.get(accountId) ?? 0;
-    if (cooldownUntil > Date.now()) {
+    if (cooldownUntil > Date.now() && !options.bypassOAuthCooldown) {
       throw new Error('OAuth account temporarily unavailable. Please reconnect this account or wait a moment before retrying.');
+    }
+    if (cooldownUntil > Date.now() && options.bypassOAuthCooldown) {
+      log.info(`[mail] Bypassing OAuth cooldown for user-triggered attachment fetch on account ${accountId}`);
     }
   }
 
@@ -416,6 +522,7 @@ export async function fetchMailDetail(
       const msg = await client.fetchOne(String(messageUid), {
         envelope: true,
         flags: true,
+        bodyStructure: true,
         source: true,
       }, { uid: true });
 
@@ -440,7 +547,10 @@ export async function fetchMailDetail(
           const parsed = await simpleParser(msg.source as Buffer);
           bodyHtml = typeof parsed.html === 'string' ? parsed.html : undefined;
           bodyText = parsed.text || undefined;
-          parsedAttachments = parsed.attachments.map((att) => {
+          const bodyStructureAttachments = collectBodyStructureAttachmentMetadata(
+            (msg as typeof msg & { bodyStructure?: unknown }).bodyStructure,
+          );
+          parsedAttachments = parsed.attachments.map((att, index) => {
             const extra = att as typeof att & {
               contentDisposition?: string;
               related?: boolean;
@@ -453,6 +563,19 @@ export async function fetchMailDetail(
             const disposition = typeof extra.contentDisposition === 'string'
               ? extra.contentDisposition.toLowerCase()
               : undefined;
+            const bodyStructureAttachment = findMatchingBodyStructureAttachment(
+              bodyStructureAttachments,
+              {
+                filename: att.filename,
+                contentType: att.contentType,
+                size: att.size,
+                contentId: att.contentId,
+                contentDisposition: disposition,
+                cid,
+                related: extra.related,
+              },
+              index,
+            );
             return {
               filename: att.filename || 'attachment',
               contentType: att.contentType || 'application/octet-stream',
@@ -461,7 +584,7 @@ export async function fetchMailDetail(
               disposition,
               inline: disposition === 'inline' || Boolean(extra.related),
               cid,
-              partId: extra.partId,
+              partId: extra.partId ?? bodyStructureAttachment?.partId,
               attachmentId: extra.attachmentId,
             };
           });
@@ -508,48 +631,57 @@ export async function fetchMailAttachmentContent(
   messageUid: number,
   folder: string,
   targetAttachment: MailAttachmentMetadata,
+  options: { bypassOAuthCooldown?: boolean } = {},
 ): Promise<MailAttachmentContent> {
   log.info(`[mail] Fetching attachment UID=${messageUid} for account ${accountId}`);
 
   let client: ImapFlow | null = null;
   try {
-    client = await createClient(accountId);
+    client = await createClient(accountId, { bypassOAuthCooldown: options.bypassOAuthCooldown });
     const imapFolder = folder.toLowerCase() === 'inbox' ? 'INBOX' : folder;
     const lock = await client.getMailboxLock(imapFolder);
     try {
-      const msg = await client.fetchOne(String(messageUid), {
-        source: true,
-      }, { uid: true });
+      if (targetAttachment.partId) {
+        const fetchStartedAt = Date.now();
+        try {
+          const downloaded = await client.download(String(messageUid), targetAttachment.partId, { uid: true });
+          if (!downloaded?.content) {
+            throw new Error('Attachment part content not found');
+          }
+          const content = await streamToBuffer(downloaded.content);
+          return {
+            filename: sanitizeAttachmentFilename(targetAttachment.filename || downloaded.meta?.filename),
+            contentType: targetAttachment.contentType || downloaded.meta?.contentType || 'application/octet-stream',
+            content,
+            diagnostics: {
+              method: 'partId',
+              fetchMs: Date.now() - fetchStartedAt,
+              parseMs: 0,
+            },
+          };
+        } catch (partErr) {
+          log.warn('[mail] attachment part fetch failed; falling back to full source', {
+            uid: messageUid,
+            folder: imapFolder,
+            attachmentCacheId: targetAttachment.cacheId,
+            partId: targetAttachment.partId,
+            error: partErr instanceof Error ? partErr.message : String(partErr),
+          });
+          return await fetchAttachmentViaSourceFallback(
+            client,
+            messageUid,
+            targetAttachment,
+            'part_fetch_failed',
+          );
+        }
+      }
 
-      if (!msg || !msg.source) throw new Error('Message source not found');
-
-      const parsed = await simpleParser(msg.source as Buffer);
-      const parsedAttachments = parsed.attachments.map((att) => {
-        const extra = att as typeof att & {
-          contentDisposition?: string;
-          related?: boolean;
-          cid?: string;
-        };
-        return {
-          filename: att.filename,
-          contentType: att.contentType,
-          size: att.size,
-          content: att.content,
-          contentId: att.contentId,
-          contentDisposition: extra.contentDisposition,
-          cid: extra.cid,
-          related: extra.related,
-        };
-      });
-
-      const matched = findMatchingParsedAttachment(parsedAttachments, targetAttachment);
-      if (!matched?.content) throw new Error('Attachment content not found');
-
-      return {
-        filename: sanitizeAttachmentFilename(matched.filename || targetAttachment.filename),
-        contentType: matched.contentType || targetAttachment.contentType || 'application/octet-stream',
-        content: matched.content,
-      };
+      return await fetchAttachmentViaSourceFallback(
+        client,
+        messageUid,
+        targetAttachment,
+        'missing_part_id',
+      );
     } finally {
       try { lock.release(); } catch { /* ignore */ }
     }
@@ -561,6 +693,57 @@ export async function fetchMailAttachmentContent(
       try { await client.logout(); } catch { /* ignore */ }
     }
   }
+}
+
+async function fetchAttachmentViaSourceFallback(
+  client: ImapFlow,
+  messageUid: number,
+  targetAttachment: MailAttachmentMetadata,
+  fallbackReason: 'missing_part_id' | 'part_fetch_failed',
+): Promise<MailAttachmentContent> {
+  const fetchStartedAt = Date.now();
+  const msg = await client.fetchOne(String(messageUid), {
+    source: true,
+  }, { uid: true });
+  const fetchMs = Date.now() - fetchStartedAt;
+
+  if (!msg || !msg.source) throw new Error('Message source not found');
+
+  const parseStartedAt = Date.now();
+  const parsed = await simpleParser(msg.source as Buffer);
+  const parseMs = Date.now() - parseStartedAt;
+  const parsedAttachments = parsed.attachments.map((att) => {
+    const extra = att as typeof att & {
+      contentDisposition?: string;
+      related?: boolean;
+      cid?: string;
+    };
+    return {
+      filename: att.filename,
+      contentType: att.contentType,
+      size: att.size,
+      content: att.content,
+      contentId: att.contentId,
+      contentDisposition: extra.contentDisposition,
+      cid: extra.cid,
+      related: extra.related,
+    };
+  });
+
+  const matched = findMatchingParsedAttachment(parsedAttachments, targetAttachment);
+  if (!matched?.content) throw new Error('Attachment content not found');
+
+  return {
+    filename: sanitizeAttachmentFilename(matched.filename || targetAttachment.filename),
+    contentType: matched.contentType || targetAttachment.contentType || 'application/octet-stream',
+    content: matched.content,
+    diagnostics: {
+      method: 'fallbackSource',
+      fallbackReason,
+      fetchMs,
+      parseMs,
+    },
+  };
 }
 
 export async function setMessageFlags(

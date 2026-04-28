@@ -7,9 +7,10 @@ interface ModalProps {
   children: React.ReactNode;
   width?: string;
   height?: string;
+  closeOnBackdrop?: boolean;
 }
 
-export function Modal({ isOpen, onClose, children, width = 'max-w-lg', height }: ModalProps) {
+export function Modal({ isOpen, onClose, children, width = 'max-w-lg', height, closeOnBackdrop = true }: ModalProps) {
   if (!isOpen) return null;
 
   return (
@@ -17,7 +18,7 @@ export function Modal({ isOpen, onClose, children, width = 'max-w-lg', height }:
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/70"
-        onClick={onClose}
+        onClick={closeOnBackdrop ? onClose : undefined}
       />
 
       {/* Modal Content */}

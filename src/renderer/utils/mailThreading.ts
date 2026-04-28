@@ -1,6 +1,6 @@
 import { folderMatches } from '../../shared/mailFolders';
 
-type CurrentAccount = { id: number } | 'all';
+type CurrentAccount = { id: number } | 'all' | null;
 export interface ThreadableMail {
   id: string;
   uid: number;
@@ -69,6 +69,10 @@ export function buildThreadMailUniverse(
   }
 
   return Array.from(deduped.values());
+}
+
+export function isHiddenFromVirtualMailViews(mail: Pick<ThreadableMail, 'folder'>): boolean {
+  return folderMatches(mail.folder, 'trash') || folderMatches(mail.folder, 'spam');
 }
 
 export function findThreadSiblings(
@@ -141,7 +145,9 @@ export function getVisibleFolderEmails({
   localThreadMails,
   aiCategoryIds = [],
 }: VisibleFolderArgs): ThreadableMail[] {
-  const accountFiltered = (currentAccount === 'all'
+  const accountFiltered = (currentAccount === null
+    ? []
+    : currentAccount === 'all'
     ? buildThreadMailUniverse(baseMails, localThreadMails)
     : buildThreadMailUniverse(
       baseMails.filter((mail) => mail.accountId === currentAccount.id),
@@ -150,7 +156,10 @@ export function getVisibleFolderEmails({
   );
 
   if (aiCategoryIds.includes(selectedFolder)) {
-    return accountFiltered.filter((mail) => mail.category === selectedFolder);
+    return accountFiltered.filter((mail) =>
+      mail.category === selectedFolder &&
+      !isHiddenFromVirtualMailViews(mail)
+    );
   }
 
   if (selectedFolder === 'starred') {

@@ -4,6 +4,12 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import log from 'electron-log';
 import type { MailExportRequest, MailImportRequest } from '../../shared/backup';
+import {
+  isLocalFileOutgoingAttachment,
+  isOriginalMailOutgoingAttachment,
+  normalizeOutgoingAttachments,
+  type OutgoingAttachmentReference,
+} from '../../shared/outgoingAttachments';
 import { fetchMailList, fetchMailDetail, getMailFolders, setMessageFlags, setMessageStarred, setMessageRead, deleteMessage, moveMessage, fetchMailAttachmentContent, sanitizeAttachmentFilename } from '../services/mail';
 import {
   syncMails,
@@ -22,20 +28,55 @@ import {
   deleteCachedDraft,
   deleteCachedMailById,
   getCachedAttachmentMetadata,
+  updateCachedAttachmentLocalCachePath,
 } from '../services/mailService';
 import { cancelMailBackupTask, exportMailsToEml, importMailsFromEml } from '../services/mailBackup';
-import { sendMail, testSmtpConnection } from '../services/smtp';
+import { sendMail, testSmtpConnection, type SendMailAttachment } from '../services/smtp';
+import {
+  readSentAttachmentCache,
+  writeSentAttachmentCache,
+} from '../services/sentAttachmentCache';
+import {
+  readOutgoingAttachmentCache,
+  writeOutgoingAttachmentCacheFromPath,
+} from '../services/outgoingAttachmentCache';
 import { getAccountById } from '../database';
 import type { MailHistoryRange } from '../../shared/mailSyncSettings';
 import type { MailCacheRange } from '../../shared/mailSyncSettings';
 
 let stagedSyncProgressForwarderDispose: (() => void) | null = null;
+const outgoingAttachmentTokens = new Map<string, {
+  filePath: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  createdAt: number;
+}>();
+const OUTGOING_ATTACHMENT_TOKEN_TTL_MS = 1000 * 60 * 60 * 6;
+const MAX_OUTGOING_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_OUTGOING_TOTAL_BYTES = 35 * 1024 * 1024;
+const LOCAL_ATTACHMENT_READ_ERROR_MESSAGE = '无法读取本地附件，请重新选择文件。';
+const ORIGINAL_ATTACHMENT_READ_ERROR_MESSAGE = '无法读取原邮件附件，请重新同步邮件或移除该附件后重试。';
+const ORIGINAL_ATTACHMENT_METADATA_MISSING_MESSAGE = '原邮件附件缓存不存在，请重新打开原邮件后再转发。';
+const OAUTH_ATTACHMENT_READ_ERROR_MESSAGE = '账号认证暂时不可用，请重新连接账号或稍后重试。';
+
+const ATTACHMENT_METADATA_MISSING_MESSAGE = '\u9644\u4ef6\u4fe1\u606f\u4e0d\u5b58\u5728\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u90ae\u4ef6\u6216\u7a0d\u540e\u540c\u6b65\u540e\u518d\u8bd5\u3002';
+const ATTACHMENT_SYNC_PENDING_MESSAGE = '\u9644\u4ef6\u6b63\u5728\u540c\u6b65\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002';
+const ATTACHMENT_DOWNLOAD_FAILED_MESSAGE = '\u9644\u4ef6\u4e0b\u8f7d\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002';
+const ATTACHMENT_OPEN_FAILED_MESSAGE = '\u65e0\u6cd5\u6253\u5f00\u9644\u4ef6\uff0c\u8bf7\u5148\u4e0b\u8f7d\u540e\u624b\u52a8\u6253\u5f00\u3002';
+const ATTACHMENT_FILE_MISSING_MESSAGE = '\u9644\u4ef6\u7f13\u5b58\u6587\u4ef6\u4e0d\u5b58\u5728\uff0c\u8bf7\u91cd\u65b0\u4e0b\u8f7d\u540e\u518d\u6253\u5f00\u3002';
 
 type AttachmentActionRequest = {
   accountId: number;
   folder: string;
   uid: number;
   attachmentCacheId: string | number;
+};
+
+type SentAttachmentCacheTarget = {
+  accountId?: number;
+  folder?: string;
+  uid?: number;
 };
 
 function resolveAttachmentActionRequest(input: AttachmentActionRequest): {
@@ -58,11 +99,274 @@ function getRequestWindow(event: Electron.IpcMainInvokeEvent): BrowserWindow | u
   return BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? undefined;
 }
 
+function pruneOutgoingAttachmentTokens(): void {
+  const cutoff = Date.now() - OUTGOING_ATTACHMENT_TOKEN_TTL_MS;
+  for (const [token, value] of outgoingAttachmentTokens.entries()) {
+    if (value.createdAt < cutoff) outgoingAttachmentTokens.delete(token);
+  }
+}
+
+function guessAttachmentContentType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const byExt: Record<string, string> = {
+    '.txt': 'text/plain',
+    '.csv': 'text/csv',
+    '.html': 'text/html',
+    '.htm': 'text/html',
+    '.json': 'application/json',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.zip': 'application/zip',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  };
+  return byExt[ext] || 'application/octet-stream';
+}
+
+function isOAuthAttachmentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /OAuth account temporarily unavailable|OAuth token refresh failed|Please reconnect this account|invalid_grant|authentication failed/i.test(message);
+}
+
+function toOutgoingAttachmentErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message === ORIGINAL_ATTACHMENT_METADATA_MISSING_MESSAGE) {
+    return ORIGINAL_ATTACHMENT_METADATA_MISSING_MESSAGE;
+  }
+  return isOAuthAttachmentError(error) ? OAUTH_ATTACHMENT_READ_ERROR_MESSAGE : fallback;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || '');
+}
+
+function formatAttachmentActionError(error: unknown, action: 'download' | 'open'): string {
+  const message = getErrorMessage(error);
+  if (!message) return action === 'open' ? ATTACHMENT_OPEN_FAILED_MESSAGE : ATTACHMENT_DOWNLOAD_FAILED_MESSAGE;
+  if (message === 'cancelled') return 'cancelled';
+  if (message === ATTACHMENT_METADATA_MISSING_MESSAGE || /Attachment metadata not found/i.test(message)) {
+    return ATTACHMENT_METADATA_MISSING_MESSAGE;
+  }
+  if (isOAuthAttachmentError(error)) return OAUTH_ATTACHMENT_READ_ERROR_MESSAGE;
+  if (/ENOENT|no such file|cannot find|not found/i.test(message) && /file|path|cache/i.test(message)) {
+    return ATTACHMENT_FILE_MISSING_MESSAGE;
+  }
+  if (/Message not found|Attachment content not found|missing_part_id|part_fetch_failed/i.test(message)) {
+    return ATTACHMENT_SYNC_PENDING_MESSAGE;
+  }
+  if (action === 'open' && /Command failed|openPath|No application|not associated|access denied/i.test(message)) {
+    return ATTACHMENT_OPEN_FAILED_MESSAGE;
+  }
+  return action === 'open' ? ATTACHMENT_OPEN_FAILED_MESSAGE : ATTACHMENT_DOWNLOAD_FAILED_MESSAGE;
+}
+
+async function resolveOutgoingAttachmentsForSend(
+  attachments?: OutgoingAttachmentReference[],
+  sentCache?: SentAttachmentCacheTarget,
+): Promise<SendMailAttachment[]> {
+  const normalizedAttachments = normalizeOutgoingAttachments(attachments);
+  if (normalizedAttachments.length === 0) return [];
+  pruneOutgoingAttachmentTokens();
+
+  const resolved: SendMailAttachment[] = [];
+  let totalBytes = 0;
+  const sentCacheTarget = normalizeSentAttachmentCacheTarget(sentCache);
+
+  for (const attachment of normalizedAttachments) {
+    if (isLocalFileOutgoingAttachment(attachment)) {
+      try {
+        let resolvedAttachment: SendMailAttachment | null = null;
+        let resolvedSize = 0;
+
+        if (attachment.cacheId) {
+          try {
+            const cached = await readOutgoingAttachmentCache(attachment.cacheId);
+            if (cached.size > MAX_OUTGOING_ATTACHMENT_BYTES) throw new Error('Attachment is too large');
+            resolvedSize = cached.size;
+            resolvedAttachment = {
+              filename: cached.filename,
+              contentType: cached.contentType,
+              content: cached.content,
+            };
+          } catch (error) {
+            if (!attachment.token) throw error;
+            log.warn('[mail] durable outgoing attachment cache unavailable; falling back to active token', {
+              cacheId: attachment.cacheId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        if (!resolvedAttachment && attachment.token) {
+          const token = outgoingAttachmentTokens.get(attachment.token);
+          if (!token) throw new Error('Attachment token no longer available');
+          const stat = await fs.promises.stat(token.filePath);
+          if (!stat.isFile()) throw new Error('Attachment path is not a file');
+          if (stat.size > MAX_OUTGOING_ATTACHMENT_BYTES) throw new Error('Attachment is too large');
+          resolvedSize = stat.size;
+          resolvedAttachment = {
+            filename: token.filename,
+            contentType: token.contentType,
+            content: await fs.promises.readFile(token.filePath),
+          };
+        }
+
+        if (!resolvedAttachment) throw new Error('Attachment cache no longer available');
+
+        totalBytes += resolvedSize;
+        if (totalBytes > MAX_OUTGOING_TOTAL_BYTES) throw new Error('Total attachment size is too large');
+        await persistSentAttachmentCache(sentCacheTarget, attachment, resolvedAttachment);
+        resolved.push(resolvedAttachment);
+      } catch (error) {
+        log.warn('[mail] failed to resolve local outgoing attachment', {
+          hasCacheId: Boolean(attachment.cacheId),
+          hasToken: attachment.token ? outgoingAttachmentTokens.has(attachment.token) : false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new Error(LOCAL_ATTACHMENT_READ_ERROR_MESSAGE);
+      }
+      continue;
+    }
+
+    if (isOriginalMailOutgoingAttachment(attachment)) {
+      const sourceAccountId = Number(attachment.accountId);
+      const uid = Number(attachment.uid);
+      const folder = String(attachment.folder || 'INBOX');
+      const attachmentCacheId = String(attachment.attachmentCacheId || '');
+      try {
+        if (!Number.isFinite(sourceAccountId) || sourceAccountId <= 0 || !Number.isFinite(uid) || uid < 0 || !attachmentCacheId) {
+          throw new Error('Invalid original attachment reference');
+        }
+        const metadata = getCachedAttachmentMetadata(sourceAccountId, folder, uid, attachmentCacheId);
+        if (!metadata) throw new Error(ORIGINAL_ATTACHMENT_METADATA_MISSING_MESSAGE);
+        const loaded = await fetchMailAttachmentContent(sourceAccountId, uid, folder, metadata, { bypassOAuthCooldown: true });
+        totalBytes += loaded.content.length;
+        if (totalBytes > MAX_OUTGOING_TOTAL_BYTES) throw new Error('Total attachment size is too large');
+        const resolvedAttachment: SendMailAttachment = {
+          filename: sanitizeAttachmentFilename(loaded.filename || metadata.filename || attachment.filename),
+          contentType: loaded.contentType || metadata.contentType || attachment.contentType || 'application/octet-stream',
+          content: loaded.content,
+        };
+        await persistSentAttachmentCache(sentCacheTarget, attachment, resolvedAttachment);
+        resolved.push(resolvedAttachment);
+      } catch (error) {
+        log.warn('[mail] failed to resolve original outgoing attachment', {
+          sourceAccountId: Number.isFinite(sourceAccountId) ? sourceAccountId : undefined,
+          folder,
+          uid: Number.isFinite(uid) ? uid : undefined,
+          attachmentCacheId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new Error(toOutgoingAttachmentErrorMessage(error, ORIGINAL_ATTACHMENT_READ_ERROR_MESSAGE));
+      }
+    }
+  }
+
+  return resolved;
+}
+
+function normalizeSentAttachmentCacheTarget(
+  sentCache?: SentAttachmentCacheTarget,
+): { accountId: number; folder: string; uid: number } | null {
+  if (!sentCache) return null;
+  const accountId = Number(sentCache.accountId);
+  const uid = Number(sentCache.uid);
+  const folder = String(sentCache.folder || '').trim();
+  if (!Number.isFinite(accountId) || accountId <= 0 || !Number.isFinite(uid) || uid < 0 || !folder) {
+    return null;
+  }
+  return { accountId, folder, uid };
+}
+
+async function persistSentAttachmentCache(
+  sentCacheTarget: { accountId: number; folder: string; uid: number } | null,
+  attachment: OutgoingAttachmentReference,
+  resolvedAttachment: SendMailAttachment,
+): Promise<void> {
+  if (!sentCacheTarget) return;
+  try {
+    const cached = await writeSentAttachmentCache({
+      filename: resolvedAttachment.filename,
+      contentType: resolvedAttachment.contentType,
+      content: resolvedAttachment.content,
+    });
+    updateCachedAttachmentLocalCachePath(
+      sentCacheTarget.accountId,
+      sentCacheTarget.folder,
+      sentCacheTarget.uid,
+      String(attachment.id),
+      cached.localCachePath,
+    );
+  } catch (error) {
+    log.warn('[mail] failed to persist sent attachment cache', {
+      attachmentId: attachment.id,
+      accountId: sentCacheTarget.accountId,
+      folder: sentCacheTarget.folder,
+      uid: sentCacheTarget.uid,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function loadAttachmentForAction(request: AttachmentActionRequest) {
   const { accountId, folder, uid, attachmentCacheId } = resolveAttachmentActionRequest(request);
   const metadata = getCachedAttachmentMetadata(accountId, folder, uid, attachmentCacheId);
-  if (!metadata) throw new Error('Attachment metadata not found');
+  if (!metadata) throw new Error(ATTACHMENT_METADATA_MISSING_MESSAGE);
+  if (metadata.localCachePath) {
+    try {
+      const cachedAttachment = await readSentAttachmentCache(metadata);
+      if (cachedAttachment) {
+        return {
+          filename: cachedAttachment.filename,
+          contentType: cachedAttachment.contentType,
+          content: cachedAttachment.content,
+          diagnostics: {
+            method: 'localCache' as const,
+            fetchMs: 0,
+            parseMs: 0,
+          },
+        };
+      }
+    } catch (error) {
+      log.warn('[mail] sent attachment cache unavailable; falling back to IMAP/source', {
+        attachmentCacheId,
+        accountId,
+        folder,
+        uid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return fetchMailAttachmentContent(accountId, uid, folder, metadata);
+}
+
+function logAttachmentDiagnostics(
+  action: 'download' | 'open',
+  request: AttachmentActionRequest,
+  attachment: Awaited<ReturnType<typeof loadAttachmentForAction>>,
+  writeMs: number,
+  totalMs: number,
+): void {
+  const resolved = resolveAttachmentActionRequest(request);
+  const diagnostics = attachment.diagnostics;
+  log.info('[mail] attachmentDiagnostics', {
+    action,
+    attachmentCacheId: resolved.attachmentCacheId,
+    hasPartId: diagnostics?.method === 'partId' || diagnostics?.fallbackReason === 'part_fetch_failed',
+    method: diagnostics?.method ?? 'unknown',
+    fallbackReason: diagnostics?.fallbackReason,
+    fetchMs: diagnostics?.fetchMs ?? 0,
+    parseMs: diagnostics?.parseMs ?? 0,
+    writeMs,
+    totalMs,
+  });
 }
 
 function registerStagedSyncProgressForwarder(): void {
@@ -190,6 +494,7 @@ export function registerMailHandlers(): void {
   });
 
   ipcMain.handle('mail:downloadAttachment', async (event, request: AttachmentActionRequest) => {
+    const totalStartedAt = Date.now();
     try {
       const attachment = await loadAttachmentForAction(request);
       const safeFilename = sanitizeAttachmentFilename(attachment.filename);
@@ -204,30 +509,44 @@ export function registerMailHandlers(): void {
       if (saveResult.canceled || !saveResult.filePath) {
         return { success: false, error: 'cancelled' };
       }
+      const writeStartedAt = Date.now();
       await fs.promises.writeFile(saveResult.filePath, attachment.content);
+      const writeMs = Date.now() - writeStartedAt;
+      logAttachmentDiagnostics('download', request, attachment, writeMs, Date.now() - totalStartedAt);
       return { success: true, filePath: saveResult.filePath };
     } catch (err) {
       const error = err as Error;
       log.error('Failed to download mail attachment:', error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: formatAttachmentActionError(error, 'download') };
     }
   });
 
   ipcMain.handle('mail:openAttachment', async (_event, request: AttachmentActionRequest) => {
+    const totalStartedAt = Date.now();
     try {
       const attachment = await loadAttachmentForAction(request);
       const safeFilename = sanitizeAttachmentFilename(attachment.filename);
       const tempDir = path.join(app.getPath('temp'), 'MiNiMail', 'attachments', crypto.randomUUID());
       await fs.promises.mkdir(tempDir, { recursive: true });
       const filePath = path.join(tempDir, safeFilename);
+      const writeStartedAt = Date.now();
       await fs.promises.writeFile(filePath, attachment.content);
+      await fs.promises.access(filePath, fs.constants.R_OK);
+      const writeMs = Date.now() - writeStartedAt;
       const openError = await shell.openPath(filePath);
-      if (openError) return { success: false, filePath, error: openError };
+      if (openError) {
+        log.warn('[mail] shell.openPath failed for attachment', {
+          attachmentCacheId: resolveAttachmentActionRequest(request).attachmentCacheId,
+          error: openError,
+        });
+        return { success: false, filePath, error: formatAttachmentActionError(openError, 'open') };
+      }
+      logAttachmentDiagnostics('open', request, attachment, writeMs, Date.now() - totalStartedAt);
       return { success: true, filePath };
     } catch (err) {
       const error = err as Error;
       log.error('Failed to open mail attachment:', error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: formatAttachmentActionError(error, 'open') };
     }
   });
 
@@ -304,6 +623,65 @@ export function registerMailHandlers(): void {
     }
   });
 
+  ipcMain.handle('mail:selectOutgoingAttachments', async (event) => {
+    try {
+      pruneOutgoingAttachmentTokens();
+      const pickerOptions: Electron.OpenDialogOptions = {
+        title: 'Select attachments',
+        properties: ['openFile', 'multiSelections'],
+      };
+      const ownerWindow = getRequestWindow(event);
+      const result = ownerWindow
+        ? await dialog.showOpenDialog(ownerWindow, pickerOptions)
+        : await dialog.showOpenDialog(pickerOptions);
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: true, data: [] };
+      }
+
+      const attachments: OutgoingAttachmentReference[] = [];
+      let totalBytes = 0;
+      for (const filePath of result.filePaths) {
+        const stat = await fs.promises.stat(filePath);
+        if (!stat.isFile()) continue;
+        if (stat.size > MAX_OUTGOING_ATTACHMENT_BYTES) {
+          throw new Error(`Attachment is too large: ${path.basename(filePath)}`);
+        }
+        totalBytes += stat.size;
+        if (totalBytes > MAX_OUTGOING_TOTAL_BYTES) {
+          throw new Error('Total attachment size is too large');
+        }
+
+        const filename = sanitizeAttachmentFilename(path.basename(filePath));
+        const contentType = guessAttachmentContentType(filePath);
+        const durableCache = await writeOutgoingAttachmentCacheFromPath(filePath, { filename, contentType });
+        const token = crypto.randomUUID();
+        outgoingAttachmentTokens.set(token, {
+          filePath,
+          filename,
+          contentType,
+          size: stat.size,
+          createdAt: Date.now(),
+        });
+        attachments.push({
+          kind: 'localFile',
+          id: `local-cache:${durableCache.cacheId}`,
+          token,
+          cacheId: durableCache.cacheId,
+          filename,
+          contentType,
+          size: stat.size,
+        });
+      }
+
+      return { success: true, data: attachments };
+    } catch (err) {
+      const error = err as Error;
+      log.error('Failed to select outgoing attachments:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mail:cacheLocal', async (_event, mail: {
     id: string;
     uid: number;
@@ -332,6 +710,18 @@ export function registerMailHandlers(): void {
     category?: string;
     isScanned?: boolean;
     scanResult?: string;
+    attachments?: Array<{
+      cacheId?: string;
+      filename: string;
+      contentType: string;
+      size: number;
+      contentId?: string;
+      disposition?: string;
+      inline?: boolean;
+      cid?: string;
+      partId?: string;
+      attachmentId?: string;
+    }>;
   }) => {
     try {
       saveLocalMailToCache(mail);
@@ -430,9 +820,12 @@ export function registerMailHandlers(): void {
     subject: string;
     body: string;
     isHtml?: boolean;
+    outgoingAttachments?: OutgoingAttachmentReference[];
+    sentCache?: SentAttachmentCacheTarget;
   }) => {
     try {
-      const result = await sendMail({ accountId, ...options });
+      const attachments = await resolveOutgoingAttachmentsForSend(options.outgoingAttachments, options.sentCache);
+      const result = await sendMail({ accountId, ...options, attachments });
       return result;
     } catch (err) {
       const error = err as Error;

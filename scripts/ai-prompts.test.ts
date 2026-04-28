@@ -101,9 +101,16 @@ function testAssistantPromptsExposeStructuredAssistantSections() {
   assert(quickReplies.prompt.includes('Latest reply:'), 'Expected quick replies prompt to include latest reply context');
 
   const keyInfo = buildKeyInfoPrompt(source, 'Chinese');
-  assert(keyInfo.system.includes('标签: 值'), 'Expected key info prompt to request localized label/value format');
+  assert(keyInfo.system.includes('Return all user-facing text in the current app language: Chinese.'), 'Expected key info prompt to bind output to current app language');
+  assert(keyInfo.system.includes('JSON object'), 'Expected key info prompt to request stable JSON output');
+  assert(keyInfo.system.includes('keyInfo'), 'Expected key info prompt to use stable keyInfo key');
+  assert(keyInfo.system.includes('action'), 'Expected key info prompt to use stable action key');
+  assert(keyInfo.system.includes('evidence'), 'Expected key info prompt to use stable evidence key');
+  assert(keyInfo.system.includes('time'), 'Expected key info prompt to use stable time key');
+  assert(keyInfo.system.includes('link'), 'Expected key info prompt to use stable link key');
   assert(keyInfo.system.includes('actionable facts'), 'Expected key info prompt to prioritize useful facts');
   assert(keyInfo.system.includes('Do not fill'), 'Expected key info prompt to avoid low-value metadata');
+  assert(!keyInfo.system.includes('关键信息: 无明确可提取信息'), 'Expected key info prompt not to hardcode Chinese fallback text');
   assert(keyInfo.prompt.includes('Detected links:'), 'Expected key info prompt to include link context');
 }
 
@@ -125,7 +132,29 @@ function testJapaneseAssistantPromptsForbidEnglishLabels() {
   assert(quickReplies.system.includes('Do not use English labels'), 'Expected Japanese quick replies prompt to forbid English labels');
 
   const keyInfo = buildKeyInfoPrompt(source, 'Japanese');
-  assert(keyInfo.system.includes('ラベル: 値'), 'Expected Japanese key info prompt to request localized label format');
+  assert(keyInfo.system.includes('Return all user-facing text in the current app language: Japanese.'), 'Expected Japanese key info prompt to bind output to Japanese');
+  assert(keyInfo.system.includes('Do not translate JSON keys'), 'Expected key info prompt to keep JSON keys stable');
+}
+
+function testKeyInfoPromptHandlesBounceRecipientsSafely() {
+  const request = buildKeyInfoPrompt({
+    subject: 'Undelivered Mail Returned to Sender',
+    from: 'mailer-daemon@zoho.com.cn',
+    fromName: 'MAILER-DAEMON',
+    snippet: 'Final-Recipient: rfc822; account@nvidia.com Diagnostic-Code: smtp; 550 Access denied',
+    bodyText: [
+      'This message was created automatically by mail delivery software.',
+      'Final-Recipient: rfc822; account@nvidia.com',
+      'Diagnostic-Code: smtp; 550 5.4.1 Recipient address rejected: Access denied.',
+    ].join('\n'),
+  }, 'English');
+
+  assert(request.system.includes('Final-Recipient'), 'Expected bounce prompt to mention Final-Recipient');
+  assert(request.system.includes('Original-Recipient'), 'Expected bounce prompt to mention Original-Recipient');
+  assert(request.system.includes('Diagnostic-Code'), 'Expected bounce prompt to mention Diagnostic-Code');
+  assert(request.system.includes('MAILER-DAEMON'), 'Expected bounce prompt to explicitly exclude MAILER-DAEMON as target recipient');
+  assert(request.system.includes('postmaster'), 'Expected bounce prompt to explicitly exclude postmaster as target recipient');
+  assert(request.system.includes('check the original recipient address'), 'Expected fallback guidance when failed recipient is unavailable');
 }
 
 function testActionSuggestionsUseAiCategoryAndStableScoringForMarketing() {
@@ -152,6 +181,7 @@ function run() {
   testReplyPromptKeepsQuotedContextSeparate();
   testAssistantPromptsExposeStructuredAssistantSections();
   testJapaneseAssistantPromptsForbidEnglishLabels();
+  testKeyInfoPromptHandlesBounceRecipientsSafely();
   testActionSuggestionsUseAiCategoryAndStableScoringForMarketing();
   console.log('ai-prompts tests passed');
 }

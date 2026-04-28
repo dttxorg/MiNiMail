@@ -4,7 +4,7 @@ import {
   getAllAccounts,
   getAccountById,
   getAccountCredentials,
-  createAccount,
+  createOrUpdateAccountByEmail,
   updateAccount,
   deleteAccount,
   setDefaultAccount,
@@ -70,7 +70,7 @@ export function registerAccountHandlers(): void {
       log.info(`[accounts:create] IMAP handshake OK for ${input.email}, proceeding to store`);
 
       // ── Step 2: Encrypt & persist to SQLite ────────────────────────────────
-      const account = createAccount(input);
+      const account = createOrUpdateAccountByEmail(input);
       return { success: true, data: account };
     } catch (err) {
       const error = err as Error;

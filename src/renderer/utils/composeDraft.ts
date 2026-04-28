@@ -1,6 +1,10 @@
 import { extractReadableEmailText } from './emailContent';
+import type { OutgoingAttachmentReference } from '../../shared/outgoingAttachments';
 
 type ComposeMailLike = {
+  accountId?: number;
+  uid?: number;
+  folder?: string;
   from: string;
   fromName: string;
   to: string;
@@ -14,6 +18,9 @@ type ComposeMailLike = {
 
 export interface ComposeAttachmentReference {
   cacheId?: string;
+  accountId?: number;
+  uid?: number;
+  folder?: string;
   filename: string;
   contentType?: string;
   size?: number;
@@ -42,6 +49,7 @@ export interface ComposeDraftOption {
   subject: string;
   body: string;
   quotedOriginal?: ComposeQuotedOriginal | null;
+  outgoingAttachments?: OutgoingAttachmentReference[];
   date: Date;
 }
 
@@ -131,7 +139,19 @@ export function buildComposeQuotedOriginal({
   const htmlBody = email.bodyHtml?.trim();
   const fallbackBody = toParagraphHtml(extractReadableEmailText(email, { stripUrls: false }) || email.subject);
   const attachments = mode === 'forward'
-    ? (email.attachments || []).filter((attachment) => !attachment.inline)
+    ? (email.attachments || [])
+        .filter((attachment) =>
+          !attachment.inline &&
+          attachment.disposition !== 'inline' &&
+          !attachment.cid &&
+          !attachment.contentId
+        )
+        .map((attachment) => ({
+          ...attachment,
+          accountId: email.accountId,
+          uid: email.uid,
+          folder: email.folder,
+        }))
     : [];
   const introLines = [
     `<div style="font-size:12px;color:#6b7280;margin-bottom:10px;">${escapeHtml(meta)}</div>`,

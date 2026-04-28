@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
-import { ChevronDown, Globe, Languages, Loader2, X } from 'lucide-react';
+import { ChevronDown, Globe, Languages, Loader2, Paperclip, X } from 'lucide-react';
 import type { AppLanguage } from '../../shared/mailFolders';
 import {
   detectAiLanguageFromText,
@@ -25,6 +25,10 @@ import {
   type ComposeQuotedOriginal,
   type ComposeRecipientOption,
 } from '../utils/composeDraft';
+import {
+  normalizeOutgoingAttachments,
+  type OutgoingAttachmentReference,
+} from '../../shared/outgoingAttachments';
 
 type ComposeUiLabels = {
   composeTitle: string;
@@ -55,7 +59,9 @@ type ComposeUiLabels = {
   recipientsHint: string;
   quotedOriginalLabel: string;
   originalAttachmentsLabel: string;
-  originalAttachmentsNotIncluded: string;
+  addAttachmentLabel: string;
+  removeAttachmentLabel: string;
+  attachmentUnavailableLabel: string;
   showOriginal: string;
   hideOriginal: string;
   quickTranslate: string;
@@ -68,7 +74,17 @@ type ComposeUiLabels = {
 
 type ComposeTranslator = (key: string, options?: Record<string, unknown>) => string;
 
+function labelWithFallback(
+  t: ComposeTranslator,
+  key: string,
+  _appLanguage: AppLanguage,
+  _fallbacks: Record<AppLanguage, string>,
+): string {
+  return t(key);
+}
+
 function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
+  const appLanguage = 'en' as AppLanguage;
   return {
     composeTitle: t('composeDialog.composeTitle'),
     draftLabel: t('composeDialog.draftLabel'),
@@ -98,7 +114,36 @@ function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
     recipientsHint: t('composeDialog.recipientsHint'),
     quotedOriginalLabel: t('composeDialog.quotedOriginalLabel'),
     originalAttachmentsLabel: t('composeDialog.originalAttachmentsLabel'),
-    originalAttachmentsNotIncluded: t('composeDialog.originalAttachmentsNotIncluded'),
+    addAttachmentLabel: labelWithFallback(t, 'composeDialog.addAttachmentLabel', appLanguage, {
+      zh: '添加附件',
+      en: 'Add attachment',
+      ja: '添付を追加',
+      ko: '첨부 추가',
+      es: 'Añadir adjunto',
+      fr: 'Ajouter une pièce jointe',
+      de: 'Anhang hinzufügen',
+      ru: 'Добавить вложение',
+    }),
+    removeAttachmentLabel: labelWithFallback(t, 'composeDialog.removeAttachmentLabel', appLanguage, {
+      zh: '移除附件',
+      en: 'Remove attachment',
+      ja: '添付を削除',
+      ko: '첨부 제거',
+      es: 'Quitar adjunto',
+      fr: 'Retirer la pièce jointe',
+      de: 'Anhang entfernen',
+      ru: 'Удалить вложение',
+    }),
+    attachmentUnavailableLabel: labelWithFallback(t, 'composeDialog.attachmentUnavailableLabel', appLanguage, {
+      zh: '此原邮件附件无法自动随转发发送。',
+      en: 'This original attachment cannot be forwarded automatically.',
+      ja: 'この元メールの添付ファイルは自動転送できません。',
+      ko: '이 원본 첨부 파일은 자동으로 전달할 수 없습니다.',
+      es: 'Este adjunto original no se puede reenviar automáticamente.',
+      fr: 'Cette pièce jointe d’origine ne peut pas être transférée automatiquement.',
+      de: 'Dieser ursprüngliche Anhang kann nicht automatisch weitergeleitet werden.',
+      ru: 'Это исходное вложение нельзя автоматически переслать.',
+    }),
     showOriginal: t('composeDialog.showOriginal'),
     hideOriginal: t('composeDialog.hideOriginal'),
     quickTranslate: t('composeDialog.quickTranslate'),
@@ -121,6 +166,7 @@ interface ComposeDialogProps {
     body: string;
     draftKey: string;
     quotedOriginal?: ComposeQuotedOriginal | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
   }) => Promise<void> | void;
   onDeleteDraft?: (draftId: string, draft?: ComposeDraftOption) => Promise<void> | void;
   accounts: Array<{
@@ -144,11 +190,14 @@ interface ComposeDialogProps {
     editableBody: string;
     draftKey: string;
     sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
   }) => Promise<{ success: boolean; message: string }>;
   initialRecipients?: ComposeRecipientOption[];
   initialSubject?: string;
   initialEditableBody?: string;
   initialQuotedOriginal?: ComposeQuotedOriginal | null;
+  initialOutgoingAttachments?: OutgoingAttachmentReference[];
+  initialHydrateKey?: string;
   draftOptions?: ComposeDraftOption[];
   recipientSuggestions?: ComposeRecipientOption[];
   appLanguage: AppLanguage;
@@ -172,6 +221,32 @@ function sanitizeQuotedOriginalHtml(value: string): string {
   });
 }
 
+function buildOriginalOutgoingAttachments(quotedOriginal?: ComposeQuotedOriginal | null): OutgoingAttachmentReference[] {
+  if (quotedOriginal?.mode !== 'forward') return [];
+  return (quotedOriginal.attachments || [])
+    .filter((attachment) =>
+      attachment.cacheId &&
+      attachment.accountId != null &&
+      attachment.uid != null &&
+      attachment.folder &&
+      !attachment.inline &&
+      attachment.disposition !== 'inline' &&
+      !attachment.cid &&
+      !attachment.contentId
+    )
+    .map((attachment) => ({
+      kind: 'originalMailAttachment',
+      id: `original:${attachment.accountId}:${attachment.folder}:${attachment.uid}:${attachment.cacheId}`,
+      accountId: Number(attachment.accountId),
+      folder: String(attachment.folder),
+      uid: Number(attachment.uid),
+      attachmentCacheId: String(attachment.cacheId),
+      filename: attachment.filename || 'attachment',
+      contentType: attachment.contentType,
+      size: attachment.size,
+    }));
+}
+
 export function ComposeDialog({
   t,
   isOpen,
@@ -185,6 +260,8 @@ export function ComposeDialog({
   initialSubject,
   initialEditableBody,
   initialQuotedOriginal,
+  initialOutgoingAttachments,
+  initialHydrateKey,
   draftOptions = [],
   recipientSuggestions = [],
   appLanguage,
@@ -209,7 +286,9 @@ export function ComposeDialog({
   const [showQuotedOriginal, setShowQuotedOriginal] = useState(false);
   const [currentQuotedOriginal, setCurrentQuotedOriginal] = useState<ComposeQuotedOriginal | null>(null);
   const [activeDraftSource, setActiveDraftSource] = useState<ComposeDraftOption | null>(null);
+  const [outgoingAttachments, setOutgoingAttachments] = useState<OutgoingAttachmentReference[]>([]);
   const recipientInputRef = useRef<HTMLInputElement | null>(null);
+  const lastInitialHydrateKeyRef = useRef<string | null>(null);
 
   const composeUi = useMemo(() => buildComposeUiLabels(t), [t, appLanguage]);
   const aiLanguages = useMemo(() => getAiLanguageOptions(appLanguage), [appLanguage]);
@@ -230,8 +309,28 @@ export function ComposeDialog({
     ? composeUi.quickTranslateBack(appTargetLanguageLabel)
     : composeUi.quickTranslateTo(sourceLanguageLabel || appTargetLanguageLabel);
 
+  const createLocalDraftKey = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const resetComposeToBlankDraft = () => {
+    setDraftKey(createLocalDraftKey());
+    setSubject('');
+    setBody('');
+    setRecipients([]);
+    setRecipientInput('');
+    setCurrentQuotedOriginal(null);
+    setActiveDraftSource(null);
+    setOutgoingAttachments([]);
+    setShowQuotedOriginal(false);
+    setShowDraftMenu(false);
+    setError(null);
+    setStatusMessage(null);
+    setQuickTranslateToggled(false);
+  };
+
   useEffect(() => {
     if (!isOpen) return;
+    if (lastInitialHydrateKeyRef.current === initialHydrateKey) return;
+    lastInitialHydrateKeyRef.current = initialHydrateKey || null;
 
     setFrom(selectedAccount?.email || accounts[0]?.email || '');
     setRecipients(initialRecipients || []);
@@ -246,9 +345,21 @@ export function ComposeDialog({
     setShowRecipientSuggestions(false);
     setShowQuotedOriginal(false);
     setCurrentQuotedOriginal(initialQuotedOriginal || null);
+    const normalizedInitialAttachments = normalizeOutgoingAttachments(initialOutgoingAttachments);
+    setOutgoingAttachments(
+      normalizedInitialAttachments.length > 0
+        ? normalizedInitialAttachments
+        : buildOriginalOutgoingAttachments(initialQuotedOriginal)
+    );
     setActiveDraftSource(null);
-    setDraftKey(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-  }, [accounts, initialEditableBody, initialQuotedOriginal, initialRecipients, initialSubject, isOpen, selectedAccount]);
+    setDraftKey(createLocalDraftKey());
+  }, [accounts, initialEditableBody, initialHydrateKey, initialOutgoingAttachments, initialQuotedOriginal, initialRecipients, initialSubject, isOpen, selectedAccount]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      lastInitialHydrateKeyRef.current = null;
+    }
+  }, [isOpen]);
 
   const filteredSuggestions = useMemo(
     () => filterRecipientSuggestions(
@@ -263,6 +374,19 @@ export function ComposeDialog({
     () => currentQuotedOriginal?.html ? sanitizeQuotedOriginalHtml(currentQuotedOriginal.html) : '',
     [currentQuotedOriginal],
   );
+  const unavailableOriginalAttachmentIds = useMemo(() => {
+    if (currentQuotedOriginal?.mode !== 'forward') return new Set<string>();
+    const forwardedIds = new Set(
+      outgoingAttachments
+        .filter((attachment) => attachment.kind === 'originalMailAttachment')
+        .map((attachment) => String(attachment.attachmentCacheId))
+    );
+    return new Set(
+      (currentQuotedOriginal.attachments || [])
+        .filter((attachment) => attachment.cacheId && !forwardedIds.has(String(attachment.cacheId)))
+        .map((attachment) => String(attachment.cacheId))
+    );
+  }, [currentQuotedOriginal, outgoingAttachments]);
 
   const addRecipient = (option: ComposeRecipientOption) => {
     setRecipients((prev) => {
@@ -289,11 +413,47 @@ export function ComposeDialog({
     setBody(draft.body);
     setDraftKey(draft.draftKey);
     setCurrentQuotedOriginal(draft.quotedOriginal || null);
+    const normalizedDraftAttachments = normalizeOutgoingAttachments(draft.outgoingAttachments);
+    setOutgoingAttachments(
+      normalizedDraftAttachments.length > 0
+        ? normalizedDraftAttachments
+        : buildOriginalOutgoingAttachments(draft.quotedOriginal)
+    );
     setActiveDraftSource(draft);
     setShowQuotedOriginal(false);
     setShowDraftMenu(false);
     setError(null);
     setStatusMessage(null);
+  };
+
+  const removeOutgoingAttachment = (attachmentId: string) => {
+    setOutgoingAttachments((prev) => prev.filter((attachment) => attachment.id !== attachmentId));
+  };
+
+  const handleAddAttachments = async () => {
+    setError(null);
+    try {
+      const response = await window.electronAPI.invoke('mail:selectOutgoingAttachments') as {
+        success?: boolean;
+        data?: OutgoingAttachmentReference[];
+        error?: string;
+      } | undefined;
+      if (response?.success === false) {
+        if (response.error && response.error !== 'cancelled') setError(response.error);
+        return;
+      }
+      const selected = normalizeOutgoingAttachments(response?.data);
+      if (selected.length === 0) return;
+      setOutgoingAttachments((prev) => {
+        const byId = new Map(prev.map((attachment) => [attachment.id, attachment]));
+        for (const attachment of selected) {
+          byId.set(attachment.id, attachment);
+        }
+        return Array.from(byId.values());
+      });
+    } catch (err) {
+      setError((err as Error).message || composeUi.attachmentUnavailableLabel);
+    }
   };
 
   const resolveRecipientsForSend = (): ComposeRecipientOption[] => {
@@ -425,6 +585,7 @@ export function ComposeDialog({
         body,
         draftKey,
         quotedOriginal: currentQuotedOriginal,
+        outgoingAttachments,
       });
       setStatusMessage(composeUi.draftSavedLabel);
     } finally {
@@ -435,15 +596,9 @@ export function ComposeDialog({
   const handleDeleteDraft = async (draft: ComposeDraftOption) => {
     if (!onDeleteDraft) return;
     await onDeleteDraft(draft.id, draft);
+    setShowDraftMenu(false);
     if (draft.draftKey === draftKey) {
-      setDraftKey(`draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-      setSubject('');
-      setBody('');
-      setRecipients([]);
-      setRecipientInput('');
-      setCurrentQuotedOriginal(null);
-      setActiveDraftSource(null);
-      setShowQuotedOriginal(false);
+      resetComposeToBlankDraft();
     }
   };
 
@@ -482,6 +637,7 @@ export function ComposeDialog({
         bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(body, currentQuotedOriginal) : undefined,
         editableBody: body,
         draftKey,
+        outgoingAttachments,
         sourceDraft: activeDraftSource
           ? {
               id: activeDraftSource.id,
@@ -825,6 +981,37 @@ export function ComposeDialog({
                 placeholder={composeUi.bodyPlaceholder}
                 style={{ borderRadius: uiRadius.lg }}
               />
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleAddAttachments()}
+                  disabled={sending || savingDraft}
+                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                  style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  {composeUi.addAttachmentLabel}
+                </button>
+                {outgoingAttachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex max-w-full items-center gap-2 rounded-xl px-3 py-2 text-xs text-zinc-200"
+                    style={{ backgroundColor: 'rgba(124,58,237,0.16)', border: `1px solid ${uiColor.borderSubtle}` }}
+                    title={attachment.filename}
+                  >
+                    <Paperclip className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="max-w-[220px] truncate">{attachment.filename}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeOutgoingAttachment(attachment.id)}
+                      className="rounded-full p-0.5 text-zinc-400 hover:text-zinc-100 cursor-pointer"
+                      aria-label={composeUi.removeAttachmentLabel}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -871,7 +1058,9 @@ export function ComposeDialog({
                       }}
                     >
                       <div className="font-semibold text-amber-200">{composeUi.originalAttachmentsLabel}</div>
-                      <div className="mt-1 text-amber-100/80">{composeUi.originalAttachmentsNotIncluded}</div>
+                      {unavailableOriginalAttachmentIds.size > 0 && (
+                        <div className="mt-1 text-amber-100/80">{composeUi.attachmentUnavailableLabel}</div>
+                      )}
                       <div className="mt-2 space-y-1">
                         {currentQuotedOriginal.attachments?.map((attachment, index) => (
                           <div

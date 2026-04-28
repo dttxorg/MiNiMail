@@ -37,9 +37,34 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/compose-dialog-ai-regression.test.ts'],
   },
   {
+    name: 'AI prompt regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/ai-prompts.test.ts'],
+  },
+  {
+    name: 'AI key info i18n regression',
+    command: process.execPath,
+    args: ['scripts/ai-key-info-i18n-regression.test.cjs'],
+  },
+  {
+    name: 'AI key info dynamic label regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/ai-key-info-dynamic-labels.test.ts'],
+  },
+  {
+    name: 'compose state stability regression',
+    command: process.execPath,
+    args: ['scripts/compose-state-stability-regression.test.cjs'],
+  },
+  {
     name: 'AI secure storage regression',
     command: process.execPath,
     args: ['scripts/ai-secure-storage.test.cjs'],
+  },
+  {
+    name: 'OAuth account upsert and SMTP auth regression',
+    command: process.execPath,
+    args: ['scripts/oauth-account-upsert-smtp.test.cjs'],
   },
   {
     name: 'remote image privacy regression',
@@ -72,6 +97,21 @@ const checks = [
     args: ['scripts/mail-attachment-download.test.cjs'],
   },
   {
+    name: 'sent attachment cache regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/sent-attachment-cache-regression.test.ts'],
+  },
+  {
+    name: 'outgoing attachment durable cache regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/outgoing-attachment-cache-regression.test.ts'],
+  },
+  {
+    name: 'mail outgoing attachments regression',
+    command: process.execPath,
+    args: ['scripts/mail-outgoing-attachments.test.cjs'],
+  },
+  {
     name: 'mail body search regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/mail-search-body.test.ts'],
@@ -87,9 +127,34 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/mail-compose-translation-draft-regression.test.ts'],
   },
   {
+    name: 'draft delete selection regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/draft-delete-selection-regression.test.ts'],
+  },
+  {
+    name: 'mail delete ghost regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-delete-ghost-regression.test.ts'],
+  },
+  {
     name: 'compose i18n regression',
     command: process.execPath,
     args: ['scripts/compose-i18n-regression.test.cjs'],
+  },
+  {
+    name: 'email provider auto config regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/email-provider-auto-config.test.ts'],
+  },
+  {
+    name: 'account empty state regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/account-empty-state-regression.test.ts'],
+  },
+  {
+    name: 'settings modal close regression',
+    command: process.execPath,
+    args: ['scripts/settings-modal-close-regression.test.cjs'],
   },
   {
     name: 'backup task cleanup regression',

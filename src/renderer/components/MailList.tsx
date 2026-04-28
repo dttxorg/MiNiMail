@@ -35,6 +35,7 @@ interface MailListProps {
   listTitle?: string;
   accountEmails?: string[];
   stagedHistoryLabel?: string | null;
+  emptyMessage?: string;
 }
 
 type TimeGroup = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older';
@@ -204,6 +205,7 @@ export function MailList({
   isLoading,
   accountEmails = [],
   stagedHistoryLabel = null,
+  emptyMessage,
 }: MailListProps) {
   const { i18n } = useTranslation();
   const locale = i18n.language || undefined;
@@ -355,7 +357,7 @@ export function MailList({
         ) : sortedEmails.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full" style={{ color: '#48484a' }}>
             <span className="text-2xl mb-2">📥</span>
-            <p style={{ fontSize: 12, fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{t('noEmails')}</p>
+            <p style={{ fontSize: 12, fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{emptyMessage || t('noEmails')}</p>
           </div>
         ) : (
           listItems.map((item, index) => {

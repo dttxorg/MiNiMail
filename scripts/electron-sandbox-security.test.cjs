@@ -52,8 +52,27 @@ assert(
   'Preload generic invoke must only invoke explicitly allowed channels',
 );
 assert(
+  !preload.includes("'file:writeFile'") && !preload.includes('"file:writeFile"'),
+  'Preload must not expose arbitrary renderer-controlled file writes',
+);
+assert(
   !/window\.(ipcRenderer|require|electron)\s*=/.test(preload),
   'Preload must not expose raw ipcRenderer, require, or electron globals',
+);
+assert(
+  !/ipcMain\.handle\('file:writeFile'/.test(main),
+  'Main process must not register arbitrary renderer-controlled file writes',
+);
+assert(
+  /function isTrustedOpenPath/.test(main) &&
+  /if \(!targetPath \|\| !isTrustedOpenPath\(targetPath\)\)/.test(main) &&
+  /rememberTrustedOpenRoot/.test(main),
+  'file:openPath must be restricted to paths registered by trusted main-process dialogs',
+);
+assert(
+  /path\.relative\(trustedRoot, resolved\)/.test(main) &&
+  /!\s*relative\.startsWith\('\.\.'\)/.test(main),
+  'trusted file open checks must reject path traversal outside allowlisted roots',
 );
 
 console.log('electron-sandbox-security regression passed');

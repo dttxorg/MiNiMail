@@ -1,5 +1,4 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage } from 'electron';
-import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
 import { initDatabase, closeDatabase } from './database';
@@ -32,6 +31,7 @@ process.on('unhandledRejection', (reason) => {
 let mainWindow: BrowserWindow | null = null;
 let appTray: Tray | null = null;
 let isQuitting = false;
+const trustedOpenPathRoots = new Set<string>();
 
 const isSmokeTest = process.env.MINIMAIL_ELECTRON_SMOKE === '1';
 const isDev = !app.isPackaged && !isSmokeTest;
@@ -55,6 +55,25 @@ function openInSystemBrowser(target: string): Promise<void> {
     return Promise.reject(new Error(`Blocked external target: ${target}`));
   }
   return shell.openExternal(target).then(() => undefined);
+}
+
+function normalizeTrustedPath(targetPath: string): string {
+  return path.resolve(targetPath);
+}
+
+function rememberTrustedOpenRoot(targetPath: string): void {
+  trustedOpenPathRoots.add(normalizeTrustedPath(targetPath));
+}
+
+function isTrustedOpenPath(targetPath: string): boolean {
+  const resolved = normalizeTrustedPath(targetPath);
+  for (const trustedRoot of trustedOpenPathRoots) {
+    const relative = path.relative(trustedRoot, resolved);
+    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function showMainWindow(): void {
@@ -284,21 +303,10 @@ ipcMain.handle('file:saveDialog', async (_event, options: { defaultPath?: string
     defaultPath: options.defaultPath,
     filters: options.filters || [{ name: 'All Files', extensions: ['*'] }],
   });
-  return { success: !result.canceled, filePath: result.filePath };
-});
-
-ipcMain.handle('file:writeFile', async (_event, options: { filePath: string; data: string; encoding: 'utf8' | 'base64' }) => {
-  try {
-    if (options.encoding === 'base64') {
-      const buffer = Buffer.from(options.data, 'base64');
-      await fs.promises.writeFile(options.filePath, buffer);
-    } else {
-      await fs.promises.writeFile(options.filePath, options.data, 'utf8');
-    }
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: String(err) };
+  if (!result.canceled && result.filePath) {
+    rememberTrustedOpenRoot(path.dirname(result.filePath));
   }
+  return { success: !result.canceled, filePath: result.filePath };
 });
 
 ipcMain.handle('file:pickDirectory', async () => {
@@ -306,6 +314,9 @@ ipcMain.handle('file:pickDirectory', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory', 'createDirectory'],
   });
+  if (!result.canceled) {
+    result.filePaths.forEach(rememberTrustedOpenRoot);
+  }
   return {
     success: !result.canceled,
     paths: result.filePaths,
@@ -329,7 +340,10 @@ ipcMain.handle('file:pickImportSources', async () => {
 
 ipcMain.handle('file:openPath', async (_event, targetPath: string) => {
   try {
-    const response = await shell.openPath(targetPath);
+    if (!targetPath || !isTrustedOpenPath(targetPath)) {
+      return { success: false, error: 'Path is not trusted for opening.' };
+    }
+    const response = await shell.openPath(normalizeTrustedPath(targetPath));
     return {
       success: response.length === 0,
       error: response || undefined,

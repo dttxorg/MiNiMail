@@ -10,7 +10,7 @@ import { ToastContainer, ToastData } from './components/Toast';
 import { WindowControls } from './components/WindowControls';
 import type { CreateAccountInput } from './types';
 import { useAccounts } from './hooks/useAccounts';
-import { useMail, RendererMailDetail, RendererMailSummary } from './hooks/useMail';
+import { useMail, RendererMailAttachment, RendererMailDetail, RendererMailSummary } from './hooks/useMail';
 import {
   buildClassifiedConversationKey,
   findClassifiedConversationMails,
@@ -26,10 +26,15 @@ import {
   type ComposeQuotedOriginal,
   type ComposeRecipientOption,
 } from './utils/composeDraft';
+import {
+  normalizeOutgoingAttachments,
+  type OutgoingAttachmentReference,
+} from '../shared/outgoingAttachments';
 import { applyMailReadState, resolveArchiveOrSpamRemovalAction, resolveDeleteMailAction, shouldMarkMailReadOnOpen } from './utils/mailFolderActions';
 import { resolveDisplayedMail } from './utils/mailSelection';
 import { resolveComposeSelectedAccount } from './utils/composeAccount';
 import { buildMailListViewModel } from './utils/mailListViewModel';
+import { resolveActiveAccountAfterAccountsRefresh, resolveActiveAccountAfterDelete } from './utils/accountSelection';
 import { buildServerMailIdentitySet, filterOutPersistedLocalThreadMails } from './utils/localThreadMailState';
 import { getSyncFoldersForView, isStandardFolder, STANDARD_FOLDERS, type StandardFolderId } from './utils/mailSyncPlanner';
 import {
@@ -71,6 +76,12 @@ import {
   type MailRoutingResultEntry,
 } from './utils/mailRoutingAdapter';
 import { buildMailRoutingDiagnosticsMap } from './utils/mailRoutingExplanationAdapter';
+import { resolveNextDraftSelectionAfterDelete } from './utils/draftSelection';
+import {
+  collectRemovedMailIdsForDeletedTarget,
+  shouldRemoveMailForDeletedTarget,
+  type MailRemovalIdentity,
+} from './utils/mailRemoval';
 import './i18n';
 
 type ScanMode = 'smart' | 'light' | 'deep';
@@ -113,6 +124,7 @@ type PersistedComposeDraftPayload = {
   recipients?: ComposeRecipientOption[];
   body?: string;
   quotedOriginal?: ComposeQuotedOriginal | null;
+  outgoingAttachments?: OutgoingAttachmentReference[];
 };
 
 function parseComposeDraftPayload(value?: string): PersistedComposeDraftPayload | null {
@@ -139,11 +151,27 @@ function parseComposeDraftPayload(value?: string): PersistedComposeDraftPayload 
       recipients,
       body: typeof parsed.body === 'string' ? parsed.body : undefined,
       quotedOriginal,
+      outgoingAttachments: normalizeOutgoingAttachments(parsed.outgoingAttachments),
     };
   } catch (error) {
     console.warn('[composeDraft] failed to parse persisted draft payload:', error);
     return null;
   }
+}
+
+function buildOutgoingAttachmentMetadata(
+  attachments?: OutgoingAttachmentReference[],
+): RendererMailAttachment[] {
+  const normalizedAttachments = normalizeOutgoingAttachments(attachments);
+  if (normalizedAttachments.length === 0) return [];
+  return normalizedAttachments.map((attachment) => ({
+    cacheId: attachment.id,
+    filename: attachment.filename || 'attachment',
+    contentType: attachment.contentType || 'application/octet-stream',
+    size: Number.isFinite(attachment.size) ? Math.max(0, Math.floor(attachment.size || 0)) : 0,
+    inline: false,
+    disposition: 'attachment',
+  }));
 }
 
 function isDraftMailForDisplay(mail: Pick<RendererMailSummary, 'folder' | 'localDraftKey' | 'messageId' | 'deliveryState'>): boolean {
@@ -195,6 +223,7 @@ function buildComposeDraftOptionFromMail(mail: RendererMailSummary): ComposeDraf
     subject: mail.subject,
     body: draftPayload?.body ?? mail.bodyText ?? mail.snippet,
     quotedOriginal: draftPayload?.quotedOriginal ?? null,
+    outgoingAttachments: draftPayload?.outgoingAttachments ?? [],
     date: Number.isFinite(normalizedDate.getTime()) ? normalizedDate : new Date(),
   };
 }
@@ -221,6 +250,7 @@ function buildRecoveredDraftFromScheduledMail(
     recipients,
     body,
     quotedOriginal: draftPayload?.quotedOriginal ?? null,
+    outgoingAttachments: draftPayload?.outgoingAttachments ?? [],
   };
   const draftDate = new Date();
 
@@ -233,7 +263,7 @@ function buildRecoveredDraftFromScheduledMail(
     subject: mail.subject,
     date: draftDate,
     snippet: body.trim().slice(0, 160),
-    hasAttachments: false,
+    hasAttachments: (draftPayload?.outgoingAttachments?.length ?? 0) > 0,
     isRead: true,
     isStarred: false,
     folder: draftFolderPath,
@@ -242,6 +272,13 @@ function buildRecoveredDraftFromScheduledMail(
     localDraftKey: draftKey,
     draftPayload: JSON.stringify(recoveredPayload),
     bodyText: body,
+    attachments: (draftPayload?.outgoingAttachments || []).map((attachment) => ({
+      cacheId: attachment.id,
+      filename: attachment.filename,
+      contentType: attachment.contentType || 'application/octet-stream',
+      size: attachment.size || 0,
+      inline: false,
+    })),
   };
 }
 
@@ -276,6 +313,7 @@ interface ComposeRestoreDraft {
   recipients: ComposeRecipientOption[];
   subject: string;
   body: string;
+  outgoingAttachments?: OutgoingAttachmentReference[];
   mode: ComposeContext['mode'];
   source: RendererMailSummary | RendererMailDetail | null;
 }
@@ -523,6 +561,7 @@ function App() {
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new', source: null });
   const [composeRestoreDraft, setComposeRestoreDraft] = useState<ComposeRestoreDraft | null>(null);
+  const [composeSessionId, setComposeSessionId] = useState(0);
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
   const [isMobile, setIsMobile] = useState(false);
   const [mailListWidth, setMailListWidth] = useState(456);
@@ -538,7 +577,7 @@ function App() {
   const [autoFetchMinutes, setAutoFetchMinutes] = useState(0);
   const [githubNotificationsViewEnabled, setGithubNotificationsViewEnabled] = useState(true);
   const [isAutoAnalysisReady, setIsAutoAnalysisReady] = useState(false);
-  const [currentAccount, setCurrentAccount] = useState<CurrentAccount | 'all'>('all');
+  const [currentAccount, setCurrentAccount] = useState<CurrentAccount | 'all' | null>('all');
   const [replySuggestion, setReplySuggestion] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [lastClickedId, setLastClickedId] = useState<string | null>(null);
@@ -727,6 +766,7 @@ function App() {
   );
 
   const scopedAccounts = useMemo(() => {
+    if (currentAccount === null) return [];
     if (currentAccount === 'all') return accounts;
     return accounts.filter((account) => account.id === currentAccount.id);
   }, [accounts, currentAccount]);
@@ -736,18 +776,8 @@ function App() {
   }, [fetchAccounts]);
 
   useEffect(() => {
-    if (accounts.length === 0) {
-      setCurrentAccount('all');
-      return;
-    }
-
-    setCurrentAccount((prev) => {
-      if (prev === 'all') return prev;
-      const stillExists = accounts.some((account) => account.id === prev.id);
-      if (stillExists) return prev;
-      return 'all';
-    });
-  }, [accounts]);
+    setCurrentAccount((prev) => resolveActiveAccountAfterAccountsRefresh(accountList, prev));
+  }, [accountList]);
 
   useEffect(() => {
     const activeAccountIds = new Set(accounts.map((account) => account.id));
@@ -832,7 +862,7 @@ function App() {
 
       return {
         ...prev,
-        selectedAccountId: currentAccount !== 'all' ? currentAccount.id : accounts[0].id,
+        selectedAccountId: currentAccount && currentAccount !== 'all' ? currentAccount.id : accounts[0].id,
         selectedFolderPaths: [],
       };
     });
@@ -912,7 +942,7 @@ function App() {
   }, [currentAccount, selectedFolder]);
 
   useEffect(() => {
-    if (selectedFolder === 'sent' || selectedFolder === 'drafts') {
+    if (selectedFolder === 'sent') {
       setSelectedFolder('inbox');
     }
   }, [selectedFolder]);
@@ -1004,7 +1034,7 @@ function App() {
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onMailStagedSyncProgress((progress) => {
-      const accountMatches = currentAccount === 'all' || progress.accountId === currentAccount.id;
+      const accountMatches = currentAccount === 'all' || (currentAccount !== null && progress.accountId === currentAccount.id);
       const folderMatchesView = getSyncFoldersForView(selectedFolder).some((folder) => folderMatches(progress.folder, folder));
       if (!accountMatches || !folderMatchesView) {
         return;
@@ -1045,7 +1075,7 @@ function App() {
   useEffect(() => {
     let active = true;
     const wasInitialHydration = !initialHydrationDoneRef.current;
-    const viewKey = `${currentAccount === 'all' ? 'all' : currentAccount.id}:${selectedFolder}`;
+    const viewKey = `${currentAccount === null ? 'none' : currentAccount === 'all' ? 'all' : currentAccount.id}:${selectedFolder}`;
 
     void (async () => {
       const loadedCount = await loadCachedForCurrentView();
@@ -1098,7 +1128,7 @@ function App() {
     };
 
     for (const mail of mailList) {
-      if (currentAccount !== 'all' && mail.accountId !== currentAccount.id) continue;
+      if (currentAccount !== 'all' && currentAccount !== null && mail.accountId !== currentAccount.id) continue;
       if (!mail.isRead) {
         for (const folder of STANDARD_FOLDERS) {
           if (folderMatches(mail.folder, folder)) {
@@ -1316,6 +1346,7 @@ function App() {
     const foldersToSync = getSyncFoldersForView(selectedFolder);
     if (foldersToSync.length === 0) return;
     if (mailSettingsSyncInFlightRef.current) return;
+    if (currentAccount === null) return;
 
     if (currentAccount === 'all') {
       for (const account of accounts) {
@@ -1444,7 +1475,7 @@ function App() {
   const handleViewEmail = (email: RendererMailSummary) => {
     const accountExists = accounts.some((account) => account.id === email.accountId);
     if (!accountExists) {
-      removeMailFromState(email.id);
+      removeMailFromState(email);
       setToasts((prev) => [...prev, {
         id: Date.now().toString(),
         type: 'error',
@@ -1865,21 +1896,41 @@ function App() {
       setSelectedEmail(null);
       clearCurrentMail();
     }
-    if (currentAccount !== 'all' && currentAccount.id === accountId) {
-      setCurrentAccount('all');
+    setCurrentAccount((prev) => resolveActiveAccountAfterDelete(accountList, accountId, prev));
+    if (currentAccount !== 'all' && currentAccount !== null && currentAccount.id === accountId) {
       setSelectedFolder('inbox');
     }
   };
 
-  const removeMailFromState = useCallback((mailId: string) => {
-    setMailList((prev) => prev.filter((mail) => mail.id !== mailId));
-    setLocalThreadMails((prev) => prev.filter((mail) => mail.id !== mailId));
-    if (selectedEmail?.id === mailId) {
-      setSelectedEmail(null);
+  const removeMailFromState = useCallback((target: MailRemovalIdentity) => {
+    const removedIds = collectRemovedMailIdsForDeletedTarget(
+      [...mailList, ...localThreadMails, ...sortedFolderEmails],
+      target,
+    );
+    const shouldRemove = (mail: MailRemovalIdentity) => shouldRemoveMailForDeletedTarget(mail, target);
+    const nextDraftSelection = selectedFolder === 'drafts'
+      ? resolveNextDraftSelectionAfterDelete(sortedFolderEmails, target.id, selectedEmail?.id ?? null)
+      : undefined;
+
+    setMailList((prev) => prev.filter((mail) => !shouldRemove(mail)));
+    setLocalThreadMails((prev) => prev.filter((mail) => !shouldRemove(mail)));
+    if (selectedEmail && shouldRemove(selectedEmail)) {
       clearCurrentMail();
+      if (nextDraftSelection) {
+        setSelectedEmail(nextDraftSelection);
+        fetchMailDetail(
+          nextDraftSelection.accountId,
+          nextDraftSelection.uid,
+          nextDraftSelection.folder,
+          nextDraftSelection,
+        );
+      } else {
+        setSelectedEmail(null);
+      }
     }
-    setSelectedIds((prev) => prev.filter((id) => id !== mailId));
-  }, [clearCurrentMail, selectedEmail?.id, setMailList]);
+    setSelectedIds((prev) => prev.filter((id) => !removedIds.has(id)));
+    setMailRoutingResults((prev) => prev.filter((entry) => !removedIds.has(entry.id)));
+  }, [clearCurrentMail, fetchMailDetail, localThreadMails, mailList, selectedEmail, selectedFolder, setMailList, sortedFolderEmails]);
 
   const applyFolderUpdateToState = useCallback((mailId: string, nextFolder: string) => {
     setMailList((prev) => prev.map((mail) => (mail.id === mailId ? { ...mail, folder: nextFolder } : mail)));
@@ -1923,7 +1974,6 @@ function App() {
     if (action.type === 'move') {
       const previousFolder = target.folder;
       const optimisticMail = { ...target, folder: action.toFolder };
-      applyFolderUpdateToState(target.id, action.toFolder);
 
       try {
         await window.electronAPI.invoke('mail:cacheLocal', {
@@ -1942,27 +1992,30 @@ function App() {
           }
         }
 
+        removeMailFromState(target);
         clearBodyCacheEntry(target.accountId, target.uid, target.folder);
         return;
       } catch (err) {
         console.error('[mail:move trash]', err);
-        applyFolderUpdateToState(target.id, previousFolder);
-        await window.electronAPI.invoke('mail:cacheLocal', {
-          ...target,
-          date: target.date.toISOString(),
-          cachedAt: new Date().toISOString(),
-        });
+        try {
+          await window.electronAPI.invoke('mail:cacheLocal', {
+            ...target,
+            date: target.date.toISOString(),
+            cachedAt: new Date().toISOString(),
+          });
+        } catch (rollbackErr) {
+          console.error('[mail:move trash rollback]', rollbackErr);
+        }
         throw err;
       }
     }
-
-    removeMailFromState(target.id);
-    clearBodyCacheEntry(target.accountId, target.uid, target.folder);
 
     try {
       if (target.localDraftKey || target.messageId?.startsWith('<local-')) {
         const cacheDeleteId = target.localDraftKey || extractLocalDraftKeyFromMessageId(target.messageId) || target.id;
         await window.electronAPI.invoke('mail:deleteCachedById', cacheDeleteId);
+        removeMailFromState(target);
+        clearBodyCacheEntry(target.accountId, target.uid, target.folder);
         return;
       }
 
@@ -1973,15 +2026,20 @@ function App() {
       if (!result.success) {
         throw new Error(result.error || t('delete'));
       }
+      const cacheResult = await window.electronAPI.invoke('mail:deleteCachedById', target.id) as {
+        success: boolean;
+        error?: string;
+      };
+      if (!cacheResult.success) {
+        throw new Error(cacheResult.error || t('delete'));
+      }
+      removeMailFromState(target);
+      clearBodyCacheEntry(target.accountId, target.uid, target.folder);
     } catch (err) {
       console.error('[mail:delete]', err);
-      setMailList((prev) => [target, ...prev.filter((mail) => mail.id !== target.id)]);
-      setLocalThreadMails((prev) => [target, ...prev.filter((mail) => mail.id !== target.id)]);
-      setSelectedEmail((prev) => prev ?? target);
-      setCurrentMail((prev) => prev ?? (currentMail && currentMail.id === target.id ? currentMail : null));
       throw err;
     }
-  }, [applyFolderUpdateToState, clearBodyCacheEntry, currentMail, removeMailFromState, resolveFolderPathForAction, setCurrentMail, setMailList, t]);
+  }, [clearBodyCacheEntry, removeMailFromState, resolveFolderPathForAction, t]);
 
   const handleArchiveForMail = useCallback(async (target: RendererMailSummary) => {
     const archiveFolderPath = await resolveFolderPathForAction(target.accountId, 'archive');
@@ -2045,7 +2103,9 @@ function App() {
   }, [appUi.archiveFailed, appUi.archiveSuccess, applyFolderUpdateToState, mailFetchHistoryRange, resolveFolderPathForAction, syncMails]);
 
   const openCompose = useCallback((mode: ComposeContext['mode'], source?: RendererMailSummary | RendererMailDetail | null) => {
+    setComposeRestoreDraft(null);
     setComposeContext({ mode, source: source ?? selectedMailForThread });
+    setComposeSessionId((prev) => prev + 1);
     setShowCompose(true);
   }, [selectedMailForThread]);
 
@@ -2165,6 +2225,7 @@ function App() {
     editableBody: string;
     draftKey: string;
     sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
   }): Promise<{ success: boolean; message: string }> => {
     const account = accounts.find((item) => item.id === options.accountId);
     if (!account) {
@@ -2180,6 +2241,8 @@ function App() {
     const source = composeContext.source;
     const composeMode = composeContext.mode;
     const sourceDraft = options.sourceDraft || null;
+    const outgoingAttachments = normalizeOutgoingAttachments(options.outgoingAttachments);
+    const outgoingAttachmentMetadata = buildOutgoingAttachmentMetadata(outgoingAttachments);
     const draftIdentity = options.draftKey;
     const sentFolderPath = getResolvedFolderPath(options.accountId, 'sent');
     const localMessageId = `<local-${Date.now()}-${Math.random().toString(36).slice(2)}@minimail>`;
@@ -2202,6 +2265,7 @@ function App() {
       recipients: restoreRecipients,
       body: options.editableBody,
       quotedOriginal,
+      outgoingAttachments,
     } satisfies PersistedComposeDraftPayload);
 
     const optimisticMail: RendererMailSummary = {
@@ -2213,7 +2277,7 @@ function App() {
       subject: options.subject,
       date: sentDate,
       snippet: options.bodyText.trim().slice(0, 160),
-      hasAttachments: false,
+      hasAttachments: outgoingAttachments.length > 0,
       isRead: true,
       isStarred: false,
       folder: sentFolderPath,
@@ -2227,6 +2291,7 @@ function App() {
       draftPayload: scheduledDraftPayload,
       bodyText: options.bodyText,
       bodyHtml: options.bodyHtml,
+      attachments: outgoingAttachmentMetadata,
     };
 
     const cacheLocalMail = async (mail: RendererMailSummary) => {
@@ -2236,6 +2301,7 @@ function App() {
         cachedAt: new Date().toISOString(),
         bodyText: mail.bodyText,
         bodyHtml: mail.bodyHtml,
+        attachments: mail.attachments,
       }) as { success?: boolean; error?: string } | undefined;
       if (response?.success === false) {
         throw new Error(response.error || 'Failed to cache local mail');
@@ -2298,11 +2364,13 @@ function App() {
         recipients: restoreRecipients,
         subject: options.subject,
         body: options.editableBody,
+        outgoingAttachments,
         mode: composeMode,
         source,
       });
       setReplySuggestion(null);
       setComposeContext({ mode: composeMode, source });
+      setComposeSessionId((prev) => prev + 1);
       setShowCompose(true);
 
       try {
@@ -2341,6 +2409,12 @@ function App() {
           subject: options.subject,
           body: options.bodyHtml || options.bodyText,
           isHtml: Boolean(options.bodyHtml),
+          outgoingAttachments,
+          sentCache: {
+            accountId: options.accountId,
+            folder: sentFolderPath,
+            uid: localSentUid,
+          },
         }) as { success: boolean; message: string; messageId?: string };
       } catch (err) {
         result = {
@@ -2801,12 +2875,15 @@ function App() {
     body: string;
     draftKey: string;
     quotedOriginal?: ComposeQuotedOriginal | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
   }) => {
     const account = accounts.find((item) => item.id === options.accountId);
     if (!account) return;
 
     const draftFolderPath = getResolvedFolderPath(options.accountId, 'drafts');
     const draftUid = Number(options.draftKey.replace(/\D/g, '').slice(-12)) || Date.now();
+    const outgoingAttachments = normalizeOutgoingAttachments(options.outgoingAttachments);
+    const outgoingAttachmentMetadata = buildOutgoingAttachmentMetadata(outgoingAttachments);
     const draftMail: RendererMailSummary = {
       id: `${options.accountId}:${options.draftKey}`,
       uid: draftUid,
@@ -2816,13 +2893,14 @@ function App() {
       subject: options.subject || '(Draft)',
       date: new Date(),
       snippet: options.body.trim().slice(0, 160) || '(Draft)',
-      hasAttachments: false,
+      hasAttachments: outgoingAttachments.length > 0,
       isRead: true,
       isStarred: false,
       folder: draftFolderPath,
       accountId: options.accountId,
       messageId: `<${options.draftKey}@minimail>`,
       localDraftKey: options.draftKey,
+      attachments: outgoingAttachmentMetadata,
     };
 
     const draftOption: ComposeDraftOption = {
@@ -2839,6 +2917,7 @@ function App() {
       subject: options.subject,
       body: options.body,
       quotedOriginal: options.quotedOriginal || null,
+      outgoingAttachments,
       date: draftMail.date,
     };
 
@@ -2848,10 +2927,12 @@ function App() {
         date: draftMail.date.toISOString(),
         cachedAt: new Date().toISOString(),
         bodyText: options.body,
+        attachments: outgoingAttachmentMetadata,
         draftPayload: JSON.stringify({
           recipients: draftOption.recipients,
           body: options.body,
           quotedOriginal: options.quotedOriginal || null,
+          outgoingAttachments,
         }),
       }) as { success: boolean; error?: string };
 
@@ -2878,32 +2959,49 @@ function App() {
     const draftKey = draft?.draftKey || getDraftKeyFromMailId(draftId);
     const draftMessageId = getLocalDraftMessageId(draftKey);
     const draftTokens = new Set([draftId, draftKey, draftMessageId, ...(draft?.messageId ? [draft.messageId] : [])]);
+    const selectedDraftWillBeDeleted = selectedEmail
+      ? matchesComposeDraftToken({
+        id: selectedEmail.id,
+        localDraftKey: selectedEmail.localDraftKey,
+        messageId: selectedEmail.messageId,
+      }, draftTokens)
+      : false;
+    const visibleDeletedDraft = sortedFolderEmails.find((mail) => matchesComposeDraftToken(mail, draftTokens));
+    const deletedVisibleDraftId = visibleDeletedDraft?.id ?? (selectedDraftWillBeDeleted ? selectedEmail?.id : draftId);
+    const nextDraftSelection = selectedFolder === 'drafts' && selectedDraftWillBeDeleted
+      ? resolveNextDraftSelectionAfterDelete(sortedFolderEmails, deletedVisibleDraftId, deletedVisibleDraftId)
+      : undefined;
 
     setLocalComposeDrafts((prev) => prev.filter((draft) => draft.id !== draftId && draft.draftKey !== draftKey));
     setDeletedComposeDraftTokens((prev) => Array.from(new Set([...prev, ...draftTokens])));
     setMailList((prev) => prev.filter((mail) => !matchesComposeDraftToken(mail, draftTokens)));
     setLocalThreadMails((prev) => prev.filter((mail) => !matchesComposeDraftToken(mail, draftTokens)));
     setSelectedIds((prev) => prev.filter((id) => id !== draftId));
-    setSelectedEmail((prev) => {
-      if (!prev) return prev;
-      return matchesComposeDraftToken({
-        id: prev.id,
-        localDraftKey: prev.localDraftKey,
-        messageId: prev.messageId,
-      }, draftTokens)
-        ? null
-        : prev;
-    });
-    setCurrentMail((prev) => {
-      if (!prev) return prev;
-      return matchesComposeDraftToken({
-        id: prev.id,
-        localDraftKey: prev.localDraftKey,
-        messageId: prev.messageId,
-      }, draftTokens)
-        ? null
-        : prev;
-    });
+    if (selectedDraftWillBeDeleted) {
+      clearCurrentMail();
+      if (nextDraftSelection) {
+        setSelectedEmail(nextDraftSelection);
+        fetchMailDetail(
+          nextDraftSelection.accountId,
+          nextDraftSelection.uid,
+          nextDraftSelection.folder,
+          nextDraftSelection,
+        );
+      } else {
+        setSelectedEmail(null);
+      }
+    } else {
+      setCurrentMail((prev) => {
+        if (!prev) return prev;
+        return matchesComposeDraftToken({
+          id: prev.id,
+          localDraftKey: prev.localDraftKey,
+          messageId: prev.messageId,
+        }, draftTokens)
+          ? null
+          : prev;
+      });
+    }
 
     const cleanupTasks: Promise<unknown>[] = [
       window.electronAPI.invoke('mail:deleteCachedDraft', {
@@ -2926,7 +3024,7 @@ function App() {
         console.error('[mail:deleteCachedDraft compose draft]', rejected);
       }
     });
-  }, [setCurrentMail, setMailList, setSelectedEmail]);
+  }, [clearCurrentMail, fetchMailDetail, selectedEmail, selectedFolder, setCurrentMail, setMailList, setSelectedEmail, sortedFolderEmails]);
 
   const composeInitialRecipients = useMemo<ComposeRecipientOption[]>(() => {
     if (composeRestoreDraft) {
@@ -2944,7 +3042,7 @@ function App() {
     return recipient ? [recipient] : [];
   }, [composeContext.mode, composeContext.source, composeRestoreDraft]);
 
-  const composeInitialSubject = (() => {
+  const composeInitialSubject = useMemo(() => {
     if (composeRestoreDraft) return composeRestoreDraft.subject;
     if (!composeContext.source) return '';
     if (composeContext.mode === 'reply') {
@@ -2954,9 +3052,13 @@ function App() {
       return /^fwd:/i.test(composeContext.source.subject) ? composeContext.source.subject : `Fwd: ${composeContext.source.subject}`;
     }
     return '';
-  })();
+  }, [composeContext.mode, composeContext.source, composeRestoreDraft]);
 
   const composeInitialBody = composeRestoreDraft?.body || replySuggestion || '';
+  const composeInitialOutgoingAttachments = useMemo<OutgoingAttachmentReference[]>(
+    () => composeRestoreDraft?.outgoingAttachments || [],
+    [composeRestoreDraft],
+  );
 
   const composeQuotedOriginal = useMemo<ComposeQuotedOriginal | null>(() => {
     if (!composeContext.source || composeContext.mode === 'new') {
@@ -2988,6 +3090,19 @@ function App() {
       .join('\n')
       .slice(0, 4000);
   })();
+
+  const composeInitialHydrateKey = useMemo(() => {
+    if (composeRestoreDraft) {
+      return `restore:${composeSessionId}:${composeRestoreDraft.draftKey}`;
+    }
+
+    const source = composeContext.source;
+    const sourceKey = source
+      ? `${source.accountId}:${source.folder || ''}:${source.uid ?? ''}:${source.id}`
+      : 'none';
+
+    return `session:${composeSessionId}:${composeContext.mode}:${sourceKey}`;
+  }, [composeContext.mode, composeContext.source, composeRestoreDraft, composeSessionId]);
 
   const composeSelectedAccount = useMemo(
     () => {
@@ -3042,13 +3157,14 @@ function App() {
   const allVisibleIds = sortedFolderEmails.map((mail) => mail.id);
   const isAllSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.includes(id));
   const isAllAccountsView = currentAccount === 'all';
+  const hasConnectedAccounts = accountList.length > 0;
   const listTitle = selectedFolder === 'github'
     ? 'GitHub'
     : (isGitHubSmartFolderView || isPriorityFolderView)
       ? selectedFolder
       : isAllAccountsView
         ? t('allAccounts')
-        : (currentAccount && 'name' in currentAccount ? currentAccount.name : '');
+        : (currentAccount && 'name' in currentAccount ? currentAccount.name : 'No account connected');
 
   return (
     <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#050B14' }}>
@@ -3103,11 +3219,12 @@ function App() {
             selectedIds={selectedIds}
             onSelectAll={handleSelectAll}
           isAllSelected={isAllSelected}
-          isLoading={isSyncing || isViewHydrating}
-          listTitle={listTitle}
-          accountEmails={conversationAccountEmails}
-          stagedHistoryLabel={stagedHistoryLabel}
-        />
+            isLoading={isSyncing || isViewHydrating}
+            listTitle={listTitle}
+            accountEmails={conversationAccountEmails}
+            emptyMessage={!hasConnectedAccounts ? 'No account connected / 请添加邮箱账号' : undefined}
+            stagedHistoryLabel={stagedHistoryLabel}
+          />
         </div>
 
         {!isMobile && (
@@ -3206,6 +3323,8 @@ function App() {
           initialSubject={composeInitialSubject}
           initialEditableBody={composeInitialBody}
           initialQuotedOriginal={composeQuotedOriginal}
+          initialOutgoingAttachments={composeInitialOutgoingAttachments}
+          initialHydrateKey={composeInitialHydrateKey}
           draftOptions={composeDraftOptions}
           recipientSuggestions={composeRecipientSuggestions}
           appLanguage={appLanguage}

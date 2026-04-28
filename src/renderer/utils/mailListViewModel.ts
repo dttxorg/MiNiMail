@@ -21,13 +21,13 @@ import {
   type MailRoutingAdapterResult,
   type MailRoutingResultEntry,
 } from './mailRoutingAdapter';
-import { buildThreadMailUniverse, getVisibleFolderEmails } from './mailThreading';
+import { buildThreadMailUniverse, getVisibleFolderEmails, isHiddenFromVirtualMailViews } from './mailThreading';
 import { folderMatches } from '../../shared/mailFolders';
 
 type CurrentAccount = {
   id: number;
   email: string;
-} | 'all';
+} | 'all' | null;
 
 type AccountLike = {
   email: string;
@@ -87,21 +87,28 @@ export function buildMailListViewModel({
   aiCategoryIds,
 }: MailListViewModelArgs): MailListViewModelResult {
   const threadMailUniverse = buildThreadMailUniverse(nonDraftMailList, nonDraftLocalThreadMails);
-  const scopedThreadMailUniverse = currentAccount === 'all'
+  const scopedThreadMailUniverse = currentAccount === null
+    ? []
+    : currentAccount === 'all'
     ? threadMailUniverse
     : threadMailUniverse.filter((mail) => mail.accountId === currentAccount.id);
+  const activeScopedThreadMailUniverse = scopedThreadMailUniverse.filter(
+    (mail) => !isHiddenFromVirtualMailViews(mail),
+  );
 
-  const conversationAccountEmails = currentAccount === 'all'
+  const conversationAccountEmails = currentAccount === null
+    ? []
+    : currentAccount === 'all'
     ? accounts.map((account) => account.email)
     : [currentAccount.email];
 
   const unreadKeys = new Set<string>();
-  for (const mail of scopedThreadMailUniverse) {
+  for (const mail of activeScopedThreadMailUniverse) {
     if (!mail.isRead) unreadKeys.add(getConversationKey(mail, conversationAccountEmails));
   }
 
   const mailRoutingAdapter = buildMailRoutingAdapter({
-    mails: scopedThreadMailUniverse,
+    mails: activeScopedThreadMailUniverse,
     routingResults: mailRoutingResults,
     accountEmails: conversationAccountEmails,
   });
@@ -119,7 +126,7 @@ export function buildMailListViewModel({
     isGitHubSmartFolderView ||
     isPriorityFolderView
   )
-    ? scopedThreadMailUniverse
+    ? activeScopedThreadMailUniverse
     : getVisibleFolderEmails({
       selectedFolder,
       currentAccount,
@@ -139,7 +146,7 @@ export function buildMailListViewModel({
         : visibleNonDraftFolderEmails;
 
   const categorySourceEmails = getAiCategorySourceEmails(
-    scopedThreadMailUniverse,
+    activeScopedThreadMailUniverse,
     mailRoutingAdapter,
     githubNotificationsViewEnabled,
   );
@@ -149,24 +156,24 @@ export function buildMailListViewModel({
     : buildSenderConversationRows(rawFolderEmails, conversationAccountEmails);
 
   const folderEmails = selectedFolder === 'unread'
-    ? filterUnreadConversationRows(conversationRows, scopedThreadMailUniverse, conversationAccountEmails)
+    ? filterUnreadConversationRows(conversationRows, activeScopedThreadMailUniverse, conversationAccountEmails)
     : selectedFolder === 'github'
       ? filterConversationRowsForGitHubView(
         conversationRows,
         mailRoutingAdapter,
-        scopedThreadMailUniverse,
+        activeScopedThreadMailUniverse,
         conversationAccountEmails,
       )
       : isGitHubSmartFolderView
         ? buildGitHubConversationRowsForFolder(
-          scopedThreadMailUniverse,
+          activeScopedThreadMailUniverse,
           mailRoutingAdapter,
           selectedFolder,
           conversationAccountEmails,
         )
         : isPriorityFolderView
           ? buildPriorityConversationRowsForFolder(
-            scopedThreadMailUniverse,
+            activeScopedThreadMailUniverse,
             mailRoutingAdapter,
             selectedFolder,
             conversationAccountEmails,
@@ -176,7 +183,7 @@ export function buildMailListViewModel({
   const githubConversationCount = countGitHubConversationsWithFallback(
     conversationRows,
     mailRoutingAdapter,
-    scopedThreadMailUniverse,
+    activeScopedThreadMailUniverse,
     conversationAccountEmails,
   );
 

@@ -1032,7 +1032,7 @@ export function SettingsModal({
   ];
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} width="w-[800px]" height="h-[600px]">
+    <Modal isOpen={isOpen} onClose={onClose} width="w-[800px]" height="h-[600px]" closeOnBackdrop={false}>
       <div className="flex items-center justify-between px-4 py-2.5 flex-shrink-0">
         <span className="text-sm font-semibold text-white tracking-tight" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
           {t('settingsTitle')}
@@ -1192,6 +1192,14 @@ export function SettingsModal({
               </div>
 
               <div className="space-y-1 mb-3">
+                {accounts.length === 0 && (
+                  <div
+                    className="px-3 py-3 rounded-lg text-[12px] leading-relaxed"
+                    style={{ backgroundColor: '#161618', color: '#8e8e93' }}
+                  >
+                    No account connected / 请添加邮箱账号
+                  </div>
+                )}
                 {accounts.map((account) => (
                   <div
                     key={account.id}
@@ -1220,11 +1228,9 @@ export function SettingsModal({
                           {ui.current}
                         </span>
                       )}
-                      {accounts.length > 1 && (
-                        <button onClick={() => onDeleteAccount(account.id)} className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 transition-colors cursor-pointer">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
+                      <button onClick={() => onDeleteAccount(account.id)} className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 transition-colors cursor-pointer">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
                 ))}

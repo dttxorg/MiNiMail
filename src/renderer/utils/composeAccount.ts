@@ -11,14 +11,14 @@ type SourceLike = {
 
 export function resolveComposeSelectedAccount(
   accounts: AccountLike[],
-  currentAccount: AccountLike | 'all',
+  currentAccount: AccountLike | 'all' | null,
   source: SourceLike
 ): AccountLike | null {
   if (source) {
     return accounts.find((account) => account.id === source.accountId) ?? null;
   }
 
-  if (currentAccount !== 'all') {
+  if (currentAccount !== 'all' && currentAccount !== null) {
     return currentAccount;
   }
 

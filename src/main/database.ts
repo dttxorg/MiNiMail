@@ -122,6 +122,16 @@ export function getAccountById(id: number): Account | null {
   return (stmt.get(id) as Account) || null;
 }
 
+export function getAccountByEmail(email: string): Account | null {
+  const stmt = getDatabase().prepare(`
+    SELECT id, email, display_name, provider, auth_type,
+           imap_host, imap_port, smtp_host, smtp_port,
+           username, use_tls, is_default, created_at, updated_at
+    FROM accounts WHERE lower(email) = lower(?)
+  `);
+  return (stmt.get(email.trim()) as Account) || null;
+}
+
 export function getAccountCredentials(accountId: number): { password?: string; oauth_token?: string; oauth_refresh_token?: string; oauth_expiry?: number } | null {
   const stmt = getDatabase().prepare('SELECT password, oauth_token, oauth_refresh_token, oauth_expiry FROM credentials WHERE account_id = ?');
   const row = stmt.get(accountId) as { password?: Buffer; oauth_token?: Buffer; oauth_refresh_token?: Buffer; oauth_expiry?: number } | undefined;
@@ -162,6 +172,36 @@ export interface CreateAccountInput {
   use_tls?: boolean;
 }
 
+function persistAccountCredentials(db: Database.Database, accountId: number, input: CreateAccountInput): void {
+  if (!isEncryptionAvailable()) {
+    log.warn('safeStorage not available, credentials will not be stored');
+    return;
+  }
+
+  const encryptedPassword = input.auth_type === 'password' && input.password
+    ? encryptCredential(input.password)
+    : null;
+  const encryptedToken = input.auth_type === 'oauth' && input.oauth_token
+    ? encryptCredential(input.oauth_token)
+    : null;
+  const encryptedRefreshToken = input.auth_type === 'oauth' && input.oauth_refresh_token
+    ? encryptCredential(input.oauth_refresh_token)
+    : null;
+  const oauthExpiry = input.auth_type === 'oauth'
+    ? input.oauth_expiry ?? null
+    : null;
+
+  db.prepare(`
+    INSERT INTO credentials (account_id, password, oauth_token, oauth_refresh_token, oauth_expiry)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(account_id) DO UPDATE SET
+      password = excluded.password,
+      oauth_token = excluded.oauth_token,
+      oauth_refresh_token = COALESCE(excluded.oauth_refresh_token, credentials.oauth_refresh_token),
+      oauth_expiry = excluded.oauth_expiry
+  `).run(accountId, encryptedPassword, encryptedToken, encryptedRefreshToken, oauthExpiry);
+}
+
 export function createAccount(input: CreateAccountInput): Account {
   const db = getDatabase();
 
@@ -192,22 +232,51 @@ export function createAccount(input: CreateAccountInput): Account {
   const accountId = result.lastInsertRowid as number;
 
   // Store credentials (encrypted)
-  if (!isEncryptionAvailable()) {
-    log.warn('safeStorage not available, credentials will not be stored');
-  } else {
-    if (input.auth_type === 'password' && input.password) {
-      const encryptedPassword = encryptCredential(input.password);
-      db.prepare('INSERT INTO credentials (account_id, password) VALUES (?, ?)').run(accountId, encryptedPassword);
-    } else if (input.auth_type === 'oauth' && (input.oauth_token || input.oauth_refresh_token)) {
-      const encryptedToken = input.oauth_token ? encryptCredential(input.oauth_token) : null;
-      const encryptedRefreshToken = input.oauth_refresh_token ? encryptCredential(input.oauth_refresh_token) : null;
-      db.prepare('INSERT INTO credentials (account_id, oauth_token, oauth_refresh_token, oauth_expiry) VALUES (?, ?, ?, ?)')
-        .run(accountId, encryptedToken, encryptedRefreshToken, input.oauth_expiry ?? null);
-    }
-  }
+  persistAccountCredentials(db, accountId, input);
 
   log.info(`Account created: ${input.email} (ID: ${accountId})`);
   return getAccountById(accountId)!;
+}
+
+export function createOrUpdateAccountByEmail(input: CreateAccountInput): Account {
+  const existing = getAccountByEmail(input.email);
+  if (!existing) {
+    return createAccount(input);
+  }
+
+  const db = getDatabase();
+  db.prepare(`
+    UPDATE accounts
+    SET email = ?,
+        display_name = ?,
+        provider = ?,
+        auth_type = ?,
+        imap_host = ?,
+        imap_port = ?,
+        smtp_host = ?,
+        smtp_port = ?,
+        username = ?,
+        use_tls = ?,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    input.email,
+    input.display_name || existing.display_name || '',
+    input.provider,
+    input.auth_type,
+    input.imap_host,
+    input.imap_port,
+    input.smtp_host,
+    input.smtp_port,
+    input.username,
+    input.use_tls !== false ? 1 : 0,
+    existing.id,
+  );
+
+  persistAccountCredentials(db, existing.id, input);
+
+  log.info(`Account reauthorized/updated by email: ${input.email} (ID: ${existing.id})`);
+  return getAccountById(existing.id)!;
 }
 
 export function updateAccount(id: number, input: Partial<CreateAccountInput>): Account | null {
@@ -221,6 +290,7 @@ export function updateAccount(id: number, input: Partial<CreateAccountInput>): A
   if (input.email !== undefined) { fields.push('email = ?'); values.push(input.email); }
   if (input.display_name !== undefined) { fields.push('display_name = ?'); values.push(input.display_name); }
   if (input.provider !== undefined) { fields.push('provider = ?'); values.push(input.provider); }
+  if (input.auth_type !== undefined) { fields.push('auth_type = ?'); values.push(input.auth_type); }
   if (input.imap_host !== undefined) { fields.push('imap_host = ?'); values.push(input.imap_host); }
   if (input.imap_port !== undefined) { fields.push('imap_port = ?'); values.push(input.imap_port); }
   if (input.smtp_host !== undefined) { fields.push('smtp_host = ?'); values.push(input.smtp_host); }
@@ -242,11 +312,13 @@ export function updateAccount(id: number, input: Partial<CreateAccountInput>): A
   } else {
     if (input.password) {
       const encrypted = encryptCredential(input.password);
+      db.prepare('INSERT OR IGNORE INTO credentials (account_id) VALUES (?)').run(id);
       db.prepare('UPDATE credentials SET password = ? WHERE account_id = ?').run(encrypted, id);
     }
-    if (input.oauth_token !== undefined || input.oauth_refresh_token !== undefined) {
+    if (input.oauth_token !== undefined || input.oauth_refresh_token !== undefined || input.oauth_expiry !== undefined) {
+      db.prepare('INSERT OR IGNORE INTO credentials (account_id) VALUES (?)').run(id);
       const updates: string[] = [];
-      const credValues: (Buffer | null)[] = [];
+      const credValues: (Buffer | number | null)[] = [];
       if (input.oauth_token !== undefined) {
         updates.push('oauth_token = ?');
         credValues.push(input.oauth_token ? encryptCredential(input.oauth_token) : null);
@@ -255,8 +327,12 @@ export function updateAccount(id: number, input: Partial<CreateAccountInput>): A
         updates.push('oauth_refresh_token = ?');
         credValues.push(input.oauth_refresh_token ? encryptCredential(input.oauth_refresh_token) : null);
       }
+      if (input.oauth_expiry !== undefined) {
+        updates.push('oauth_expiry = ?');
+        credValues.push(input.oauth_expiry);
+      }
       if (updates.length > 0) {
-        credValues.push(id as never);
+        credValues.push(id);
         db.prepare(`UPDATE credentials SET ${updates.join(', ')} WHERE account_id = ?`).run(...credValues);
       }
     }

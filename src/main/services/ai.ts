@@ -945,21 +945,67 @@ export async function suggestQuickReplies(emailContent: string | AIEmailSource, 
   return restoreCloudAiResponse(response, prepared.redactionMap);
 }
 
+function keyInfoJsonSystemInstruction(targetLang: string): string {
+  return [
+    `Return all user-facing text in the current app language: ${targetLang}.`,
+    'Return one JSON object only. Do not wrap it in markdown.',
+    'Use these stable English JSON keys only: keyInfo, action, evidence, time, link.',
+    'Do not translate JSON keys. Translate only the values.',
+    'If a field is unavailable, use an empty string for that field.',
+    'For bounce or delivery-failure emails, never treat mailer-daemon, postmaster, or MAILER-DAEMON as the original target recipient. Extract the failed recipient from Final-Recipient, Original-Recipient, Diagnostic-Code, failed recipient, or recipient address rejected fields. If it cannot be found, say to check the original recipient address.',
+  ].join(' ');
+}
+
+function keyInfoLooksChinese(value: string): boolean {
+  return /关键信息|行动|依据|时间|链接|[\u4e00-\u9fff]/.test(value);
+}
+
+function shouldCorrectKeyInfoLanguage(response: AIResponse, targetLang: string): response is AIResponse & { content: string } {
+  return response.success
+    && Boolean(response.content?.trim())
+    && targetLang !== 'Chinese'
+    && keyInfoLooksChinese(response.content || '');
+}
+
+async function correctKeyInfoLanguageIfNeeded(response: AIResponse, targetLang: string): Promise<AIResponse> {
+  if (!shouldCorrectKeyInfoLanguage(response, targetLang)) return response;
+
+  const corrected = await callAI({
+    system: [
+      keyInfoJsonSystemInstruction(targetLang),
+      'Rewrite the provided key-information JSON values into the current app language.',
+      'Preserve facts exactly. Do not add new facts. Do not translate JSON keys.',
+    ].join(' '),
+    prompt: response.content,
+    temperature: 0.1,
+    maxTokens: 500,
+  });
+
+  return corrected.success && corrected.content?.trim() ? corrected : response;
+}
+
 export async function extractKeyInfo(emailContent: string | AIEmailSource, targetLang = 'English'): Promise<AIResponse> {
   if (!isStructuredEmailSource(emailContent)) {
     const prepared = prepareCloudPromptInput(emailContent);
     const response = await callAI({
-      system: `Extract key information from this email in ${targetLang}. Return up to 6 lines using "Label: Value" format. Do not invent missing fields.`,
+      system: [
+        'You extract high-signal key information from emails.',
+        keyInfoJsonSystemInstruction(targetLang),
+        'Prioritize required action, failed recipient, deadline, account or service affected, security/billing risk, amount, order/reference id, link purpose, project/repo, assignee, or decision needed.',
+        'Do not invent missing fields.',
+      ].join(' '),
       prompt: typeof prepared.value === 'string' ? prepared.value : emailContent,
       temperature: 0.2,
       maxTokens: 500,
     });
-    return restoreCloudAiResponse(response, prepared.redactionMap);
+    const corrected = await correctKeyInfoLanguageIfNeeded(response, targetLang);
+    return restoreCloudAiResponse(corrected, prepared.redactionMap);
   }
 
   const prepared = prepareCloudPromptInput(emailContent);
   const response = await callAI(buildKeyInfoPrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
-  return restoreCloudAiResponse(response, prepared.redactionMap);
+  const corrected = await correctKeyInfoLanguageIfNeeded(response, targetLang);
+  return restoreCloudAiResponse(corrected, prepared.redactionMap);
 }
 
 export async function polishText(

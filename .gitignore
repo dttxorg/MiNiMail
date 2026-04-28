@@ -1,4 +1,14 @@
 node_modules/
 dist/
 release/
+release*/
+.tmp-tests/
+.env*
+*.db
+*.sqlite
+*.sqlite3
+logs/
+screenshots/
+recordings/
+*.log
 .git/

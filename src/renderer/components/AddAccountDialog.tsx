@@ -1,9 +1,15 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useCallback, useMemo, useRef } from 'react';
 import { X, Loader2, ExternalLink, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
 import type { CreateAccountInput } from '../types';
 import type { AppLanguage } from '../utils/aiLanguages';
 import { getOauthProviderGuide, resolveOauthClientConfig, type OAuthProvider } from '../utils/oauthProviderGuide';
 import { buildModalShellStyle, uiColor } from '../utils/uiDesignTokens';
+import {
+  applyEmailProviderAutoConfig,
+  getEmailDomain,
+  type EmailServerField,
+  type ManualEmailServerFields,
+} from '../utils/emailProviderAutoConfig';
 
 interface Props {
   t: (key: string) => string;
@@ -71,6 +77,64 @@ const BLANK_FORM: FormData = {
   username: '', password: '', use_tls: true,
 };
 
+function getAutoConfigNotice(language: AppLanguage, oauthPreferred: boolean): string {
+  const copy: Record<AppLanguage, { applied: string; oauth: string }> = {
+    zh: {
+      applied: '已根据邮箱域名自动填入服务器配置。',
+      oauth: '该邮箱服务商建议使用 OAuth 登录；手动 IMAP/SMTP 通常需要 OAuth 或应用专用密码。',
+    },
+    en: {
+      applied: 'Server settings were filled from the email domain.',
+      oauth: 'This provider recommends OAuth; manual IMAP/SMTP usually requires OAuth or an app password.',
+    },
+    ja: {
+      applied: 'メールドメインからサーバー設定を自動入力しました。',
+      oauth: 'このプロバイダーは OAuth を推奨しています。手動 IMAP/SMTP では通常 OAuth またはアプリパスワードが必要です。',
+    },
+    ko: {
+      applied: '이메일 도메인에 따라 서버 설정을 자동 입력했습니다.',
+      oauth: '이 제공업체는 OAuth 사용을 권장합니다. 수동 IMAP/SMTP에는 일반적으로 OAuth 또는 앱 비밀번호가 필요합니다.',
+    },
+    es: {
+      applied: 'Se completó la configuración del servidor según el dominio del correo.',
+      oauth: 'Este proveedor recomienda OAuth; IMAP/SMTP manual normalmente requiere OAuth o una contraseña de aplicación.',
+    },
+    fr: {
+      applied: 'Les paramètres serveur ont été remplis à partir du domaine de l’adresse.',
+      oauth: 'Ce fournisseur recommande OAuth ; IMAP/SMTP manuel nécessite généralement OAuth ou un mot de passe d’application.',
+    },
+    de: {
+      applied: 'Die Servereinstellungen wurden anhand der E-Mail-Domain ausgefüllt.',
+      oauth: 'Dieser Anbieter empfiehlt OAuth; manuelles IMAP/SMTP benötigt in der Regel OAuth oder ein App-Passwort.',
+    },
+    ru: {
+      applied: 'Параметры сервера заполнены по домену почты.',
+      oauth: 'Этот провайдер рекомендует OAuth; ручной IMAP/SMTP обычно требует OAuth или пароль приложения.',
+    },
+  };
+  const selected = copy[language] ?? copy.en;
+  return oauthPreferred ? `${selected.applied} ${selected.oauth}` : selected.applied;
+}
+
+function normalizeAccountFormForDirtyCheck(formData: FormData): string {
+  return JSON.stringify({
+    email: formData.email.trim(),
+    display_name: formData.display_name.trim(),
+    provider: formData.provider,
+    auth_type: formData.auth_type,
+    imap_host: formData.imap_host.trim(),
+    imap_port: Number(formData.imap_port) || 0,
+    smtp_host: formData.smtp_host.trim(),
+    smtp_port: Number(formData.smtp_port) || 0,
+    username: formData.username.trim(),
+    password: formData.password || '',
+    use_tls: Boolean(formData.use_tls),
+    oauth_token: formData.oauth_token || '',
+    oauth_refresh_token: formData.oauth_refresh_token || '',
+    oauth_expiry: formData.oauth_expiry || 0,
+  });
+}
+
 export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
   ({ t, appLanguage, isOpen, account, onClose, onSaveAttempt, onTest }, ref) => {
 
@@ -79,6 +143,9 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
   const [testing, setTesting]     = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errors, setErrors]       = useState<Record<string, string>>({});
+  const [manualServerFields, setManualServerFields] = useState<ManualEmailServerFields>({});
+  const [autoConfigNotice, setAutoConfigNotice] = useState<string | null>(null);
+  const [lastAutoConfigDomain, setLastAutoConfigDomain] = useState<string | null>(null);
 
   // ── OAuth state ──────────────────────────────────────────────────────────────
   const [oauthClientId,     setOauthClientId]     = useState('');
@@ -87,6 +154,27 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
   const [oauthError,        setOauthError]        = useState<string | null>(null);
   const [oauthEmail,        setOauthEmail]        = useState<string | null>(null);
   const [showOauthGuide,    setShowOauthGuide]    = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const initialFormSnapshotRef = useRef(normalizeAccountFormForDirtyCheck(BLANK_FORM));
+
+  const hasUnsavedChanges = useMemo(
+    () => normalizeAccountFormForDirtyCheck(form) !== initialFormSnapshotRef.current,
+    [form],
+  );
+
+  const requestClose = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    onClose();
+  }, [hasUnsavedChanges, onClose]);
+
+  const discardChangesAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    initialFormSnapshotRef.current = normalizeAccountFormForDirtyCheck(form);
+    onClose();
+  }, [form, onClose]);
 
   const validateFormData = (formData: FormData) => {
     const newErrors: Record<string, string> = {};
@@ -146,23 +234,43 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
 
   // ── Reset on open / account change ───────────────────────────────────────────
   useEffect(() => {
+    let nextForm: FormData;
     if (account) {
-      setForm({
+      nextForm = {
         email: account.email, display_name: account.display_name,
         provider: account.provider, auth_type: account.auth_type,
         imap_host: account.imap_host, imap_port: account.imap_port,
         smtp_host: account.smtp_host, smtp_port: account.smtp_port,
         username: account.username, password: '', use_tls: account.use_tls === 1,
-      });
+      };
     } else {
-      setForm(BLANK_FORM);
+      nextForm = BLANK_FORM;
     }
+    setForm(nextForm);
+    initialFormSnapshotRef.current = normalizeAccountFormForDirtyCheck(nextForm);
+    setShowDiscardConfirm(false);
     setTestResult(null);
     setErrors({});
+    setManualServerFields({});
+    setAutoConfigNotice(null);
+    setLastAutoConfigDomain(account ? getEmailDomain(account.email) : null);
     resetOAuthState();
     resetOauthCredentials();
     setShowOauthGuide(false);
   }, [account, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      requestClose();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, requestClose]);
 
   // ── Pre-load saved client credentials when provider changes ──────────────────
   useEffect(() => {
@@ -223,8 +331,40 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
     setShowOauthGuide(false);
   };
 
+  const markServerFieldManual = (field: EmailServerField) => {
+    setManualServerFields(prev => ({ ...prev, [field]: true }));
+    setAutoConfigNotice(null);
+  };
+
   const handleEmailChange = (email: string) => {
-    setForm(prev => ({ ...prev, email, username: prev.username || email }));
+    setForm(prev => {
+      const nextDomain = getEmailDomain(email);
+      const autoResult = applyEmailProviderAutoConfig(
+        prev,
+        email,
+        manualServerFields,
+      );
+
+      if (autoResult.domain !== lastAutoConfigDomain) {
+        setLastAutoConfigDomain(autoResult.domain);
+      }
+
+      if (autoResult.applied) {
+        setAutoConfigNotice(getAutoConfigNotice(appLanguage, autoResult.form.auth_type === 'oauth'));
+        setErrors(current => {
+          const n = { ...current };
+          delete n.imap_host;
+          delete n.smtp_host;
+          delete n.imap_port;
+          delete n.smtp_port;
+          return n;
+        });
+      } else {
+        setAutoConfigNotice(null);
+      }
+
+      return autoResult.form;
+    });
     if (errors.email) setErrors(prev => { const n = { ...prev }; delete n.email; return n; });
   };
 
@@ -268,6 +408,8 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
         const saved = await persistAccount(nextForm);
         if (!saved) {
           setOauthError('Authorization succeeded, but the account could not be saved.');
+        } else {
+          initialFormSnapshotRef.current = normalizeAccountFormForDirtyCheck(nextForm);
         }
       } else {
         const providerGuide = getOauthProviderGuide(form.provider as OAuthProvider, appLanguage);
@@ -298,7 +440,11 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
       }
     }
 
-    await persistAccount(form);
+    const saved = await persistAccount(form);
+    if (saved) {
+      initialFormSnapshotRef.current = normalizeAccountFormForDirtyCheck(form);
+      onClose();
+    }
   };
 
   if (!isOpen) return null;
@@ -309,7 +455,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" aria-hidden="true" />
 
       <div className="relative z-10 w-full max-w-lg overflow-hidden" style={buildModalShellStyle()}>
 
@@ -318,7 +464,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
           <h2 className="text-lg font-bold text-zinc-100">
             {account ? 'Edit Account' : t('addEmailAccount')}
           </h2>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors rounded-xl hover:bg-white/5">
+          <button onClick={requestClose} className="p-2 text-zinc-500 hover:text-zinc-300 transition-colors rounded-xl hover:bg-white/5">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -513,6 +659,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
               placeholder="your@email.com"
             />
             {errors.email && <p className="mt-1 text-xs text-red-500">{errors.email}</p>}
+            {autoConfigNotice && <p className="mt-1 text-xs text-emerald-400">{autoConfigNotice}</p>}
           </div>
 
           {/* Display Name */}
@@ -535,7 +682,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
                 <label className="block text-xs text-zinc-500 mb-1">{t('imapServer')}</label>
                 <input
                   type="text" value={form.imap_host}
-                  onChange={e => { setForm(prev => ({ ...prev, imap_host: e.target.value })); if (errors.imap_host) setErrors(prev => { const n={...prev}; delete n.imap_host; return n; }); }}
+                  onChange={e => { markServerFieldManual('imap_host'); setForm(prev => ({ ...prev, imap_host: e.target.value })); if (errors.imap_host) setErrors(prev => { const n={...prev}; delete n.imap_host; return n; }); }}
                   className={`w-full py-2 px-3 bg-zinc-950 border rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 ${errors.imap_host ? 'border-red-500' : 'border-zinc-800'}`}
                   placeholder="imap.example.com"
                 />
@@ -545,7 +692,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
                 <label className="block text-xs text-zinc-500 mb-1">{t('port')}</label>
                 <input
                   type="number" value={form.imap_port}
-                  onChange={e => setForm(prev => ({ ...prev, imap_port: parseInt(e.target.value) || 993 }))}
+                  onChange={e => { markServerFieldManual('imap_port'); setForm(prev => ({ ...prev, imap_port: parseInt(e.target.value) || 993 })); }}
                   className={`w-full py-2 px-3 bg-zinc-950 border rounded-lg text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 ${errors.imap_port ? 'border-red-500' : 'border-zinc-800'}`}
                 />
               </div>
@@ -560,7 +707,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
                 <label className="block text-xs text-zinc-500 mb-1">{t('smtpServer')}</label>
                 <input
                   type="text" value={form.smtp_host}
-                  onChange={e => { setForm(prev => ({ ...prev, smtp_host: e.target.value })); if (errors.smtp_host) setErrors(prev => { const n={...prev}; delete n.smtp_host; return n; }); }}
+                  onChange={e => { markServerFieldManual('smtp_host'); setForm(prev => ({ ...prev, smtp_host: e.target.value })); if (errors.smtp_host) setErrors(prev => { const n={...prev}; delete n.smtp_host; return n; }); }}
                   className={`w-full py-2 px-3 bg-zinc-950 border rounded-lg text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600 ${errors.smtp_host ? 'border-red-500' : 'border-zinc-800'}`}
                   placeholder="smtp.example.com"
                 />
@@ -570,7 +717,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
                 <label className="block text-xs text-zinc-500 mb-1">{t('port')}</label>
                 <input
                   type="number" value={form.smtp_port}
-                  onChange={e => setForm(prev => ({ ...prev, smtp_port: parseInt(e.target.value) || 587 }))}
+                  onChange={e => { markServerFieldManual('smtp_port'); setForm(prev => ({ ...prev, smtp_port: parseInt(e.target.value) || 587 })); }}
                   className={`w-full py-2 px-3 bg-zinc-950 border rounded-lg text-sm text-zinc-100 focus:outline-none focus:border-zinc-600 ${errors.smtp_port ? 'border-red-500' : 'border-zinc-800'}`}
                 />
               </div>
@@ -642,7 +789,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
             {testing ? t('testing') : t('testConnection')}
           </button>
           <div className="flex-1" />
-          <button type="button" onClick={onClose} className="px-4 py-2 text-zinc-400 hover:text-zinc-200 text-sm transition-colors">
+          <button type="button" onClick={requestClose} className="px-4 py-2 text-zinc-400 hover:text-zinc-200 text-sm transition-colors">
             {t('cancel')}
           </button>
           <button
@@ -653,6 +800,33 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
           </button>
         </div>
       </div>
+
+      {showDiscardConfirm && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-zinc-700 bg-zinc-950 p-5 shadow-2xl">
+            <h3 className="text-base font-semibold text-zinc-100">是否放弃当前修改？</h3>
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              当前邮箱配置还没有保存，放弃后已填写的内容将不会保留。
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDiscardConfirm(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-white/5"
+              >
+                继续编辑
+              </button>
+              <button
+                type="button"
+                onClick={discardChangesAndClose}
+                className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-400"
+              >
+                放弃修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
