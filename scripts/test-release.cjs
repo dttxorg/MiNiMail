@@ -67,6 +67,11 @@ const checks = [
     args: ['scripts/ai-secure-storage.test.cjs'],
   },
   {
+    name: 'OpenAI-compatible provider regression',
+    command: process.execPath,
+    args: ['scripts/openai-compatible-provider.test.cjs'],
+  },
+  {
     name: 'OAuth account upsert and SMTP auth regression',
     command: process.execPath,
     args: ['scripts/oauth-account-upsert-smtp.test.cjs'],

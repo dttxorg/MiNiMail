@@ -78,6 +78,18 @@ export interface AIEmailSource {
   scan_result?: string;
 }
 
+type OpenAICompatibleMessage = {
+  role: 'system' | 'user';
+  content: string;
+};
+
+type OpenAICompatibleRequestBody = {
+  model: string;
+  messages: OpenAICompatibleMessage[];
+  temperature?: number;
+  max_tokens?: number;
+};
+
 const DEFAULT_CONFIG: AIConfig = {
   baseUrl: 'https://api.openai.com/v1',
   apiKey: '',
@@ -480,6 +492,210 @@ function parseCategory(raw: string): Category {
 }
 
 // 鈹€鈹€鈹€ AI HTTP Call 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+export function normalizeOpenAICompatibleEndpoint(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error('API base URL not configured.');
+
+  const parsed = new URL(trimmed);
+  const basePath = parsed.pathname.replace(/\/+$/, '');
+  const pathname = /\/chat\/completions$/i.test(basePath)
+    ? basePath
+    : `${basePath}/chat/completions`;
+
+  parsed.pathname = pathname.replace(/\/{2,}/g, '/');
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+export function buildOpenAICompatibleRequestBody(config: Pick<AIConfig, 'model'>, request: AIRequest): OpenAICompatibleRequestBody {
+  const messages: OpenAICompatibleMessage[] = [
+    ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
+    { role: 'user', content: request.prompt },
+  ];
+  const body: OpenAICompatibleRequestBody = {
+    model: config.model,
+    messages,
+  };
+
+  if (request.temperature !== undefined && request.temperature !== null) {
+    body.temperature = request.temperature;
+  }
+  if (request.maxTokens !== undefined && request.maxTokens !== null) {
+    body.max_tokens = request.maxTokens;
+  }
+
+  return body;
+}
+
+function getEndpointLogFields(endpoint: string): { endpointHost: string; endpointPath: string } {
+  try {
+    const parsed = new URL(endpoint);
+    return {
+      endpointHost: parsed.host,
+      endpointPath: parsed.pathname,
+    };
+  } catch {
+    return {
+      endpointHost: 'invalid-url',
+      endpointPath: '',
+    };
+  }
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (content && typeof content === 'object' && !Array.isArray(content)) {
+    const item = content as { text?: unknown; value?: unknown; content?: unknown };
+    if (typeof item.text === 'string') return item.text;
+    if (item.text && typeof item.text === 'object' && typeof (item.text as { value?: unknown }).value === 'string') {
+      return (item.text as { value: string }).value;
+    }
+    if (typeof item.value === 'string') return item.value;
+    if (typeof item.content === 'string') return item.content;
+  }
+  if (!Array.isArray(content)) return '';
+
+  return content
+    .map((part) => {
+      if (!part || typeof part !== 'object') return '';
+      const item = part as { type?: unknown; text?: unknown };
+      if (item.type !== undefined && item.type !== 'text') return '';
+      if (typeof item.text === 'string') return item.text;
+      if (item.text && typeof item.text === 'object' && typeof (item.text as { value?: unknown }).value === 'string') {
+        return (item.text as { value: string }).value;
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('');
+}
+
+function getObjectKeys(value: unknown): string[] {
+  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
+}
+
+function getValueType(value: unknown): string {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+}
+
+function getTextPreview(value: unknown): string | undefined {
+  const text = extractTextContent(value).trim();
+  return text ? text.slice(0, 100) : undefined;
+}
+
+export function summarizeOpenAICompatibleResponseStructure(data: unknown) {
+  const root = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const choices = root.choices;
+  const firstChoice = Array.isArray(choices) && choices.length > 0 && choices[0] && typeof choices[0] === 'object'
+    ? choices[0] as Record<string, unknown>
+    : {};
+  const message = firstChoice.message && typeof firstChoice.message === 'object' && !Array.isArray(firstChoice.message)
+    ? firstChoice.message as Record<string, unknown>
+    : {};
+  const content = message.content;
+  const contentType = getValueType(content);
+  const contentPreview = contentType === 'array' || contentType === 'object' ? getTextPreview(content) : undefined;
+
+  return {
+    topLevelKeys: getObjectKeys(data),
+    hasChoices: Array.isArray(choices),
+    choicesLength: Array.isArray(choices) ? choices.length : 0,
+    firstChoiceKeys: getObjectKeys(firstChoice),
+    firstMessageKeys: getObjectKeys(message),
+    firstMessageContentType: contentType,
+    firstMessageContentTextPreview: contentPreview,
+    hasFirstDelta: Boolean(firstChoice.delta),
+    firstFinishReason: typeof firstChoice.finish_reason === 'string' ? firstChoice.finish_reason : null,
+    hasOutput: Object.prototype.hasOwnProperty.call(root, 'output'),
+    hasData: Object.prototype.hasOwnProperty.call(root, 'data'),
+    hasResult: Object.prototype.hasOwnProperty.call(root, 'result'),
+    hasMessage: Object.prototype.hasOwnProperty.call(root, 'message'),
+    hasContent: Object.prototype.hasOwnProperty.call(root, 'content'),
+  };
+}
+
+export function parseOpenAICompatibleResponse(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const root = data as {
+    choices?: unknown;
+    output_text?: unknown;
+    output?: unknown;
+    data?: unknown;
+    result?: unknown;
+    message?: unknown;
+    content?: unknown;
+  };
+  const choices = root.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return (
+      extractTextContent(root.output_text) ||
+      extractTextContent(root.output) ||
+      extractTextContent(root.data) ||
+      extractTextContent(root.result) ||
+      extractTextContent(root.message) ||
+      extractTextContent(root.content)
+    );
+  }
+
+  const first = choices[0] as {
+    message?: { content?: unknown; reasoning_content?: unknown };
+    delta?: { content?: unknown; reasoning_content?: unknown };
+    text?: unknown;
+  };
+  return (
+    extractTextContent(first?.message?.content) ||
+    extractTextContent(first?.delta?.content) ||
+    extractTextContent(first?.message?.reasoning_content) ||
+    extractTextContent(first?.delta?.reasoning_content) ||
+    extractTextContent(first?.text)
+  );
+}
+
+function redactApiKey(value: string, apiKey: string): string {
+  return apiKey ? value.split(apiKey).join('[REDACTED_API_KEY]') : value;
+}
+
+function sanitizeProviderError(errorData: unknown, status: number, apiKey: string): string {
+  const error = errorData && typeof errorData === 'object'
+    ? (errorData as { error?: { message?: unknown; type?: unknown }; message?: unknown; type?: unknown })
+    : {};
+  const rawMessage = typeof error.error?.message === 'string'
+    ? error.error.message
+    : typeof error.message === 'string'
+      ? error.message
+      : `HTTP ${status}`;
+  const message = redactApiKey(rawMessage, apiKey);
+  const rawType = typeof error.error?.type === 'string'
+    ? error.error.type
+    : typeof error.type === 'string'
+      ? error.type
+      : '';
+  const type = redactApiKey(rawType, apiKey);
+  const combined = type ? `${message} (${type}, HTTP ${status})` : `${message} (HTTP ${status})`;
+  return combined;
+}
+
+function getOpenAICompatibleProviderErrorHint(endpoint: string, status: number): string {
+  const fields = getEndpointLogFields(endpoint);
+  if (
+    status === 404 &&
+    fields.endpointHost === 'generativelanguage.googleapis.com' &&
+    fields.endpointPath === '/chat/completions'
+  ) {
+    return 'Gemini Base URL may be missing /v1beta/openai.';
+  }
+  if (status === 503) {
+    return 'Provider upstream temporary error / service unavailable.';
+  }
+  return '';
+}
+
+function appendProviderErrorHint(error: string, hint: string): string {
+  return hint ? `${error}. ${hint}` : error;
+}
+
 export async function callAI(request: AIRequest): Promise<AIResponse> {
   const config = getAIConfig();
 
@@ -487,41 +703,75 @@ export async function callAI(request: AIRequest): Promise<AIResponse> {
   if (!config.baseUrl) return { success: false, error: 'API base URL not configured.' };
 
   try {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    const endpoint = normalizeOpenAICompatibleEndpoint(config.baseUrl);
+    const endpointLogFields = getEndpointLogFields(endpoint);
+    const body = buildOpenAICompatibleRequestBody(config, request);
+    log.info('OpenAI-compatible request', {
+      providerType: 'openai-compatible',
+      ...endpointLogFields,
+      model: config.model,
+    });
+
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.apiKey}`,
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
-          { role: 'user' as const, content: request.prompt },
-        ],
-        temperature: request.temperature ?? 0.1,
-        max_tokens: request.maxTokens ?? 2000,
-      }),
+      body: JSON.stringify(body),
+    });
+    log.info('OpenAI-compatible response status', {
+      providerType: 'openai-compatible',
+      ...endpointLogFields,
+      model: config.model,
+      status: response.status,
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      return { success: false, error: errorData.error?.message || `HTTP ${response.status}` };
+      const error = appendProviderErrorHint(
+        sanitizeProviderError(errorData, response.status, config.apiKey),
+        getOpenAICompatibleProviderErrorHint(endpoint, response.status),
+      );
+      log.warn('OpenAI-compatible provider error', {
+        providerType: 'openai-compatible',
+        ...endpointLogFields,
+        model: config.model,
+        status: response.status,
+        providerError: error,
+      });
+      return { success: false, error };
     }
 
-    const data = await response.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string };
-    };
+    const data = await response.json();
 
-    if (data.error) return { success: false, error: data.error.message || 'AI error' };
+    if (data && typeof data === 'object' && 'error' in data) {
+      const error = sanitizeProviderError(data, response.status, config.apiKey);
+      log.warn('OpenAI-compatible provider error', {
+        providerType: 'openai-compatible',
+        ...endpointLogFields,
+        model: config.model,
+        status: response.status,
+        providerError: error,
+      });
+      return { success: false, error };
+    }
 
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) return { success: false, error: 'No content in AI response' };
+    const content = parseOpenAICompatibleResponse(data);
+    if (!content) {
+      log.warn('OpenAI-compatible response content missing', {
+        providerType: 'openai-compatible',
+        ...endpointLogFields,
+        model: config.model,
+        status: response.status,
+        responseStructure: summarizeOpenAICompatibleResponseStructure(data),
+      });
+      return { success: false, error: 'No content in AI response' };
+    }
 
     return { success: true, content };
   } catch (err) {
-    return { success: false, error: (err as Error).message };
+    return { success: false, error: redactApiKey((err as Error).message, config.apiKey) };
   }
 }
 

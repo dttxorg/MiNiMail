@@ -28,6 +28,11 @@ import type { MailCacheRange, MailHistoryRange } from '../../shared/mailSyncSett
 import type { MailBackupReadState } from '../../shared/backup';
 import type { AiPrivacyMode } from '../../shared/email-ai';
 import {
+  findOpenAICompatiblePresetByBaseUrl,
+  OPENAI_COMPATIBLE_PROVIDER_PRESETS,
+  type OpenAICompatibleProviderPresetId,
+} from '../../shared/openaiCompatibleProviderPresets';
+import {
   canStartBackupImport,
   canStartBackupExport,
   formatBackupProgress,
@@ -101,6 +106,7 @@ type NavId = 'accounts' | 'backup' | 'ai' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
 
 type AIConfigProfileForm = {
+  providerPresetId: OpenAICompatibleProviderPresetId;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -108,9 +114,13 @@ type AIConfigProfileForm = {
 };
 
 const EMPTY_AI_CONFIG_PROFILES: Record<AIConfigProfileId, AIConfigProfileForm> = {
-  primary: { baseUrl: '', apiKey: '', model: '', hasApiKey: false },
-  secondary: { baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+  primary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+  secondary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
 };
+
+function getOpenAICompatiblePresetById(id: OpenAICompatibleProviderPresetId) {
+  return OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === id) ?? OPENAI_COMPATIBLE_PROVIDER_PRESETS[0];
+}
 
 function getApiProfileText(appLanguage: AppLanguage) {
   const texts = {
@@ -885,6 +895,7 @@ export function SettingsModal({
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
   const apiProfileUi = useMemo(() => getApiProfileText(normalizedLanguage), [normalizedLanguage]);
   const selectedApiProfileForm = apiProfiles[selectedApiProfile];
+  const selectedProviderPreset = getOpenAICompatiblePresetById(selectedApiProfileForm.providerPresetId);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const cacheRangeOptions = useMemo(() => getMailCacheRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
@@ -926,12 +937,14 @@ export function SettingsModal({
           setApiProfiles({
             primary: {
               baseUrl: cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '',
+              providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.primary?.model || cfg.data.model || '',
               hasApiKey: cfg.data.profiles?.primary?.hasApiKey ?? cfg.data.hasApiKey,
             },
             secondary: {
               baseUrl: cfg.data.profiles?.secondary?.baseUrl || '',
+              providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.secondary?.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.secondary?.model || '',
               hasApiKey: cfg.data.profiles?.secondary?.hasApiKey ?? false,
@@ -952,6 +965,28 @@ export function SettingsModal({
         ...patch,
       },
     }));
+  }
+
+  function handleProviderPresetChange(presetId: OpenAICompatibleProviderPresetId) {
+    const nextPreset = getOpenAICompatiblePresetById(presetId);
+    const previousPreset = getOpenAICompatiblePresetById(selectedApiProfileForm.providerPresetId);
+    const currentModel = selectedApiProfileForm.model.trim();
+    const shouldUsePresetModel =
+      !currentModel ||
+      Boolean(previousPreset.defaultModel && currentModel === previousPreset.defaultModel);
+
+    updateSelectedApiProfile({
+      providerPresetId: nextPreset.id,
+      ...(nextPreset.isCustom ? {} : { baseUrl: nextPreset.baseUrl }),
+      ...(!nextPreset.isCustom && shouldUsePresetModel ? { model: nextPreset.defaultModel } : {}),
+    });
+  }
+
+  function handleBaseUrlChange(baseUrl: string) {
+    updateSelectedApiProfile({
+      baseUrl,
+      providerPresetId: findOpenAICompatiblePresetByBaseUrl(baseUrl).id,
+    });
   }
 
   async function handleSaveApi() {
@@ -1504,8 +1539,11 @@ export function SettingsModal({
                   <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
                     {ui.apiConfig}
                   </span>
-                  <span className="text-[10px] ml-auto" style={{ color: '#48484a' }}>OpenAI / OpenRouter / Groq</span>
+                  <span className="text-[10px] ml-auto" style={{ color: '#48484a' }}>OpenAI Compatible</span>
                 </div>
+                <p className="mb-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                  Most providers only require selecting a preset, entering an API key, and choosing a model. Custom endpoints are also supported.
+                </p>
                 <div className="mb-2 grid grid-cols-2 gap-1.5">
                   {(['primary', 'secondary'] as AIConfigProfileId[]).map((profileId) => {
                     const isSelected = selectedApiProfile === profileId;
@@ -1535,11 +1573,23 @@ export function SettingsModal({
                   })}
                 </div>
                 <div className="space-y-1.5">
+                  <select
+                    value={selectedApiProfileForm.providerPresetId}
+                    onChange={(e) => handleProviderPresetChange(e.target.value as OpenAICompatibleProviderPresetId)}
+                    className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white focus:outline-none"
+                    style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                  >
+                    {OPENAI_COMPATIBLE_PROVIDER_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
                   <input
                     type="text"
                     placeholder="https://api.openai.com/v1"
                     value={selectedApiProfileForm.baseUrl}
-                    onChange={(e) => updateSelectedApiProfile({ baseUrl: e.target.value })}
+                    onChange={(e) => handleBaseUrlChange(e.target.value)}
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
@@ -1560,6 +1610,16 @@ export function SettingsModal({
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
                 </div>
+                {selectedProviderPreset.note && (
+                  <p className="mt-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                    {selectedProviderPreset.note}
+                  </p>
+                )}
+                {selectedProviderPreset.isLocal && (
+                  <p className="mt-1 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                    Ollama / LM Studio / vLLM require the local server to be running.
+                  </p>
+                )}
                 {activeApiProfile !== selectedApiProfile && (
                   <button
                     onClick={() => void handleActivateApiProfile(selectedApiProfile)}
