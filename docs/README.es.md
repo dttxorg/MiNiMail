@@ -8,12 +8,18 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 
 > Estado actual: MiNiMail está en fase release candidate. Es adecuado para pruebas, demostraciones y comentarios tempranos, pero todavía no se recomienda para flujos de correo críticos en producción.
 
+## Demo / Support
+
+- YouTube: por añadir
+- Bilibili: por añadir
+- Se agradecen stars, issues, comentarios y participación en pruebas.
+
 ## Puntos Destacados
 
 - Caché local-first para listas de correo, cuerpos de mensaje y metadatos de adjuntos.
 - Resúmenes AI, sugerencias de respuesta, traducción, enrutamiento y extracción estructurada de información clave.
 - Categorías AI genéricas y enrutamiento dedicado para notificaciones de GitHub.
-- Usa la AI API Key del usuario y no revende AI tokens.
+- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales.
 - Bloquea por defecto imágenes remotas y píxeles de seguimiento.
 - Sanitiza el correo HTML antes de renderizarlo.
 - Soporta redacción, borradores, adjuntos, recuperación de correo enviado y deshacer envío durante 5 segundos.
@@ -23,8 +29,7 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 
 MiNiMail está diseñado alrededor del control del usuario.
 
-- Los usuarios proporcionan su propia AI API Key.
-- MiNiMail no revende AI tokens.
+- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales.
 - El procesamiento del correo se diseña con privacidad por defecto.
 - Las imágenes remotas y los píxeles de seguimiento se bloquean por defecto.
 - El correo HTML se sanitiza antes de renderizarse.
@@ -62,10 +67,6 @@ npm run test:release
 Si la verificación falla, no omitas los elementos fallidos. Primero determina si es una regresión real o una aserción obsoleta, y luego aplica la corrección segura más pequeña.
 
 ## Diseño
-
-El caso de estudio completo de UI/UX se añadirá en un repositorio de diseño separado.
-
-La información sobre contribuyentes de diseño se añadirá antes del lanzamiento público.
 
 完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 

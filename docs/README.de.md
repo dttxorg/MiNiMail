@@ -8,12 +8,18 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 
 > Aktueller Status: MiNiMail befindet sich in der Release-Candidate-Phase. Es eignet sich für Tests, Demos und frühes Feedback, wird aber noch nicht für kritische produktive E-Mail-Abläufe empfohlen.
 
+## Demo / Support
+
+- YouTube: To be added
+- Bilibili: To be added
+- Stars, Issues, Feedback und Testbeteiligung sind willkommen.
+
 ## Kernfunktionen
 
 - Lokales Caching von E-Mail-Listen, Nachrichteninhalten und Anhangsmetadaten.
 - AI-Zusammenfassungen, Antwortvorschläge, Übersetzung, Routing und strukturierte Extraktion wichtiger Informationen.
 - Allgemeine AI-Kategorien sowie spezielles Routing für GitHub-Benachrichtigungen.
-- Nutzt den eigenen AI API Key des Nutzers und verkauft keine AI tokens weiter.
+- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer zwischen Cloud- und lokalen Modellen wählen können.
 - Blockiert Remote-Bilder und Tracking-Pixel standardmäßig.
 - Bereinigt HTML-E-Mails vor dem Rendern.
 - Unterstützt Schreiben, Entwürfe, Anhänge, Wiederherstellung gesendeter E-Mails und 5-Sekunden-Undo-Send.
@@ -23,8 +29,7 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 
 MiNiMail ist auf Nutzerkontrolle ausgelegt.
 
-- Nutzer verwenden ihren eigenen AI API Key.
-- MiNiMail verkauft keine AI tokens weiter.
+- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer zwischen Cloud- und lokalen Modellen wählen können.
 - Die Verarbeitung von E-Mail-Inhalten ist datenschutzbewusst gestaltet.
 - Remote-Bilder und Tracking-Pixel werden standardmäßig blockiert.
 - HTML-E-Mails werden vor dem Rendern bereinigt.
@@ -62,10 +67,6 @@ npm run test:release
 Fehlgeschlagene Prüfungen sollten nicht übersprungen werden. Zuerst prüfen, ob es sich um eine echte Regression oder eine veraltete Testannahme handelt, danach die kleinste sichere Korrektur vornehmen.
 
 ## Design
-
-Die vollständige UI/UX case study wird in einem separaten Design-Repository ergänzt.
-
-Informationen zu Design-Beitragenden werden vor der öffentlichen Veröffentlichung ergänzt.
 
 完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 

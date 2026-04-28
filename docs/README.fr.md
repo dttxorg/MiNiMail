@@ -8,12 +8,18 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 
 > État actuel : MiNiMail est en phase release candidate. Il convient aux tests, aux démonstrations et aux premiers retours, mais il n'est pas encore recommandé pour les flux de messagerie critiques en production.
 
+## Demo / Support
+
+- YouTube : à compléter
+- Bilibili : à compléter
+- Les stars, issues, retours et tests sont bienvenus.
+
 ## Points Forts
 
 - Cache local-first pour les listes d'e-mails, les corps de message et les métadonnées des pièces jointes.
 - Résumés AI, suggestions de réponse, traduction, routage et extraction structurée des informations clés.
 - Catégories AI génériques et routage dédié pour les notifications GitHub.
-- Utilise la AI API Key de l'utilisateur et ne revend pas de AI tokens.
+- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux.
 - Bloque par défaut les images distantes et les pixels de suivi.
 - Nettoie les e-mails HTML avant le rendu.
 - Prend en charge la rédaction, les brouillons, les pièces jointes, la récupération des e-mails envoyés et l'annulation d'envoi pendant 5 secondes.
@@ -23,8 +29,7 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 
 MiNiMail est conçu autour du contrôle utilisateur.
 
-- Les utilisateurs fournissent leur propre AI API Key.
-- MiNiMail ne revend pas de AI tokens.
+- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux.
 - Le traitement des e-mails est pensé avec la confidentialité par défaut.
 - Les images distantes et les pixels de suivi sont bloqués par défaut.
 - Les e-mails HTML sont nettoyés avant le rendu.
@@ -62,10 +67,6 @@ npm run test:release
 Si la vérification échoue, ne sautez pas les éléments en échec. Déterminez d'abord s'il s'agit d'une vraie régression ou d'une assertion obsolète, puis appliquez le plus petit correctif sûr.
 
 ## Design
-
-L'étude de cas UI/UX complète sera ajoutée dans un dépôt de design séparé.
-
-Les informations sur les contributeurs design seront ajoutées avant la publication publique.
 
 完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 

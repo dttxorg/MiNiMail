@@ -1,4 +1,12 @@
-# MiNiMail
+<p align="center">
+  <img src="assets/brand/logo.png" alt="MiNiMail logo" width="128">
+</p>
+
+<h1 align="center">MiNiMail</h1>
+
+<p align="center">
+  An AI-native desktop email client for reading, understanding, and acting on everyday email.
+</p>
 
 [简体中文](../README.md) | English | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md)
 
@@ -8,12 +16,36 @@ It combines a local-first mail cache with privacy-aware AI features for summariz
 
 > Current status: MiNiMail is in release candidate stage. It is suitable for testing, demos, and early feedback, but it is not recommended for critical production email workflows yet.
 
+## Preview
+
+![MiNiMail main window](assets/screenshots/main-window.png)
+
+![MiNiMail AI Assistant](assets/screenshots/ai-assistant.png)
+
+![MiNiMail key information](assets/screenshots/key-information.png)
+
+![MiNiMail email auto configuration](assets/screenshots/auto-config.png)
+
+## Demo Video
+
+![MiNiMail demo video cover](assets/screenshots/demo-cover.png)
+
+- YouTube: To be added
+- Bilibili: To be added
+
+## Support
+
+- Star this repository.
+- Open issues.
+- Share feedback.
+- Join testing.
+
 ## Core Highlights
 
 - Local-first caching for mail lists, message bodies, and attachment metadata.
 - AI summaries, reply suggestions, translation, routing, and structured key information extraction.
 - Generic AI categories plus dedicated routing for GitHub notification emails.
-- Uses the user's own AI API key and does not resell AI tokens.
+- Supports OpenAI-compatible APIs and local large language models, allowing users to choose between cloud and local models.
 - Blocks remote images and tracking pixels by default.
 - Sanitizes HTML email before rendering.
 - Supports compose, drafts, attachments, sent-mail recovery, and 5-second undo send.
@@ -23,8 +55,7 @@ It combines a local-first mail cache with privacy-aware AI features for summariz
 
 MiNiMail is designed around user control.
 
-- Users provide their own AI API key.
-- MiNiMail does not resell AI tokens.
+- Supports OpenAI-compatible APIs and local large language models, allowing users to choose between cloud and local models.
 - Email processing is privacy-aware by default.
 - Remote images and tracking pixels are blocked by default.
 - HTML email is sanitized before rendering.
@@ -62,10 +93,6 @@ npm run test:release
 If the check fails, do not skip failed items. First determine whether it is a real regression or an outdated assertion, then apply the smallest safe fix.
 
 ## Design
-
-The full UI/UX case study will be added in a separate design repository.
-
-Design contributor information will be added before public release.
 
 完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
