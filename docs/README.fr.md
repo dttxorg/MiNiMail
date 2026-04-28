@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/logo.png" width="96" alt="MiNiMail logo" />
+</p>
+
 # MiNiMail
 
 [简体中文](../README.md) | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | Français | [Español](README.es.md) | [Português](README.pt.md)
@@ -10,8 +14,8 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 
 ## Demo / Support
 
-- YouTube : à compléter
-- Bilibili : https://www.bilibili.com/video/BV1Q89kBuEL9/
+- YouTube : [MiNiMail English demo](https://youtu.be/d7CQ61Bk8Sc)
+- Bilibili : [MiNiMail demo video](https://www.bilibili.com/video/BV1Q89kBuEL9/)
 - Les stars, issues, retours et tests sont bienvenus.
 
 ## Points Forts

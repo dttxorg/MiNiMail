@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/logo.png" width="96" alt="MiNiMail logo" />
+</p>
+
 # MiNiMail
 
 [简体中文](../README.md) | [English](README.en.md) | [日本語](README.ja.md) | 한국어 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md)
@@ -10,8 +14,8 @@ MiNiMail은 일상적인 이메일을 더 쉽게 읽고, 이해하고, 처리할
 
 ## Demo / Support
 
-- YouTube：待补充
-- Bilibili：https://www.bilibili.com/video/BV1Q89kBuEL9/
+- YouTube：[MiNiMail English demo](https://youtu.be/d7CQ61Bk8Sc)
+- Bilibili：[MiNiMail demo video](https://www.bilibili.com/video/BV1Q89kBuEL9/)
 - Star, issue 제출, 피드백 공유, 테스트 참여를 환영합니다.
 
 ## 주요 특징

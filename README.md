@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/brand/logo.png" alt="MiNiMail logo" width="128">
+  <img src="docs/assets/brand/logo.png" width="96" alt="MiNiMail logo" />
 </p>
 
 <h1 align="center">MiNiMail</h1>
@@ -30,8 +30,8 @@ MiNiMail 是一款 AI 原生桌面邮件客户端，目标是让日常邮件更�
 
 ![MiNiMail 演示视频封面](docs/assets/screenshots/demo-cover.png)
 
-- YouTube：待补充
-- Bilibili：https://www.bilibili.com/video/BV1Q89kBuEL9/
+- 中文 YouTube：[MiNiMail 中文演示](https://youtu.be/YtX7JT0J8sA)
+- Bilibili：[MiNiMail 演示视频](https://www.bilibili.com/video/BV1Q89kBuEL9/)
 
 ## 支持项目
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/logo.png" alt="MiNiMail logo" width="128">
+  <img src="assets/brand/logo.png" width="96" alt="MiNiMail logo" />
 </p>
 
 <h1 align="center">MiNiMail</h1>
@@ -30,8 +30,8 @@ It combines a local-first mail cache with privacy-aware AI features for summariz
 
 ![MiNiMail demo video cover](assets/screenshots/demo-cover.png)
 
-- YouTube: To be added
-- Bilibili: https://www.bilibili.com/video/BV1Q89kBuEL9/
+- YouTube: [MiNiMail English demo](https://youtu.be/d7CQ61Bk8Sc)
+- Bilibili: [MiNiMail demo video](https://www.bilibili.com/video/BV1Q89kBuEL9/)
 
 ## Support
 
