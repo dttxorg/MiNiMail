@@ -3,7 +3,28 @@ const fs = require('fs');
 const path = require('path');
 const ts = require('typescript');
 
-function loadTsModule(filePath, overrides = {}) {
+function resolveLocalTsModule(fromFile, specifier) {
+  if (!specifier.startsWith('.')) return null;
+
+  const base = path.resolve(path.dirname(fromFile), specifier);
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    path.join(base, 'index.ts'),
+    path.join(base, 'index.tsx'),
+    path.join(base, 'index.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) || null;
+}
+
+function loadTsModule(filePath, overrides = {}, moduleCache = new Map()) {
+  const resolvedPath = path.resolve(filePath);
+  if (moduleCache.has(resolvedPath)) {
+    return moduleCache.get(resolvedPath).exports;
+  }
+
   const source = fs.readFileSync(filePath, 'utf8');
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -14,15 +35,20 @@ function loadTsModule(filePath, overrides = {}) {
   });
 
   const moduleShim = { exports: {} };
+  moduleCache.set(resolvedPath, moduleShim);
   const localRequire = (specifier) => {
     if (Object.prototype.hasOwnProperty.call(overrides, specifier)) {
       return overrides[specifier];
+    }
+    const localModule = resolveLocalTsModule(resolvedPath, specifier);
+    if (localModule) {
+      return loadTsModule(localModule, overrides, moduleCache);
     }
     return require(specifier);
   };
 
   const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', compiled.outputText);
-  fn(moduleShim.exports, localRequire, moduleShim, filePath, path.dirname(filePath));
+  fn(moduleShim.exports, localRequire, moduleShim, resolvedPath, path.dirname(resolvedPath));
   return moduleShim.exports;
 }
 
@@ -73,7 +99,18 @@ function loadAiService(config = {}) {
       setSecureSetting: (key, value) => { secureValues[key] = value; },
       deleteSecureSetting: (key) => { delete secureValues[key]; },
     },
+    '../../database': {
+      getSetting: (key) => dbValues[key] || '',
+      setSetting: (key, value) => { dbValues[key] = value; },
+      deleteSetting: (key) => { delete dbValues[key]; },
+      getSecureSetting: (key) => secureValues[key] || null,
+      setSecureSetting: (key, value) => { secureValues[key] = value; },
+      deleteSecureSetting: (key) => { delete secureValues[key]; },
+    },
     './crypto': {
+      isEncryptionAvailable: () => true,
+    },
+    '../crypto': {
       isEncryptionAvailable: () => true,
     },
     'electron-log': { __esModule: true, default: logStub, ...logStub },
@@ -245,6 +282,8 @@ async function testRequestBodyUsesCompatibleFieldsOnly() {
 
   const forbiddenFields = [
     'reasoning_effort',
+    'enable_thinking',
+    'thinking',
     'max_completion_tokens',
     'response_format',
     'tools',
@@ -320,8 +359,15 @@ function testResponseParserVariants() {
     aiModule.parseOpenAICompatibleResponse({
       choices: [{ message: { content: '', reasoning_content: 'reasoning fallback' } }],
     }),
-    'reasoning fallback',
-    'expected reasoning_content fallback parser',
+    '',
+    'reasoning_content must not be used as visible answer fallback',
+  );
+  assert.strictEqual(
+    aiModule.parseOpenAICompatibleResponse({
+      choices: [{ message: { content: 'final answer', reasoning_content: 'hidden reasoning' } }],
+    }),
+    'final answer',
+    'content must win over reasoning_content',
   );
   assert.strictEqual(
     aiModule.parseOpenAICompatibleResponse({ content: { text: 'top-level content' } }),
@@ -352,9 +398,46 @@ async function testSiliconFlowReasoningResponseStructure() {
   global.fetch = async () => createFetchResponse(payload);
 
   const response = await aiModule.callAI({ prompt: 'hello' });
-  assert.strictEqual(response.success, true, 'SiliconFlow reasoning_content response should parse');
-  assert.strictEqual(response.content, 'safe reasoning fallback from provider');
+  assert.strictEqual(response.success, false, 'SiliconFlow reasoning-only response should fail cleanly');
+  assert.strictEqual(response.error, 'Provider returned reasoning content without final answer.');
+  assert(!String(response.content || '').includes('safe reasoning fallback'), 'reasoning must not be returned as visible content');
   assert(!JSON.stringify(logs).includes('secret-compatible-key'), 'logs must not leak API key');
+}
+
+async function testReasoningContentIsNeverVisible() {
+  const { aiModule } = loadAiService({ apiKey: 'secret-compatible-key' });
+
+  assert.strictEqual(
+    aiModule.parseOpenAICompatibleResponse({
+      choices: [{
+        message: {
+          content: [
+            { type: 'text', text: 'visible ' },
+            { type: 'reasoning', text: 'hidden thought' },
+          ],
+          reasoning_content: 'hidden reasoning',
+        },
+      }],
+    }),
+    'visible ',
+    'content array should return only text parts',
+  );
+
+  assert.strictEqual(
+    aiModule.parseOpenAICompatibleResponse({
+      choices: [{ delta: { reasoning_content: 'hidden streamed reasoning' } }],
+    }),
+    '',
+    'delta.reasoning_content must not be visible',
+  );
+
+  global.fetch = async () => createFetchResponse({
+    choices: [{ message: { reasoning_content: 'hidden reasoning only' } }],
+  });
+  const response = await aiModule.callAI({ prompt: 'hello' });
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.error, 'Provider returned reasoning content without final answer.');
+  assert(!String(response.content || '').includes('hidden reasoning only'), 'reasoning-only response must not leak as content');
 }
 
 function testResponseStructureSummaryIsSafe() {
@@ -475,6 +558,7 @@ async function run() {
   await testRequestBodyKeepsProvidedTemperatureAndMaxTokens();
   testResponseParserVariants();
   await testSiliconFlowReasoningResponseStructure();
+  await testReasoningContentIsNeverVisible();
   testResponseStructureSummaryIsSafe();
   await testUsageIsOptional();
   await testProviderErrorDoesNotLeakApiKey();

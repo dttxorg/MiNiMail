@@ -1,13 +1,24 @@
 ﻿import log from 'electron-log';
+import { getSetting, setSetting } from '../database';
 import {
-  deleteSecureSetting,
-  deleteSetting,
-  getSecureSetting,
-  getSetting,
-  setSecureSetting,
-  setSetting,
-} from '../database';
-import { isEncryptionAvailable } from './crypto';
+  buildOpenAICompatibleRequestBody,
+  callAI,
+  getAIConfig,
+  getAIConfigSnapshot,
+  initializeAISecretStorage,
+  normalizeOpenAICompatibleEndpoint,
+  parseOpenAICompatibleResponse,
+  saveAIConfig,
+  summarizeOpenAICompatibleResponseStructure,
+  type AIConfig,
+  type AIConfigProfile,
+  type AIConfigProfileId,
+  type AIConfigSnapshot,
+  type AIEmailSource,
+  type AIRequest,
+  type AIResponse,
+  type AITranslateSegmentsResponse,
+} from './ai/index';
 import {
   buildDeepScanPreview,
   type AiPrivacyMode,
@@ -27,188 +38,27 @@ import {
   type RedactionMapEntry,
 } from '../../shared/email-ai';
 
-export interface AIConfig {
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-}
-
-export type AIConfigProfileId = 'primary' | 'secondary';
-
-export interface AIConfigProfile extends AIConfig {
-  id: AIConfigProfileId;
-  label: string;
-}
-
-export interface AIConfigSnapshot {
-  activeProfileId: AIConfigProfileId;
-  profiles: Record<AIConfigProfileId, AIConfigProfile>;
-}
-
-export interface AIRequest {
-  prompt: string;
-  system?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-export interface AIResponse {
-  success: boolean;
-  content?: string;
-  error?: string;
-}
-
-export interface AITranslateSegmentsResponse {
-  success: boolean;
-  translations?: string[];
-  error?: string;
-}
-
-export interface AIEmailSource {
-  subject?: string;
-  from?: string;
-  from_name?: string;
-  to?: string;
-  cc?: string;
-  date?: string | Date;
-  body_html?: string;
-  body_text?: string;
-  snippet?: string;
-  category?: string;
-  scan_result?: string;
-}
-
-type OpenAICompatibleMessage = {
-  role: 'system' | 'user';
-  content: string;
+export {
+  buildOpenAICompatibleRequestBody,
+  callAI,
+  getAIConfig,
+  getAIConfigSnapshot,
+  initializeAISecretStorage,
+  normalizeOpenAICompatibleEndpoint,
+  parseOpenAICompatibleResponse,
+  saveAIConfig,
+  summarizeOpenAICompatibleResponseStructure,
 };
-
-type OpenAICompatibleRequestBody = {
-  model: string;
-  messages: OpenAICompatibleMessage[];
-  temperature?: number;
-  max_tokens?: number;
+export type {
+  AIConfig,
+  AIConfigProfile,
+  AIConfigProfileId,
+  AIConfigSnapshot,
+  AIEmailSource,
+  AIRequest,
+  AIResponse,
+  AITranslateSegmentsResponse,
 };
-
-const DEFAULT_CONFIG: AIConfig = {
-  baseUrl: 'https://api.openai.com/v1',
-  apiKey: '',
-  model: 'gpt-4o-mini',
-};
-
-function normalizeAIConfigProfileId(value: string | null): AIConfigProfileId {
-  return value === 'secondary' ? 'secondary' : 'primary';
-}
-
-function getAIProfileSettingKey(profileId: AIConfigProfileId, field: keyof AIConfig): string {
-  if (profileId === 'primary') {
-    if (field === 'baseUrl') return 'ai_base_url';
-    if (field === 'apiKey') return 'ai_api_key';
-    return 'ai_model';
-  }
-  if (field === 'baseUrl') return 'ai_secondary_base_url';
-  if (field === 'apiKey') return 'ai_secondary_api_key';
-  return 'ai_secondary_model';
-}
-
-function getAIProfileApiKeyKey(profileId: AIConfigProfileId): string {
-  return getAIProfileSettingKey(profileId, 'apiKey');
-}
-
-function migrateLegacyAIApiKey(profileId: AIConfigProfileId): string | null {
-  const key = getAIProfileApiKeyKey(profileId);
-  const legacyApiKey = getSetting(key);
-  if (!legacyApiKey) return null;
-
-  if (!isEncryptionAvailable()) {
-    log.warn('Legacy AI API key could not be migrated because secure storage is unavailable', { profileId });
-    return legacyApiKey;
-  }
-
-  setSecureSetting(key, legacyApiKey);
-  deleteSetting(key);
-  log.info('Migrated legacy AI API key to secure storage', { profileId });
-  return legacyApiKey;
-}
-
-function getAIProfileApiKey(profileId: AIConfigProfileId): string {
-  const key = getAIProfileApiKeyKey(profileId);
-  const secureApiKey = getSecureSetting(key);
-  if (secureApiKey) return secureApiKey;
-  return migrateLegacyAIApiKey(profileId) || '';
-}
-
-export function initializeAISecretStorage(): void {
-  for (const profileId of ['primary', 'secondary'] as const) {
-    try {
-      migrateLegacyAIApiKey(profileId);
-    } catch (error) {
-      log.error('Failed to initialize AI secret storage', {
-        profileId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-}
-
-function getAIConfigForProfile(profileId: AIConfigProfileId): AIConfigProfile {
-  const baseUrl = getSetting(getAIProfileSettingKey(profileId, 'baseUrl'));
-  const apiKey = getAIProfileApiKey(profileId);
-  const model = getSetting(getAIProfileSettingKey(profileId, 'model'));
-  return {
-    id: profileId,
-    label: profileId === 'primary' ? 'Profile A' : 'Profile B',
-    baseUrl: baseUrl || DEFAULT_CONFIG.baseUrl,
-    apiKey: apiKey || '',
-    model: model || DEFAULT_CONFIG.model,
-  };
-}
-
-export function getAIConfigSnapshot(): AIConfigSnapshot {
-  const activeProfileId = normalizeAIConfigProfileId(getSetting('ai_active_profile'));
-  return {
-    activeProfileId,
-    profiles: {
-      primary: getAIConfigForProfile('primary'),
-      secondary: getAIConfigForProfile('secondary'),
-    },
-  };
-}
-
-export function getAIConfig(): AIConfig {
-  const snapshot = getAIConfigSnapshot();
-  const activeProfile = snapshot.profiles[snapshot.activeProfileId];
-  return {
-    baseUrl: activeProfile.baseUrl,
-    apiKey: activeProfile.apiKey,
-    model: activeProfile.model,
-  };
-}
-
-export function saveAIConfig(config: Partial<AIConfig> & { profileId?: AIConfigProfileId; activeProfileId?: AIConfigProfileId }): void {
-  const profileId = config.profileId ?? normalizeAIConfigProfileId(getSetting('ai_active_profile'));
-  const apiKeyKey = getAIProfileApiKeyKey(profileId);
-
-  if (config.apiKey !== undefined) {
-    const trimmedApiKey = config.apiKey.trim();
-    if (trimmedApiKey) {
-      try {
-        setSecureSetting(apiKeyKey, trimmedApiKey);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to save AI API key securely. ${message}`);
-      }
-    } else {
-      deleteSecureSetting(apiKeyKey);
-      deleteSetting(apiKeyKey);
-    }
-  }
-
-  if (config.baseUrl !== undefined) setSetting(getAIProfileSettingKey(profileId, 'baseUrl'), config.baseUrl);
-  if (config.model !== undefined) setSetting(getAIProfileSettingKey(profileId, 'model'), config.model);
-  if (config.activeProfileId !== undefined) setSetting('ai_active_profile', config.activeProfileId);
-  log.info('AI config saved', { profileId, activeProfileId: config.activeProfileId });
-}
 
 // 鈹€鈹€鈹€ AI Settings 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -489,290 +339,6 @@ function parseCategory(raw: string): Category {
 
   // Attempt 3: fuzzy keyword fallback
   return normalizeCategory(trimmed.slice(0, 50));
-}
-
-// 鈹€鈹€鈹€ AI HTTP Call 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-export function normalizeOpenAICompatibleEndpoint(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) throw new Error('API base URL not configured.');
-
-  const parsed = new URL(trimmed);
-  const basePath = parsed.pathname.replace(/\/+$/, '');
-  const pathname = /\/chat\/completions$/i.test(basePath)
-    ? basePath
-    : `${basePath}/chat/completions`;
-
-  parsed.pathname = pathname.replace(/\/{2,}/g, '/');
-  parsed.hash = '';
-  return parsed.toString();
-}
-
-export function buildOpenAICompatibleRequestBody(config: Pick<AIConfig, 'model'>, request: AIRequest): OpenAICompatibleRequestBody {
-  const messages: OpenAICompatibleMessage[] = [
-    ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
-    { role: 'user', content: request.prompt },
-  ];
-  const body: OpenAICompatibleRequestBody = {
-    model: config.model,
-    messages,
-  };
-
-  if (request.temperature !== undefined && request.temperature !== null) {
-    body.temperature = request.temperature;
-  }
-  if (request.maxTokens !== undefined && request.maxTokens !== null) {
-    body.max_tokens = request.maxTokens;
-  }
-
-  return body;
-}
-
-function getEndpointLogFields(endpoint: string): { endpointHost: string; endpointPath: string } {
-  try {
-    const parsed = new URL(endpoint);
-    return {
-      endpointHost: parsed.host,
-      endpointPath: parsed.pathname,
-    };
-  } catch {
-    return {
-      endpointHost: 'invalid-url',
-      endpointPath: '',
-    };
-  }
-}
-
-function extractTextContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (content && typeof content === 'object' && !Array.isArray(content)) {
-    const item = content as { text?: unknown; value?: unknown; content?: unknown };
-    if (typeof item.text === 'string') return item.text;
-    if (item.text && typeof item.text === 'object' && typeof (item.text as { value?: unknown }).value === 'string') {
-      return (item.text as { value: string }).value;
-    }
-    if (typeof item.value === 'string') return item.value;
-    if (typeof item.content === 'string') return item.content;
-  }
-  if (!Array.isArray(content)) return '';
-
-  return content
-    .map((part) => {
-      if (!part || typeof part !== 'object') return '';
-      const item = part as { type?: unknown; text?: unknown };
-      if (item.type !== undefined && item.type !== 'text') return '';
-      if (typeof item.text === 'string') return item.text;
-      if (item.text && typeof item.text === 'object' && typeof (item.text as { value?: unknown }).value === 'string') {
-        return (item.text as { value: string }).value;
-      }
-      return '';
-    })
-    .filter(Boolean)
-    .join('');
-}
-
-function getObjectKeys(value: unknown): string[] {
-  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
-}
-
-function getValueType(value: unknown): string {
-  if (Array.isArray(value)) return 'array';
-  if (value === null) return 'null';
-  return typeof value;
-}
-
-function getTextPreview(value: unknown): string | undefined {
-  const text = extractTextContent(value).trim();
-  return text ? text.slice(0, 100) : undefined;
-}
-
-export function summarizeOpenAICompatibleResponseStructure(data: unknown) {
-  const root = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const choices = root.choices;
-  const firstChoice = Array.isArray(choices) && choices.length > 0 && choices[0] && typeof choices[0] === 'object'
-    ? choices[0] as Record<string, unknown>
-    : {};
-  const message = firstChoice.message && typeof firstChoice.message === 'object' && !Array.isArray(firstChoice.message)
-    ? firstChoice.message as Record<string, unknown>
-    : {};
-  const content = message.content;
-  const contentType = getValueType(content);
-  const contentPreview = contentType === 'array' || contentType === 'object' ? getTextPreview(content) : undefined;
-
-  return {
-    topLevelKeys: getObjectKeys(data),
-    hasChoices: Array.isArray(choices),
-    choicesLength: Array.isArray(choices) ? choices.length : 0,
-    firstChoiceKeys: getObjectKeys(firstChoice),
-    firstMessageKeys: getObjectKeys(message),
-    firstMessageContentType: contentType,
-    firstMessageContentTextPreview: contentPreview,
-    hasFirstDelta: Boolean(firstChoice.delta),
-    firstFinishReason: typeof firstChoice.finish_reason === 'string' ? firstChoice.finish_reason : null,
-    hasOutput: Object.prototype.hasOwnProperty.call(root, 'output'),
-    hasData: Object.prototype.hasOwnProperty.call(root, 'data'),
-    hasResult: Object.prototype.hasOwnProperty.call(root, 'result'),
-    hasMessage: Object.prototype.hasOwnProperty.call(root, 'message'),
-    hasContent: Object.prototype.hasOwnProperty.call(root, 'content'),
-  };
-}
-
-export function parseOpenAICompatibleResponse(data: unknown): string {
-  if (!data || typeof data !== 'object') return '';
-  const root = data as {
-    choices?: unknown;
-    output_text?: unknown;
-    output?: unknown;
-    data?: unknown;
-    result?: unknown;
-    message?: unknown;
-    content?: unknown;
-  };
-  const choices = root.choices;
-  if (!Array.isArray(choices) || choices.length === 0) {
-    return (
-      extractTextContent(root.output_text) ||
-      extractTextContent(root.output) ||
-      extractTextContent(root.data) ||
-      extractTextContent(root.result) ||
-      extractTextContent(root.message) ||
-      extractTextContent(root.content)
-    );
-  }
-
-  const first = choices[0] as {
-    message?: { content?: unknown; reasoning_content?: unknown };
-    delta?: { content?: unknown; reasoning_content?: unknown };
-    text?: unknown;
-  };
-  return (
-    extractTextContent(first?.message?.content) ||
-    extractTextContent(first?.delta?.content) ||
-    extractTextContent(first?.message?.reasoning_content) ||
-    extractTextContent(first?.delta?.reasoning_content) ||
-    extractTextContent(first?.text)
-  );
-}
-
-function redactApiKey(value: string, apiKey: string): string {
-  return apiKey ? value.split(apiKey).join('[REDACTED_API_KEY]') : value;
-}
-
-function sanitizeProviderError(errorData: unknown, status: number, apiKey: string): string {
-  const error = errorData && typeof errorData === 'object'
-    ? (errorData as { error?: { message?: unknown; type?: unknown }; message?: unknown; type?: unknown })
-    : {};
-  const rawMessage = typeof error.error?.message === 'string'
-    ? error.error.message
-    : typeof error.message === 'string'
-      ? error.message
-      : `HTTP ${status}`;
-  const message = redactApiKey(rawMessage, apiKey);
-  const rawType = typeof error.error?.type === 'string'
-    ? error.error.type
-    : typeof error.type === 'string'
-      ? error.type
-      : '';
-  const type = redactApiKey(rawType, apiKey);
-  const combined = type ? `${message} (${type}, HTTP ${status})` : `${message} (HTTP ${status})`;
-  return combined;
-}
-
-function getOpenAICompatibleProviderErrorHint(endpoint: string, status: number): string {
-  const fields = getEndpointLogFields(endpoint);
-  if (
-    status === 404 &&
-    fields.endpointHost === 'generativelanguage.googleapis.com' &&
-    fields.endpointPath === '/chat/completions'
-  ) {
-    return 'Gemini Base URL may be missing /v1beta/openai.';
-  }
-  if (status === 503) {
-    return 'Provider upstream temporary error / service unavailable.';
-  }
-  return '';
-}
-
-function appendProviderErrorHint(error: string, hint: string): string {
-  return hint ? `${error}. ${hint}` : error;
-}
-
-export async function callAI(request: AIRequest): Promise<AIResponse> {
-  const config = getAIConfig();
-
-  if (!config.apiKey) return { success: false, error: 'API key not configured. Please set your AI API key in Settings.' };
-  if (!config.baseUrl) return { success: false, error: 'API base URL not configured.' };
-
-  try {
-    const endpoint = normalizeOpenAICompatibleEndpoint(config.baseUrl);
-    const endpointLogFields = getEndpointLogFields(endpoint);
-    const body = buildOpenAICompatibleRequestBody(config, request);
-    log.info('OpenAI-compatible request', {
-      providerType: 'openai-compatible',
-      ...endpointLogFields,
-      model: config.model,
-    });
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-    log.info('OpenAI-compatible response status', {
-      providerType: 'openai-compatible',
-      ...endpointLogFields,
-      model: config.model,
-      status: response.status,
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const error = appendProviderErrorHint(
-        sanitizeProviderError(errorData, response.status, config.apiKey),
-        getOpenAICompatibleProviderErrorHint(endpoint, response.status),
-      );
-      log.warn('OpenAI-compatible provider error', {
-        providerType: 'openai-compatible',
-        ...endpointLogFields,
-        model: config.model,
-        status: response.status,
-        providerError: error,
-      });
-      return { success: false, error };
-    }
-
-    const data = await response.json();
-
-    if (data && typeof data === 'object' && 'error' in data) {
-      const error = sanitizeProviderError(data, response.status, config.apiKey);
-      log.warn('OpenAI-compatible provider error', {
-        providerType: 'openai-compatible',
-        ...endpointLogFields,
-        model: config.model,
-        status: response.status,
-        providerError: error,
-      });
-      return { success: false, error };
-    }
-
-    const content = parseOpenAICompatibleResponse(data);
-    if (!content) {
-      log.warn('OpenAI-compatible response content missing', {
-        providerType: 'openai-compatible',
-        ...endpointLogFields,
-        model: config.model,
-        status: response.status,
-        responseStructure: summarizeOpenAICompatibleResponseStructure(data),
-      });
-      return { success: false, error: 'No content in AI response' };
-    }
-
-    return { success: true, content };
-  } catch (err) {
-    return { success: false, error: redactApiKey((err as Error).message, config.apiKey) };
-  }
 }
 
 // 鈹€鈹€鈹€ Batch Classification 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
