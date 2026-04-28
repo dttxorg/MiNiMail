@@ -71,7 +71,7 @@ This engineering repository keeps the source code, release documentation, and a 
 
 ## License
 
-This project is licensed under the Apache License 2.0.
+This project is licensed under the [Apache License 2.0](../LICENSE).
 
 ## Contributing
 

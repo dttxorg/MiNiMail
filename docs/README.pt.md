@@ -71,7 +71,7 @@ Este repositório de engenharia mantém o código-fonte, a documentação de lan
 
 ## Licença
 
-Este projeto é licenciado sob Apache License 2.0.
+Este projeto é licenciado sob [Apache License 2.0](../LICENSE).
 
 ## Contribuição
 

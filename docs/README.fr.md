@@ -71,7 +71,7 @@ Ce dépôt d'ingénierie conserve le code source, la documentation de publicatio
 
 ## Licence
 
-Ce projet est publié sous Apache License 2.0.
+Ce projet est publié sous [Apache License 2.0](../LICENSE).
 
 ## Contribution
 

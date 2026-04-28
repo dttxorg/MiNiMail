@@ -5,3 +5,7 @@
 简体中文主文档在 [../README.md](../README.md)。
 
 请返回根目录 [README.md](../README.md) 查看完整中文说明。
+
+## 开源协议
+
+本项目采用 [Apache License 2.0](../LICENSE) 开源协议。

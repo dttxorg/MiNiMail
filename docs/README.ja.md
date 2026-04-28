@@ -71,7 +71,7 @@ npm run test:release
 
 ## ライセンス
 
-このプロジェクトは Apache License 2.0 の下で公開されています。
+このプロジェクトは [Apache License 2.0](../LICENSE) の下で公開されています。
 
 ## コントリビューション
 

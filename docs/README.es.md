@@ -71,7 +71,7 @@ Este repositorio de ingeniería conserva el código fuente, la documentación de
 
 ## Licencia
 
-Este proyecto se publica bajo Apache License 2.0.
+Este proyecto se publica bajo [Apache License 2.0](../LICENSE).
 
 ## Contribuir
 

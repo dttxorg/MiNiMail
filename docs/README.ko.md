@@ -71,7 +71,7 @@ npm run test:release
 
 ## 라이선스
 
-이 프로젝트는 Apache License 2.0으로 배포됩니다.
+이 프로젝트는 [Apache License 2.0](../LICENSE)으로 배포됩니다.
 
 ## 기여
 
