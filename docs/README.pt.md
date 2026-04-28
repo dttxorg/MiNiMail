@@ -67,7 +67,7 @@ O estudo de caso completo de UI/UX será adicionado em um repositório de design
 
 As informações sobre contribuidores de design serão adicionadas antes do lançamento público.
 
-Este repositório de engenharia mantém o código-fonte, a documentação de lançamento e uma breve visão geral de design. Veja [design.md](design.md) para mais contexto.
+完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
 ## Licença
 

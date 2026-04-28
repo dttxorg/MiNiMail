@@ -67,7 +67,7 @@ The full UI/UX case study will be added in a separate design repository.
 
 Design contributor information will be added before public release.
 
-This engineering repository keeps the source code, release documentation, and a short design overview. See [design.md](design.md) for more context.
+完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
 ## License
 

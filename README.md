@@ -67,7 +67,7 @@ npm run test:release
 
 设计贡献者信息将在公开发布前补充。
 
-工程仓库目前保留源码、发布文档和简短设计说明。更多设计背景见 [docs/design.md](docs/design.md)。
+完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
 ## 开源协议
 

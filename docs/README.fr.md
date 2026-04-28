@@ -67,7 +67,7 @@ L'étude de cas UI/UX complète sera ajoutée dans un dépôt de design séparé
 
 Les informations sur les contributeurs design seront ajoutées avant la publication publique.
 
-Ce dépôt d'ingénierie conserve le code source, la documentation de publication et un bref aperçu du design. Voir [design.md](design.md) pour plus de contexte.
+完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
 ## Licence
 

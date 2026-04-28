@@ -67,7 +67,7 @@ Die vollständige UI/UX case study wird in einem separaten Design-Repository erg
 
 Informationen zu Design-Beitragenden werden vor der öffentlichen Veröffentlichung ergänzt.
 
-Dieses Engineering-Repository enthält Quellcode, Release-Dokumentation und eine kurze Designübersicht. Weitere Informationen stehen in [design.md](design.md).
+完整 UI/UX case study 将由设计贡献者后续通过独立 PR 补充。
 
 ## Lizenz
 
