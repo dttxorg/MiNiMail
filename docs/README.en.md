@@ -31,7 +31,7 @@ It combines a local-first mail cache with privacy-aware AI features for summariz
 ![MiNiMail demo video cover](assets/screenshots/demo-cover.png)
 
 - YouTube: To be added
-- Bilibili: To be added
+- Bilibili: https://www.bilibili.com/video/BV1Q89kBuEL9/
 
 ## Support
 

@@ -11,7 +11,7 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 ## Demo / Support
 
 - YouTube : à compléter
-- Bilibili : à compléter
+- Bilibili : https://www.bilibili.com/video/BV1Q89kBuEL9/
 - Les stars, issues, retours et tests sont bienvenus.
 
 ## Points Forts

@@ -11,7 +11,7 @@ MiNiMail は、日常のメールをより読みやすく、理解しやすく�
 ## Demo / Support
 
 - YouTube：待補充
-- Bilibili：待補充
+- Bilibili：https://www.bilibili.com/video/BV1Q89kBuEL9/
 - Star、issue、フィードバック、テスト参加を歓迎します。
 
 ## 主な特徴

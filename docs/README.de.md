@@ -11,7 +11,7 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 ## Demo / Support
 
 - YouTube: To be added
-- Bilibili: To be added
+- Bilibili: https://www.bilibili.com/video/BV1Q89kBuEL9/
 - Stars, Issues, Feedback und Testbeteiligung sind willkommen.
 
 ## Kernfunktionen

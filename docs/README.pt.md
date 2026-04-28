@@ -11,7 +11,7 @@ Ele combina um cache de e-mail local-first com recursos AI atentos à privacidad
 ## Demo / Support
 
 - YouTube: a adicionar
-- Bilibili: a adicionar
+- Bilibili: https://www.bilibili.com/video/BV1Q89kBuEL9/
 - Stars, issues, feedback e participação em testes são bem-vindos.
 
 ## Principais Destaques

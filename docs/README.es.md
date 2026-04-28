@@ -11,7 +11,7 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 ## Demo / Support
 
 - YouTube: por añadir
-- Bilibili: por añadir
+- Bilibili: https://www.bilibili.com/video/BV1Q89kBuEL9/
 - Se agradecen stars, issues, comentarios y participación en pruebas.
 
 ## Puntos Destacados

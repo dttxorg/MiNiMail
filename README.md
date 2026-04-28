@@ -31,7 +31,7 @@ MiNiMail 是一款 AI 原生桌面邮件客户端，目标是让日常邮件更�
 ![MiNiMail 演示视频封面](docs/assets/screenshots/demo-cover.png)
 
 - YouTube：待补充
-- Bilibili：待补充
+- Bilibili：https://www.bilibili.com/video/BV1Q89kBuEL9/
 
 ## 支持项目
 
