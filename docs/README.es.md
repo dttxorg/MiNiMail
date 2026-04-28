@@ -19,7 +19,7 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 - Caché local-first para listas de correo, cuerpos de mensaje y metadatos de adjuntos.
 - Resúmenes AI, sugerencias de respuesta, traducción, enrutamiento y extracción estructurada de información clave.
 - Categorías AI genéricas y enrutamiento dedicado para notificaciones de GitHub.
-- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales.
+- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales según las necesidades de privacidad, el costo y los hábitos de uso.
 - Bloquea por defecto imágenes remotas y píxeles de seguimiento.
 - Sanitiza el correo HTML antes de renderizarlo.
 - Soporta redacción, borradores, adjuntos, recuperación de correo enviado y deshacer envío durante 5 segundos.
@@ -29,7 +29,7 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 
 MiNiMail está diseñado alrededor del control del usuario.
 
-- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales.
+- Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales según las necesidades de privacidad, el costo y los hábitos de uso.
 - El procesamiento del correo se diseña con privacidad por defecto.
 - Las imágenes remotas y los píxeles de seguimiento se bloquean por defecto.
 - El correo HTML se sanitiza antes de renderizarse.
@@ -52,7 +52,6 @@ MiNiMail se centra actualmente en mejorar la experiencia de escritorio en Window
 - Soporte para macOS Desktop.
 - Experiencias móviles, incluidas iOS, Android y otras plataformas posibles.
 - Modos de privacidad local más completos y funciones de conocimiento de correo AI.
-- Un sistema de diseño más completo, documentación de interacción y documentos multilingües.
 
 Estas direcciones avanzarán según la estabilidad, el coste de mantenimiento y los comentarios reales de los usuarios. No se prometen fechas de lanzamiento.
 

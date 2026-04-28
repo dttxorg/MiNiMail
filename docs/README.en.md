@@ -78,7 +78,6 @@ MiNiMail is currently focused on improving the Windows desktop experience. After
 - macOS desktop support.
 - Mobile experiences, including iOS, Android, and other possible platforms.
 - More complete local privacy modes and AI mail knowledge features.
-- A fuller design system, interaction documentation, and multilingual docs.
 
 These directions will move forward based on stability, maintenance cost, and real user feedback. No release dates are promised.
 

@@ -19,7 +19,7 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 - Lokales Caching von E-Mail-Listen, Nachrichteninhalten und Anhangsmetadaten.
 - AI-Zusammenfassungen, Antwortvorschläge, Übersetzung, Routing und strukturierte Extraktion wichtiger Informationen.
 - Allgemeine AI-Kategorien sowie spezielles Routing für GitHub-Benachrichtigungen.
-- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer zwischen Cloud- und lokalen Modellen wählen können.
+- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer je nach Datenschutzbedarf, Kosten und Nutzungsgewohnheiten zwischen Cloud- und lokalen Modellen wählen können.
 - Blockiert Remote-Bilder und Tracking-Pixel standardmäßig.
 - Bereinigt HTML-E-Mails vor dem Rendern.
 - Unterstützt Schreiben, Entwürfe, Anhänge, Wiederherstellung gesendeter E-Mails und 5-Sekunden-Undo-Send.
@@ -29,7 +29,7 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 
 MiNiMail ist auf Nutzerkontrolle ausgelegt.
 
-- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer zwischen Cloud- und lokalen Modellen wählen können.
+- Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer je nach Datenschutzbedarf, Kosten und Nutzungsgewohnheiten zwischen Cloud- und lokalen Modellen wählen können.
 - Die Verarbeitung von E-Mail-Inhalten ist datenschutzbewusst gestaltet.
 - Remote-Bilder und Tracking-Pixel werden standardmäßig blockiert.
 - HTML-E-Mails werden vor dem Rendern bereinigt.
@@ -52,7 +52,6 @@ MiNiMail konzentriert sich derzeit auf die Windows-Desktop-Erfahrung. Nach weite
 - Unterstützung für macOS Desktop.
 - Mobile Erfahrungen, einschließlich iOS, Android und weiterer möglicher Plattformen.
 - Ausgereiftere lokale Datenschutzmodi und AI-Mail-Wissensfunktionen.
-- Vollständigeres Designsystem, Interaktionsdokumentation und mehrsprachige Dokumentation.
 
 Diese Richtungen werden abhängig von Stabilität, Wartungsaufwand und echtem Nutzerfeedback schrittweise verfolgt. Konkrete Veröffentlichungstermine werden nicht zugesagt.
 

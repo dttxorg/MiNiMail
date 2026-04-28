@@ -19,7 +19,7 @@ Ele combina um cache de e-mail local-first com recursos AI atentos à privacidad
 - Cache local-first para listas de e-mail, corpos de mensagem e metadados de anexos.
 - Resumos AI, sugestões de resposta, tradução, roteamento e extração estruturada de informações importantes.
 - Categorias AI genéricas e roteamento dedicado para notificações do GitHub.
-- Suporta APIs compatíveis com OpenAI e grandes modelos de linguagem locais, permitindo que os usuários escolham entre modelos em nuvem e locais.
+- Suporta APIs compatíveis com OpenAI e grandes modelos de linguagem locais, permitindo que os usuários escolham entre modelos em nuvem e locais conforme suas necessidades de privacidade, custos e hábitos de uso.
 - Bloqueia imagens remotas e pixels de rastreamento por padrão.
 - Sanitiza e-mails HTML antes da renderização.
 - Suporta composição, rascunhos, anexos, recuperação de e-mails enviados e desfazer envio por 5 segundos.
@@ -29,7 +29,7 @@ Ele combina um cache de e-mail local-first com recursos AI atentos à privacidad
 
 MiNiMail é projetado em torno do controle do usuário.
 
-- Suporta APIs compatíveis com OpenAI e grandes modelos de linguagem locais, permitindo que os usuários escolham entre modelos em nuvem e locais.
+- Suporta APIs compatíveis com OpenAI e grandes modelos de linguagem locais, permitindo que os usuários escolham entre modelos em nuvem e locais conforme suas necessidades de privacidade, custos e hábitos de uso.
 - O processamento de e-mails considera a privacidade por padrão.
 - Imagens remotas e pixels de rastreamento são bloqueados por padrão.
 - E-mails HTML são sanitizados antes da renderização.
@@ -52,7 +52,6 @@ MiNiMail está atualmente focado em melhorar a experiência desktop no Windows. 
 - Suporte para macOS Desktop.
 - Experiências móveis, incluindo iOS, Android e outras plataformas possíveis.
 - Modos de privacidade local mais completos e recursos de conhecimento de e-mail AI.
-- Um sistema de design mais completo, documentação de interação e documentos multilíngues.
 
 Essas direções avançarão com base na estabilidade, custo de manutenção e feedback real dos usuários. Nenhuma data de lançamento é prometida.
 

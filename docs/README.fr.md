@@ -19,7 +19,7 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 - Cache local-first pour les listes d'e-mails, les corps de message et les métadonnées des pièces jointes.
 - Résumés AI, suggestions de réponse, traduction, routage et extraction structurée des informations clés.
 - Catégories AI génériques et routage dédié pour les notifications GitHub.
-- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux.
+- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux selon leurs besoins de confidentialité, leurs coûts et leurs habitudes d'utilisation.
 - Bloque par défaut les images distantes et les pixels de suivi.
 - Nettoie les e-mails HTML avant le rendu.
 - Prend en charge la rédaction, les brouillons, les pièces jointes, la récupération des e-mails envoyés et l'annulation d'envoi pendant 5 secondes.
@@ -29,7 +29,7 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 
 MiNiMail est conçu autour du contrôle utilisateur.
 
-- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux.
+- Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux selon leurs besoins de confidentialité, leurs coûts et leurs habitudes d'utilisation.
 - Le traitement des e-mails est pensé avec la confidentialité par défaut.
 - Les images distantes et les pixels de suivi sont bloqués par défaut.
 - Les e-mails HTML sont nettoyés avant le rendu.
@@ -52,7 +52,6 @@ MiNiMail se concentre actuellement sur l'amélioration de l'expérience Windows 
 - La prise en charge de macOS Desktop.
 - Des expériences mobiles, notamment iOS, Android et d'autres plateformes possibles.
 - Des modes de confidentialité locale plus complets et des fonctions de connaissance e-mail AI.
-- Un système de design plus complet, une documentation d'interaction et des documents multilingues.
 
 Ces orientations avanceront selon la stabilité, le coût de maintenance et les retours réels des utilisateurs. Aucune date de sortie n'est promise.
 
