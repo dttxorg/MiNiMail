@@ -131,11 +131,13 @@ function createEnvironment(encryptionAvailable) {
     electron: electronMock,
     'electron-log': logModule,
   });
+  const databasePathModule = loadTsModule(path.join(process.cwd(), 'src', 'main', 'databasePath.ts'));
 
   const databaseModule = loadTsModule(path.join(process.cwd(), 'src', 'main', 'database.ts'), {
     electron: electronMock,
     'electron-log': logModule,
     './services/crypto': cryptoModule,
+    './databasePath': databasePathModule,
     'better-sqlite3': createFakeBetterSqlite3(),
   });
 

@@ -15,7 +15,7 @@ log.transports.file.level = 'info';
 log.transports.console.level = 'debug';
 
 // Log app start
-log.info('APark Mail starting...');
+log.info('MiNiMail starting...');
 log.info(`App path: ${app.getPath('userData')}`);
 
 // Handle uncaught exceptions

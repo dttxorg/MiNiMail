@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
-import path from 'path';
 import { app } from 'electron';
 import log from 'electron-log';
 import { encryptCredential, decryptCredential, isEncryptionAvailable } from './services/crypto';
+import { resolveDatabasePath } from './databasePath';
 
 let db: Database.Database | null = null;
 
@@ -32,7 +32,7 @@ export interface AccountWithPassword extends Account {
 
 function getDbPath(): string {
   const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'apark.db');
+  return resolveDatabasePath(userDataPath, { logger: log });
 }
 
 export function initDatabase(): void {

@@ -42,6 +42,11 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/ai-prompts.test.ts'],
   },
   {
+    name: 'project rename compatibility regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/project-rename-compat.test.ts'],
+  },
+  {
     name: 'AI key info i18n regression',
     command: process.execPath,
     args: ['scripts/ai-key-info-i18n-regression.test.cjs'],

@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { resolveDefaultMailCacheDbPath } from './routing-diagnostics-path';
 import {
   buildGitHubSampleExport,
   buildNeedsReplyCandidateExport,
@@ -102,17 +104,6 @@ function parseArgs(argv: string[]): CliOptions {
     appLanguage: options.appLanguage || 'en',
     mode: options.mode || 'routing',
   };
-}
-
-export function resolveDefaultMailCacheDbPath(): string {
-  const roots = [process.env.APPDATA, process.env.HOME, process.cwd()].filter(Boolean) as string[];
-  const candidates = roots.flatMap((root) => [
-    path.join(root, 'MinNiMail', 'mail_cache.db'),
-    path.join(root, 'apark', 'mail_cache.db'),
-  ]);
-
-  const existing = candidates.find((candidate) => fs.existsSync(candidate));
-  return existing || candidates[0];
 }
 
 function buildQuery(options: CliOptions): { sql: string; params: Array<string | number> } {
@@ -296,4 +287,6 @@ function main() {
   logRoutingSummary(exportResult, options.outPath);
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
