@@ -9,7 +9,7 @@
     "dev:electron": "wait-on tcp:5173 && electron .",
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
-    "build:electron": "tsc -p tsconfig.main.json",
+    "build:electron": "tsc -b tsconfig.main.json --force",
     "test:release": "node scripts/test-release.cjs",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir"
