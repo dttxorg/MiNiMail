@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:getSettings',
       'ai:saveSettings',
       'ai:testConnection',
+      'ai:fetchModels',
       'ai:translate',
       'ai:translateSegments',
       'ai:summarize',

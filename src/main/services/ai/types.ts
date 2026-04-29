@@ -89,6 +89,29 @@ export interface AIProviderTestConnectionResult {
   error?: string;
 }
 
+export interface AIProviderModelListRequest {
+  profileId?: AIConfigProfileId;
+  providerId?: string;
+  providerLabel?: string;
+  baseUrl: string;
+  apiKey?: string;
+  model?: string;
+  localProvider?: boolean;
+}
+
+export interface AIProviderModelListResult {
+  success: boolean;
+  provider: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost: string;
+  endpointPath: string;
+  status?: number;
+  models?: string[];
+  error?: string;
+}
+
 export const DEFAULT_CONFIG: AIConfig = {
   baseUrl: 'https://api.openai.com/v1',
   apiKey: '',

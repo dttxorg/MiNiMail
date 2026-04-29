@@ -30,6 +30,7 @@ import type { AiPrivacyMode } from '../../shared/email-ai';
 import {
   findOpenAICompatiblePresetByBaseUrl,
   normalizeOpenAICompatibleChatEndpoint,
+  normalizeOpenAICompatibleModelsEndpoint,
   OPENAI_COMPATIBLE_PROVIDER_PRESETS,
   type OpenAICompatibleProviderPresetId,
 } from '../../shared/openaiCompatibleProviderPresets';
@@ -125,6 +126,19 @@ type AIProviderConnectionTestResult = {
   model?: string;
   status?: number;
   parsedPreview?: string;
+  error?: string;
+};
+
+type AIProviderModelListResult = {
+  success: boolean;
+  provider?: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost?: string;
+  endpointPath?: string;
+  status?: number;
+  models?: string[];
   error?: string;
 };
 
@@ -907,6 +921,9 @@ export function SettingsModal({
   const [apiProfiles, setApiProfiles] = useState<Record<AIConfigProfileId, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<AIProviderConnectionTestResult | null>(null);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [modelListResult, setModelListResult] = useState<AIProviderModelListResult | null>(null);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -922,6 +939,27 @@ export function SettingsModal({
       return '';
     }
   }, [selectedApiProfileForm.baseUrl]);
+  const modelsEndpointPreview = useMemo(() => {
+    try {
+      return selectedApiProfileForm.baseUrl.trim()
+        ? normalizeOpenAICompatibleModelsEndpoint(selectedApiProfileForm.baseUrl)
+        : '';
+    } catch {
+      return '';
+    }
+  }, [selectedApiProfileForm.baseUrl]);
+  const visibleModelOptions = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    return models
+      .filter((model) => !query || model.toLowerCase().includes(query))
+      .slice(0, 100);
+  }, [modelListResult, modelSearchQuery]);
+  const modelMatchCount = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    return query ? models.filter((model) => model.toLowerCase().includes(query)).length : models.length;
+  }, [modelListResult, modelSearchQuery]);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const cacheRangeOptions = useMemo(() => getMailCacheRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
@@ -936,6 +974,8 @@ export function SettingsModal({
     setActiveNav('accounts');
     setApiSaveError(null);
     setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
   }, [isOpen]);
 
   useEffect(() => {
@@ -984,8 +1024,16 @@ export function SettingsModal({
     })();
   }, [isOpen]);
 
+  useEffect(() => {
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
+  }, [selectedApiProfile]);
+
   function updateSelectedApiProfile(patch: Partial<AIConfigProfileForm>) {
     setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
     setApiProfiles((prev) => ({
       ...prev,
       [selectedApiProfile]: {
@@ -993,6 +1041,33 @@ export function SettingsModal({
         ...patch,
       },
     }));
+  }
+
+  async function handleFetchModels() {
+    setIsFetchingModels(true);
+    setModelListResult(null);
+    setModelSearchQuery('');
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:fetchModels', {
+        profileId: selectedApiProfile,
+        providerId: selectedProviderPreset.id,
+        providerLabel: selectedProviderPreset.label,
+        baseUrl: selectedApiProfileForm.baseUrl,
+        apiKey: selectedApiProfileForm.apiKey.trim() || undefined,
+        model: selectedApiProfileForm.model,
+        localProvider: Boolean(selectedProviderPreset.isLocal),
+      }) as AIProviderModelListResult;
+      setModelListResult(response);
+    } catch (error) {
+      setModelListResult({
+        success: false,
+        provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        error: (error as Error).message,
+      });
+    } finally {
+      setIsFetchingModels(false);
+    }
   }
 
   async function handleTestConnection() {
@@ -1662,6 +1737,75 @@ export function SettingsModal({
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
+                </div>
+                <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]" style={{ color: '#8e8e93' }}>Models endpoint</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleFetchModels()}
+                      disabled={isFetchingModels || !selectedApiProfileForm.baseUrl.trim()}
+                      className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {isFetchingModels ? 'Fetching...' : 'Fetch models'}
+                    </button>
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: modelsEndpointPreview ? '#c7c7cc' : '#636366' }}>
+                    {modelsEndpointPreview || 'Enter a Base URL to preview the models endpoint.'}
+                  </div>
+                  {selectedProviderPreset.isLocal && (
+                    <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      Local providers require the local server to be running.
+                    </div>
+                  )}
+                  {modelListResult && (
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult.success ? '#c7c7cc' : '#ff6b6b' }}>
+                      {(modelListResult.endpointHost || modelListResult.endpointPath) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {modelListResult.endpointHost || 'unknown-host'} {modelListResult.endpointPath || ''}
+                          {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                        </div>
+                      )}
+                      {modelListResult.success ? (
+                        <>
+                          <div style={{ color: '#30d158' }}>
+                            {modelListResult.models?.length ? `${modelListResult.models.length} models found` : 'No models returned'}
+                          </div>
+                          {(modelListResult.models?.length ?? 0) > 0 && (
+                            <>
+                              <input
+                                type="search"
+                                aria-label="Search models"
+                                placeholder="Search models"
+                                value={modelSearchQuery}
+                                onChange={(e) => setModelSearchQuery(e.target.value)}
+                                className="mt-2 w-full py-1.5 px-2.5 rounded-md text-[10px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#161618' }}
+                              />
+                              <div className="mt-1 text-[10px]" style={{ color: '#8e8e93' }}>
+                                Showing {visibleModelOptions.length} of {modelMatchCount} matches
+                              </div>
+                              <div className="mt-1 max-h-36 overflow-y-auto rounded-md" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                                {visibleModelOptions.map((model) => (
+                                  <button
+                                    key={model}
+                                    type="button"
+                                    onClick={() => updateSelectedApiProfile({ model })}
+                                    className="block w-full px-2 py-1.5 text-left text-[10px] text-white cursor-pointer hover:bg-zinc-800"
+                                  >
+                                    {model}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <div>{modelListResult.error || 'Failed to fetch models'}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
                   <div className="flex items-center justify-between gap-2">

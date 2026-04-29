@@ -81,7 +81,7 @@ function loadAiService(config = {}) {
     ai_privacy_mode: 'cloud_raw',
   };
   const secureValues = {
-    ai_api_key: config.apiKey || 'test-api-key',
+    ai_api_key: Object.prototype.hasOwnProperty.call(config, 'apiKey') ? config.apiKey : 'test-api-key',
   };
   const logs = [];
   const logStub = {
@@ -172,6 +172,24 @@ async function testEndpointNormalization() {
 
   for (const [input, expected] of cases) {
     assert.strictEqual(aiModule.normalizeOpenAICompatibleEndpoint(input), expected, `expected normalized endpoint for ${input}`);
+  }
+}
+
+function testModelEndpointNormalization() {
+  const { aiModule } = loadAiService();
+  const cases = [
+    ['https://api.siliconflow.cn/v1', 'https://api.siliconflow.cn/v1/models'],
+    ['https://api.siliconflow.cn/v1/chat/completions', 'https://api.siliconflow.cn/v1/models'],
+    ['https://generativelanguage.googleapis.com/v1beta/openai/', 'https://generativelanguage.googleapis.com/v1beta/openai/models'],
+    ['http://localhost:1234/v1', 'http://localhost:1234/v1/models'],
+  ];
+
+  for (const [input, expected] of cases) {
+    assert.strictEqual(
+      aiModule.normalizeOpenAICompatibleModelListEndpoint(input),
+      expected,
+      `expected ${input} to normalize to models endpoint`,
+    );
   }
 }
 
@@ -737,8 +755,183 @@ async function testConnectionReasoningOnlyResponseFailsCleanly() {
   assert(!JSON.stringify(response).includes('hidden reasoning only'), 'reasoning content must not be returned to renderer');
 }
 
+function testModelListParserVariants() {
+  const { aiModule } = loadAiService();
+
+  assert.deepStrictEqual(
+    aiModule.parseOpenAICompatibleModelList({
+      data: [
+        { id: 'Pro/zai-org/GLM-4.7' },
+        { id: 'openai/gpt-4o-mini' },
+      ],
+    }),
+    ['Pro/zai-org/GLM-4.7', 'openai/gpt-4o-mini'],
+    'expected OpenAI-style data objects to parse',
+  );
+
+  assert.deepStrictEqual(
+    aiModule.parseOpenAICompatibleModelList({ data: ['model-a', 'vendor/model:b.1'] }),
+    ['model-a', 'vendor/model:b.1'],
+    'expected string model arrays to parse',
+  );
+
+  assert.deepStrictEqual(
+    aiModule.parseOpenAICompatibleModelList({
+      models: [
+        { id: 'local/model:latest' },
+        { id: 'local/model:latest' },
+        { name: 'fallback-name' },
+      ],
+    }),
+    ['local/model:latest', 'fallback-name'],
+    'expected models objects to parse and deduplicate',
+  );
+}
+
+async function testFetchModelsUsesNormalizedEndpointAndBearerAuth() {
+  const apiKey = 'secret-compatible-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+    apiKey,
+  });
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({
+      data: [
+        { id: 'Pro/zai-org/GLM-4.7' },
+        { id: 'Qwen/Qwen3.6-35B-A3B' },
+      ],
+    });
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(response.endpointHost, 'api.siliconflow.cn');
+  assert.strictEqual(response.endpointPath, '/v1/models');
+  assert.deepStrictEqual(response.models, ['Pro/zai-org/GLM-4.7', 'Qwen/Qwen3.6-35B-A3B']);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].url, 'https://api.siliconflow.cn/v1/models');
+  assert.strictEqual(calls[0].options.method, 'GET');
+  assert.strictEqual(calls[0].options.headers.Authorization, `Bearer ${apiKey}`);
+  assert(!JSON.stringify(logs).includes(apiKey), 'model list logs must not leak API key');
+}
+
+async function testFetchModelsKeepsGeminiBasePath() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    apiKey: 'secret-gemini-key',
+  });
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({ data: ['gemini-2.5-flash', 'gemini-3-flash-preview'] });
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'gemini',
+    providerLabel: 'Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(calls[0].url, 'https://generativelanguage.googleapis.com/v1beta/openai/models');
+  assert.strictEqual(response.endpointPath, '/v1beta/openai/models');
+  assert.deepStrictEqual(response.models, ['gemini-2.5-flash', 'gemini-3-flash-preview']);
+}
+
+async function testFetchModelsAllowsLocalProviderWithoutApiKey() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'http://localhost:1234/v1',
+    apiKey: '',
+  });
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({ data: [{ id: 'local/model:latest' }] });
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'lm-studio',
+    providerLabel: 'LM Studio',
+    baseUrl: 'http://localhost:1234/v1',
+    localProvider: true,
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(calls[0].url, 'http://localhost:1234/v1/models');
+  assert(!('Authorization' in calls[0].options.headers), 'local model list request should allow no Authorization header');
+  assert.deepStrictEqual(response.models, ['local/model:latest']);
+}
+
+async function testFetchModelsRequiresApiKeyForRemoteProvider() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey: '',
+  });
+  let fetchCalled = false;
+  global.fetch = async () => {
+    fetchCalled = true;
+    return createFetchResponse({ data: [] });
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(fetchCalled, false);
+  assert(String(response.error).includes('API key not configured'));
+}
+
+async function testFetchModelsProviderErrorIsRedacted() {
+  const apiKey = 'secret-compatible-key';
+  const { aiModule, logs } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey,
+  });
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    text: async () => JSON.stringify({
+      error: {
+        message: `Quota exceeded for ${apiKey}`,
+        code: 'rate_limit_exceeded',
+        status: 'RESOURCE_EXHAUSTED',
+      },
+    }),
+  });
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.status, 429);
+  assert(String(response.error).includes('[REDACTED_API_KEY]'), 'model list error should redact API key');
+  assert(String(response.error).includes('status: RESOURCE_EXHAUSTED'), 'model list error should include provider status');
+  assert(String(response.error).includes('code: rate_limit_exceeded'), 'model list error should include provider code');
+  assert(!JSON.stringify(response).includes(apiKey), 'model list response must not leak API key');
+  assert(!JSON.stringify(logs).includes(apiKey), 'model list logs must not leak API key');
+}
+
 async function run() {
   await testEndpointNormalization();
+  testModelEndpointNormalization();
   testProviderPresetCatalog();
   testProviderPresetEndpointNormalization();
   testConfigSaveReadPreservesBaseUrlPathname();
@@ -759,6 +952,12 @@ async function run() {
   await testConnectionGemini429JsonErrorBodyIsParsedAndRedacted();
   await testConnectionPlainTextErrorBodyIsRedactedAndTruncated();
   await testConnectionReasoningOnlyResponseFailsCleanly();
+  testModelListParserVariants();
+  await testFetchModelsUsesNormalizedEndpointAndBearerAuth();
+  await testFetchModelsKeepsGeminiBasePath();
+  await testFetchModelsAllowsLocalProviderWithoutApiKey();
+  await testFetchModelsRequiresApiKeyForRemoteProvider();
+  await testFetchModelsProviderErrorIsRedacted();
   console.log('openai compatible provider tests passed');
 }
 

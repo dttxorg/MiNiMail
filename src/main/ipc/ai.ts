@@ -3,6 +3,7 @@ import log from 'electron-log';
 import {
   getAIConfig,
   getAIConfigSnapshot,
+  fetchOpenAICompatibleModels,
   saveAIConfig,
   testOpenAICompatibleConnection,
   getAISettings,
@@ -21,6 +22,7 @@ import {
   type AISettings,
   type AIEmailSource,
   type AIProviderTestConnectionRequest,
+  type AIProviderModelListRequest,
 } from '../services/ai';
 
 export function registerAIHandlers(): void {
@@ -76,6 +78,14 @@ export function registerAIHandlers(): void {
   ipcMain.handle('ai:testConnection', async (_event, request: AIProviderTestConnectionRequest) => {
     try {
       return await testOpenAICompatibleConnection(request);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:fetchModels', async (_event, request: AIProviderModelListRequest) => {
+    try {
+      return await fetchOpenAICompatibleModels(request);
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }

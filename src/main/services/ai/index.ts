@@ -7,6 +7,8 @@ export type {
   AIEmailSource,
   AIProviderTestConnectionRequest,
   AIProviderTestConnectionResult,
+  AIProviderModelListRequest,
+  AIProviderModelListResult,
   AIRequest,
   AIResponse,
   AITranslateSegmentsResponse,
@@ -23,7 +25,12 @@ export {
   saveAIConfig,
 } from './aiConfigStore';
 export { normalizeOpenAICompatibleEndpoint } from './endpointNormalizer';
+export { normalizeOpenAICompatibleModelListEndpoint } from './endpointNormalizer';
 export { buildOpenAICompatibleRequestBody } from './requestSanitizer';
+export {
+  fetchOpenAICompatibleModels,
+  parseOpenAICompatibleModelList,
+} from './modelListService';
 export { getReasoningContentDiagnostics } from './reasoningFilter';
 export {
   parseOpenAICompatibleResponse,
