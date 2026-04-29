@@ -621,6 +621,40 @@ async function testConnectionUsesMinimalPromptAndSanitizedResult() {
   assert(!JSON.stringify(response).includes(apiKey), 'test connection response must not leak API key');
 }
 
+async function testConnectionUsesProviderAccountKey() {
+  const { aiModule, dbValues, secureValues, logs } = loadAiService({ apiKey: '' });
+  dbValues.ai_provider_accounts = JSON.stringify([
+    {
+      providerAccountId: 'account_test_connection',
+      providerPresetId: 'gemini',
+      label: 'Gemini Account',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      isLocal: false,
+      createdAt: '2026-01-14T00:00:00.000Z',
+      updatedAt: '2026-01-14T00:00:00.000Z',
+    },
+  ]);
+  secureValues.ai_provider_account_api_key_account_test_connection = 'secret-account-test-key';
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({ choices: [{ message: { content: 'OK' } }] });
+  };
+
+  const response = await aiModule.testOpenAICompatibleConnection({
+    providerAccountId: 'account_test_connection',
+    providerId: 'gemini',
+    providerLabel: 'Gemini',
+    baseUrl: '',
+    model: 'gemini-2.5-flash',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(calls[0].url, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret-account-test-key');
+  assert(!JSON.stringify(logs).includes('secret-account-test-key'), 'provider account key must not leak in test logs');
+}
+
 async function testConnectionProviderErrorDoesNotLeakApiKey() {
   const apiKey = 'secret-compatible-key';
   const { aiModule, logs } = loadAiService({
@@ -1070,6 +1104,40 @@ async function testFetchModelsUsesNormalizedEndpointAndBearerAuth() {
   assert.strictEqual(calls[0].options.method, 'GET');
   assert.strictEqual(calls[0].options.headers.Authorization, `Bearer ${apiKey}`);
   assert(!JSON.stringify(logs).includes(apiKey), 'model list logs must not leak API key');
+}
+
+async function testFetchModelsUsesProviderAccountKey() {
+  const { aiModule, dbValues, secureValues, logs } = loadAiService({ apiKey: '' });
+  dbValues.ai_provider_accounts = JSON.stringify([
+    {
+      providerAccountId: 'account_fetch_models',
+      providerPresetId: 'siliconflow',
+      label: 'SiliconFlow Models',
+      baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+      isLocal: false,
+      createdAt: '2026-01-12T00:00:00.000Z',
+      updatedAt: '2026-01-12T00:00:00.000Z',
+    },
+  ]);
+  secureValues.ai_provider_account_api_key_account_fetch_models = 'secret-account-fetch-key';
+  const calls = [];
+  global.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return createFetchResponse({ data: ['Qwen/Qwen3.6-35B-A3B'] });
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    providerAccountId: 'account_fetch_models',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: '',
+  });
+
+  assert.strictEqual(response.success, true);
+  assert.strictEqual(calls[0].url, 'https://api.siliconflow.cn/v1/models');
+  assert.strictEqual(calls[0].options.headers.Authorization, 'Bearer secret-account-fetch-key');
+  assert.deepStrictEqual(response.models, ['Qwen/Qwen3.6-35B-A3B']);
+  assert(!JSON.stringify(logs).includes('secret-account-fetch-key'), 'provider account key must not leak in fetch logs');
 }
 
 async function testFetchModelsKeepsGeminiBasePath() {
@@ -1889,6 +1957,38 @@ function testSaveModelProfilesShareProviderAccountKeyAndSetDefault() {
   });
 }
 
+function testSaveModelProfileRejectsDuplicateModelUnderSameAccount() {
+  const { aiModule, dbValues } = loadAiService();
+  dbValues.ai_provider_accounts = JSON.stringify([
+    {
+      providerAccountId: 'account_duplicate_models',
+      providerPresetId: 'openrouter',
+      label: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      isLocal: false,
+      createdAt: '2026-01-13T00:00:00.000Z',
+      updatedAt: '2026-01-13T00:00:00.000Z',
+    },
+  ]);
+  dbValues.ai_model_profiles = JSON.stringify([]);
+
+  aiModule.saveModelProfile({
+    providerAccountId: 'account_duplicate_models',
+    label: 'GPT-4o mini',
+    model: 'openai/gpt-4o-mini',
+  });
+
+  assert.throws(
+    () => aiModule.saveModelProfile({
+      providerAccountId: 'account_duplicate_models',
+      label: 'Duplicate GPT-4o mini',
+      model: 'openai/gpt-4o-mini',
+    }),
+    /already exists/i,
+    'duplicate model id under one provider account should be rejected',
+  );
+}
+
 function testDeleteModelProfileKeepsAccountKeyAndFallsBack() {
   const { aiModule, dbValues, secureValues } = loadAiService();
   dbValues.ai_provider_accounts = JSON.stringify([
@@ -1986,6 +2086,7 @@ async function run() {
   await testGeminiMissingBasePath404Hint();
   await testProviderTemporaryError503Hint();
   await testConnectionUsesMinimalPromptAndSanitizedResult();
+  await testConnectionUsesProviderAccountKey();
   await testConnectionProviderErrorDoesNotLeakApiKey();
   await testConnectionGemini429JsonErrorBodyIsParsedAndRedacted();
   await testConnectionPlainTextErrorBodyIsRedactedAndTruncated();
@@ -1995,6 +2096,7 @@ async function run() {
   await testConnectionReasoningOnlyResponseFailsCleanly();
   testModelListParserVariants();
   await testFetchModelsUsesNormalizedEndpointAndBearerAuth();
+  await testFetchModelsUsesProviderAccountKey();
   await testFetchModelsKeepsGeminiBasePath();
   await testFetchModelsAllowsLocalProviderWithoutApiKey();
   await testFetchModelsRequiresApiKeyForRemoteProvider();
@@ -2021,6 +2123,7 @@ async function run() {
   testSaveProviderAccountWritesOnlySecureKey();
   testSaveProviderAccountEmptyApiKeyDoesNotOverwrite();
   testSaveModelProfilesShareProviderAccountKeyAndSetDefault();
+  testSaveModelProfileRejectsDuplicateModelUnderSameAccount();
   testDeleteModelProfileKeepsAccountKeyAndFallsBack();
   testDeleteLastModelProfileGuard();
   console.log('openai compatible provider tests passed');

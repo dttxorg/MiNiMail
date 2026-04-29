@@ -1,5 +1,9 @@
 import log from 'electron-log';
 import { getAIConfig } from './aiConfigStore';
+import {
+  getProviderAccountApiKey,
+  getProviderAccountById,
+} from './aiProviderAccountStore';
 import { getAIProviderConfigById } from './aiProviderProfileStore';
 import { normalizeOpenAICompatibleModelListEndpoint } from './endpointNormalizer';
 import {
@@ -25,6 +29,22 @@ type ModelListItem = {
 };
 
 function resolveModelListConfig(request: AIProviderModelListRequest): AIConfig {
+  if (request.providerAccountId) {
+    const account = getProviderAccountById(request.providerAccountId);
+    if (!account) {
+      return {
+        baseUrl: request.baseUrl,
+        apiKey: request.apiKey?.trim() || '',
+        model: request.model || '',
+      };
+    }
+    return {
+      baseUrl: request.baseUrl || account.baseUrl,
+      apiKey: request.apiKey?.trim() || getProviderAccountApiKey(request.providerAccountId),
+      model: request.model || '',
+    };
+  }
+
   const savedProfile = request.profileId ? getAIProviderConfigById(request.profileId) ?? getAIConfig() : getAIConfig();
   return {
     baseUrl: request.baseUrl || savedProfile.baseUrl,

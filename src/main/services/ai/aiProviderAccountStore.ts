@@ -121,7 +121,7 @@ export function getProviderAccountById(providerAccountId: string): StoredAIProvi
 }
 
 export function saveProviderAccount(input: SaveProviderAccountInput): AIProviderAccount {
-  const providerAccountId = input.providerAccountId || `account_${Date.now().toString(36)}`;
+  const providerAccountId = input.providerAccountId || `account_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   assertValidProviderAccountId(providerAccountId);
   const accounts = getStoredProviderAccounts();
   const existing = accounts.find((account) => account.providerAccountId === providerAccountId);

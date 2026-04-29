@@ -48,7 +48,7 @@ function assertValidModelProfileId(modelProfileId: string): void {
 }
 
 function createModelProfileId(): string {
-  return `model_${Date.now().toString(36)}`;
+  return `model_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function getOpenAICompatiblePresetById(providerPresetId: AIProviderProfile['providerPresetId']) {
@@ -293,6 +293,17 @@ export function saveModelProfile(input: SaveModelProfileInput): AIModelProfile {
   const existing = profiles.find((profile) => profile.modelProfileId === modelProfileId);
   const timestamp = nowIso();
   const trimmedModel = input.model.trim();
+  if (!trimmedModel) {
+    throw new Error('AI model id is required.');
+  }
+  const duplicate = profiles.find((profile) =>
+    profile.providerAccountId === input.providerAccountId
+    && profile.modelProfileId !== modelProfileId
+    && profile.model === trimmedModel,
+  );
+  if (duplicate) {
+    throw new Error('AI model profile already exists for this provider account.');
+  }
   const nextProfile: StoredAIModelProfile = {
     modelProfileId,
     providerAccountId: input.providerAccountId,
