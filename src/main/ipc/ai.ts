@@ -1,13 +1,18 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
 import {
+  deleteModelProfile,
   deleteAIProviderProfile,
   getAIConfig,
   getAIConfigSnapshot,
   getAIProviderProfileSnapshot,
+  getProviderAccountsWithModels,
   fetchOpenAICompatibleModels,
   saveAIConfig,
+  saveModelProfile,
+  saveProviderAccount,
   saveAIProviderProfile,
+  setDefaultModelProfile,
   setDefaultAIProviderProfile,
   testOpenAICompatibleConnection,
   getAISettings,
@@ -27,6 +32,8 @@ import {
   type AIEmailSource,
   type AIProviderTestConnectionRequest,
   type AIProviderModelListRequest,
+  type SaveModelProfileInput,
+  type SaveProviderAccountInput,
   type SaveProviderProfileInput,
 } from '../services/ai';
 
@@ -130,6 +137,50 @@ export function registerAIHandlers(): void {
     try {
       setDefaultAIProviderProfile(profileId);
       return { success: true, data: getAIProviderProfileSnapshot() };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:getProviderAccountsWithModels', async () => {
+    try {
+      return { success: true, data: getProviderAccountsWithModels() };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:saveProviderAccount', async (_event, input: SaveProviderAccountInput) => {
+    try {
+      const account = saveProviderAccount(input);
+      return { success: true, data: { account, snapshot: getProviderAccountsWithModels() } };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:saveModelProfile', async (_event, input: SaveModelProfileInput) => {
+    try {
+      const profile = saveModelProfile(input);
+      return { success: true, data: { profile, snapshot: getProviderAccountsWithModels() } };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:deleteModelProfile', async (_event, modelProfileId: string) => {
+    try {
+      deleteModelProfile(modelProfileId);
+      return { success: true, data: getProviderAccountsWithModels() };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:setDefaultModelProfile', async (_event, modelProfileId: string) => {
+    try {
+      setDefaultModelProfile(modelProfileId);
+      return { success: true, data: getProviderAccountsWithModels() };
     } catch (err) {
       return { success: false, error: sanitizeAIProviderError(err) };
     }

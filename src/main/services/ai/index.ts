@@ -9,6 +9,12 @@ export type {
   AIProviderTestConnectionResult,
   AIProviderModelListRequest,
   AIProviderModelListResult,
+  AIModelProfile,
+  AIModelProfileSnapshot,
+  AIProviderAccount,
+  AIProviderAccountSnapshot,
+  AIProviderAccountWithModels,
+  AIProviderAccountsWithModelsSnapshot,
   AIProviderProfile,
   AIProviderProfileSnapshot,
   AIRequest,
@@ -17,6 +23,8 @@ export type {
   OpenAICompatibleMessage,
   OpenAICompatibleRequestBody,
   SaveProviderProfileInput,
+  SaveProviderAccountInput,
+  SaveModelProfileInput,
 } from './types';
 export { DEFAULT_CONFIG } from './types';
 export {
@@ -27,6 +35,18 @@ export {
   normalizeAIConfigProfileId,
   saveAIConfig,
 } from './aiConfigStore';
+export {
+  deleteModelProfile,
+  getAIModelProfileConfigById,
+  getAIModelProfileSnapshot,
+  getAIProviderAccountSnapshot,
+  getProviderAccountsWithModels,
+  saveModelProfile,
+  setDefaultModelProfile,
+} from './aiModelProfileStore';
+export {
+  saveProviderAccount,
+} from './aiProviderAccountStore';
 export {
   deleteAIProviderProfile,
   getAIProviderConfigById,

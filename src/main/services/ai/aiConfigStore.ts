@@ -23,6 +23,10 @@ import {
   setDefaultAIProviderProfile,
   syncLegacyAIConfigToProviderProfile,
 } from './aiProviderProfileStore';
+import {
+  getDefaultAIModelProfileConfig,
+  getFirstAvailableAIModelProfileConfig,
+} from './aiModelProfileStore';
 
 export function normalizeAIConfigProfileId(value: string | null): AIConfigProfileId {
   return value === 'secondary' ? 'secondary' : 'primary';
@@ -105,6 +109,12 @@ export function getAIConfigSnapshot(): AIConfigSnapshot {
 }
 
 export function getAIConfig(): AIConfig {
+  const defaultModelProfileConfig = getDefaultAIModelProfileConfig();
+  if (defaultModelProfileConfig) return defaultModelProfileConfig;
+
+  const firstModelProfileConfig = getFirstAvailableAIModelProfileConfig();
+  if (firstModelProfileConfig) return firstModelProfileConfig;
+
   const defaultProviderConfig = getDefaultAIProviderConfig();
   if (defaultProviderConfig) return defaultProviderConfig;
 

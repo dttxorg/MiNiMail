@@ -37,6 +37,64 @@ export interface AIProviderProfileSnapshot {
   profiles: AIProviderProfile[];
 }
 
+export interface AIProviderAccount {
+  providerAccountId: string;
+  providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+  isLocal: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AIModelProfile {
+  modelProfileId: string;
+  providerAccountId: string;
+  label: string;
+  model: string;
+  isDefault: boolean;
+  taskType?: 'summary' | 'reply' | 'classification';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AIProviderAccountSnapshot {
+  accounts: AIProviderAccount[];
+}
+
+export interface AIModelProfileSnapshot {
+  defaultModelProfileId: string;
+  profiles: AIModelProfile[];
+}
+
+export interface AIProviderAccountWithModels extends AIProviderAccount {
+  modelProfiles: AIModelProfile[];
+}
+
+export interface AIProviderAccountsWithModelsSnapshot {
+  defaultModelProfileId: string;
+  accounts: AIProviderAccountWithModels[];
+}
+
+export type SaveProviderAccountInput = {
+  providerAccountId?: string;
+  providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
+  baseUrl: string;
+  apiKey?: string;
+  isLocal?: boolean;
+};
+
+export type SaveModelProfileInput = {
+  modelProfileId?: string;
+  providerAccountId: string;
+  label: string;
+  model: string;
+  isDefault?: boolean;
+  taskType?: 'summary' | 'reply' | 'classification';
+};
+
 export type SaveProviderProfileInput = {
   id?: string;
   providerPresetId: OpenAICompatibleProviderPresetId;

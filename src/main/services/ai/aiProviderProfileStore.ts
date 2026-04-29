@@ -21,6 +21,9 @@ import {
 
 const PROVIDER_PROFILES_SETTING_KEY = 'ai_provider_profiles';
 const DEFAULT_PROVIDER_SETTING_KEY = 'ai_default_provider_id';
+const PROVIDER_ACCOUNTS_SETTING_KEY = 'ai_provider_accounts';
+const MODEL_PROFILES_SETTING_KEY = 'ai_model_profiles';
+const DEFAULT_MODEL_PROFILE_SETTING_KEY = 'ai_default_model_profile_id';
 
 type StoredAIProviderProfile = {
   id: string;
@@ -51,6 +54,18 @@ function providerApiKeyKey(profileId: string): string {
   return `ai_provider_api_key_${profileId}`;
 }
 
+function modelProfileIdForProviderProfile(profileId: string): string {
+  return `model_${profileId}`;
+}
+
+function providerAccountIdForProviderProfile(profileId: string): string {
+  return `account_${profileId}`;
+}
+
+function providerAccountApiKeyKey(profileId: string): string {
+  return `ai_provider_account_api_key_${providerAccountIdForProviderProfile(profileId)}`;
+}
+
 function assertValidProviderProfileId(profileId: string): void {
   if (!/^[A-Za-z0-9_-]{1,80}$/.test(profileId)) {
     throw new Error('Invalid AI provider profile id.');
@@ -59,6 +74,78 @@ function assertValidProviderProfileId(profileId: string): void {
 
 function isLegacyProfileId(profileId: string): profileId is AIConfigProfileId {
   return profileId === 'primary' || profileId === 'secondary';
+}
+
+function isLocalProviderBaseUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonArraySetting<T>(key: string): T[] | null {
+  const raw = getSetting(key);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed as T[] : null;
+  } catch {
+    return null;
+  }
+}
+
+function syncProviderProfileToAccountAndModel(profile: StoredAIProviderProfile, apiKey?: string): void {
+  const hasProviderAccountStore = Boolean(getSetting(PROVIDER_ACCOUNTS_SETTING_KEY));
+  const hasModelProfileStore = Boolean(getSetting(MODEL_PROFILES_SETTING_KEY));
+  if (!hasProviderAccountStore && !hasModelProfileStore) return;
+
+  const accountId = providerAccountIdForProviderProfile(profile.id);
+  const modelProfileId = modelProfileIdForProviderProfile(profile.id);
+  const timestamp = nowIso();
+  const accounts = parseJsonArraySetting<Array<Record<string, unknown>>[number]>(PROVIDER_ACCOUNTS_SETTING_KEY) || [];
+  const accountIndex = accounts.findIndex((account) => account.providerAccountId === accountId);
+  const nextAccount = {
+    ...(accountIndex >= 0 ? accounts[accountIndex] : {}),
+    providerAccountId: accountId,
+    providerPresetId: profile.providerPresetId,
+    label: profile.label,
+    baseUrl: profile.baseUrl,
+    isLocal: isLocalProviderBaseUrl(profile.baseUrl),
+    createdAt: (accountIndex >= 0 && typeof accounts[accountIndex].createdAt === 'string')
+      ? accounts[accountIndex].createdAt
+      : profile.createdAt || timestamp,
+    updatedAt: timestamp,
+  };
+  const nextAccounts = accountIndex >= 0
+    ? accounts.map((account, index) => index === accountIndex ? nextAccount : account)
+    : [...accounts, nextAccount];
+  setSetting(PROVIDER_ACCOUNTS_SETTING_KEY, JSON.stringify(nextAccounts));
+
+  const modelProfiles = parseJsonArraySetting<Array<Record<string, unknown>>[number]>(MODEL_PROFILES_SETTING_KEY) || [];
+  const modelIndex = modelProfiles.findIndex((modelProfile) => modelProfile.modelProfileId === modelProfileId);
+  const label = profile.model ? `${profile.label} · ${profile.model}` : profile.label;
+  const nextModelProfile = {
+    ...(modelIndex >= 0 ? modelProfiles[modelIndex] : {}),
+    modelProfileId,
+    providerAccountId: accountId,
+    label,
+    model: profile.model,
+    createdAt: (modelIndex >= 0 && typeof modelProfiles[modelIndex].createdAt === 'string')
+      ? modelProfiles[modelIndex].createdAt
+      : profile.createdAt || timestamp,
+    updatedAt: timestamp,
+  };
+  const nextModelProfiles = modelIndex >= 0
+    ? modelProfiles.map((modelProfile, index) => index === modelIndex ? nextModelProfile : modelProfile)
+    : [...modelProfiles, nextModelProfile];
+  setSetting(MODEL_PROFILES_SETTING_KEY, JSON.stringify(nextModelProfiles));
+
+  const trimmedApiKey = apiKey?.trim();
+  if (trimmedApiKey) {
+    setSecureSetting(providerAccountApiKeyKey(profile.id), trimmedApiKey);
+  }
 }
 
 function getLegacyProfileApiKey(profileId: AIConfigProfileId): string {
@@ -270,6 +357,7 @@ export function saveAIProviderProfile(input: SaveProviderProfileInput): AIProvid
     setSetting(oldProfileSettingKey(id, 'baseUrl'), nextProfile.baseUrl);
     setSetting(oldProfileSettingKey(id, 'model'), nextProfile.model);
   }
+  syncProviderProfileToAccountAndModel(nextProfile, input.apiKey?.trim() || getProviderProfileApiKey(id));
   if (input.isDefault) {
     setDefaultAIProviderProfile(id);
   }
@@ -285,6 +373,7 @@ export function setDefaultAIProviderProfile(profileId: string): void {
     throw new Error('AI provider profile not found.');
   }
   setSetting(DEFAULT_PROVIDER_SETTING_KEY, profileId);
+  setSetting(DEFAULT_MODEL_PROFILE_SETTING_KEY, modelProfileIdForProviderProfile(profileId));
   if (isLegacyProfileId(profileId)) {
     setSetting('ai_active_profile', profileId);
   }
@@ -313,6 +402,7 @@ export function deleteAIProviderProfile(profileId: string): AIProviderProfileSna
   if (currentDefaultProviderId === profileId) {
     const fallbackProviderId = remainingProfiles[0].id;
     setSetting(DEFAULT_PROVIDER_SETTING_KEY, fallbackProviderId);
+    setSetting(DEFAULT_MODEL_PROFILE_SETTING_KEY, modelProfileIdForProviderProfile(fallbackProviderId));
     if (isLegacyProfileId(fallbackProviderId)) {
       setSetting('ai_active_profile', fallbackProviderId);
     }
@@ -344,4 +434,5 @@ export function syncLegacyAIConfigToProviderProfile(profileId: AIConfigProfileId
   if (config.apiKey !== undefined && config.apiKey.trim()) {
     setSecureSetting(providerApiKeyKey(profileId), config.apiKey.trim());
   }
+  syncProviderProfileToAccountAndModel(nextProfile, config.apiKey?.trim() || getProviderProfileApiKey(profileId));
 }
