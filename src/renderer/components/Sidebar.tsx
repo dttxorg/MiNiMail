@@ -64,6 +64,7 @@ interface SidebarProps {
   githubFolderCounts?: Record<GitHubSmartFolder, number>;
   priorityFolderCounts?: Record<GenericPriorityFolderId, number>;
   appLanguage: AppLanguage;
+  isMacOS?: boolean;
 }
 
 const FOLDERS = [
@@ -334,6 +335,7 @@ export function Sidebar({
   githubFolderCounts,
   priorityFolderCounts,
   appLanguage: appLanguageSetting,
+  isMacOS = false,
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -383,7 +385,10 @@ export function Sidebar({
 
   return (
     <div className="h-full flex flex-col [-webkit-app-region:drag]" style={{ backgroundColor: uiColor.shell, fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
-      <div className="pt-4 pb-3 px-4 flex-shrink-0 space-y-4">
+      <div
+        className="pt-4 pb-3 px-4 flex-shrink-0 space-y-4"
+        style={isMacOS ? { paddingTop: 36 } : undefined}
+      >
         <div className="flex items-center justify-between [-webkit-app-region:no-drag]">
           <div className="flex items-center gap-3 min-w-0">
             <LogoMark />
@@ -613,5 +618,3 @@ export function Sidebar({
     </div>
   );
 }
-
-

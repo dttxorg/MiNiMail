@@ -133,3 +133,33 @@ export function findOpenAICompatiblePresetByBaseUrl(baseUrl: string): OpenAIComp
     OPENAI_COMPATIBLE_PROVIDER_PRESETS[OPENAI_COMPATIBLE_PROVIDER_PRESETS.length - 1]
   );
 }
+
+export function normalizeOpenAICompatibleChatEndpoint(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error('API base URL not configured.');
+
+  const parsed = new URL(trimmed);
+  const basePath = parsed.pathname.replace(/\/+$/, '');
+  const pathname = /\/chat\/completions$/i.test(basePath)
+    ? basePath
+    : `${basePath}/chat/completions`;
+
+  parsed.pathname = pathname.replace(/\/{2,}/g, '/');
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+export function normalizeOpenAICompatibleModelsEndpoint(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error('API base URL not configured.');
+
+  const parsed = new URL(trimmed);
+  const basePath = parsed.pathname
+    .replace(/\/+$/, '')
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/models$/i, '');
+
+  parsed.pathname = `${basePath}/models`.replace(/\/{2,}/g, '/');
+  parsed.hash = '';
+  return parsed.toString();
+}

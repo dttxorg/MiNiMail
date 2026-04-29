@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage, type MenuItemConstructorOptions } from 'electron';
 import path from 'path';
 import log from 'electron-log';
-import { initDatabase, closeDatabase } from './database';
+import { initDatabase, closeDatabase, getSetting } from './database';
 import { registerAccountHandlers } from './ipc/accounts';
 import { registerSettingsHandlers } from './ipc/settings';
 import { registerMailHandlers } from './ipc/mail';
@@ -31,10 +31,12 @@ process.on('unhandledRejection', (reason) => {
 let mainWindow: BrowserWindow | null = null;
 let appTray: Tray | null = null;
 let isQuitting = false;
+let appMenuLanguage = 'zh';
 const trustedOpenPathRoots = new Set<string>();
 
 const isSmokeTest = process.env.MINIMAIL_ELECTRON_SMOKE === '1';
 const isDev = !app.isPackaged && !isSmokeTest;
+const isMacOS = process.platform === 'darwin';
 
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
@@ -88,7 +90,142 @@ function showMainWindow(): void {
   mainWindow.focus();
 }
 
+function openSettingsWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:open-settings');
+}
+
+function openComposeWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:compose-new-mail');
+}
+
+function refreshMailWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:refresh-mail');
+}
+
+interface ApplicationMenuText {
+  about: string;
+  settings: string;
+  quit: string;
+  mail: string;
+  compose: string;
+  refresh: string;
+  search: string;
+  edit: string;
+  cut: string;
+  copy: string;
+  paste: string;
+  selectAll: string;
+  window: string;
+  minimize: string;
+  zoom: string;
+  closeWindow: string;
+}
+
+const APPLICATION_MENU_TEXT: Record<'zh' | 'en', ApplicationMenuText> = {
+  zh: {
+    about: `关于 ${APP_NAME}`,
+    settings: '设置...',
+    quit: `退出 ${APP_NAME}`,
+    mail: '邮件',
+    compose: '写邮件',
+    refresh: '刷新邮件',
+    search: '搜索邮件',
+    edit: '编辑',
+    cut: '剪切',
+    copy: '复制',
+    paste: '粘贴',
+    selectAll: '全选',
+    window: '窗口',
+    minimize: '最小化',
+    zoom: '缩放',
+    closeWindow: '关闭窗口',
+  },
+  en: {
+    about: `About ${APP_NAME}`,
+    settings: 'Settings...',
+    quit: `Quit ${APP_NAME}`,
+    mail: 'Mail',
+    compose: 'Compose New Mail',
+    refresh: 'Refresh Mail',
+    search: 'Search Mail',
+    edit: 'Edit',
+    cut: 'Cut',
+    copy: 'Copy',
+    paste: 'Paste',
+    selectAll: 'Select All',
+    window: 'Window',
+    minimize: 'Minimize',
+    zoom: 'Zoom',
+    closeWindow: 'Close Window',
+  },
+};
+
+function normalizeMenuLanguage(language: string | null | undefined): keyof typeof APPLICATION_MENU_TEXT {
+  return language === 'zh' ? 'zh' : 'en';
+}
+
+function getApplicationMenuText(): ApplicationMenuText {
+  return APPLICATION_MENU_TEXT[normalizeMenuLanguage(appMenuLanguage)];
+}
+
+function buildApplicationMenu(): Menu {
+  const text = getApplicationMenuText();
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: APP_NAME,
+      submenu: [
+        { label: text.about, role: 'about' },
+        { type: 'separator' },
+        { label: text.settings, accelerator: 'Command+,', click: openSettingsWindow },
+        { type: 'separator' },
+        { label: text.quit, accelerator: 'Command+Q', click: quitApplication },
+      ],
+    },
+    {
+      label: text.mail,
+      submenu: [
+        { label: text.compose, accelerator: 'Command+N', click: openComposeWindow },
+        { label: text.refresh, accelerator: 'Command+R', click: refreshMailWindow },
+        { label: text.search, accelerator: 'Command+F', enabled: false },
+      ],
+    },
+    {
+      label: text.edit,
+      submenu: [
+        { label: text.cut, role: 'cut' },
+        { label: text.copy, role: 'copy' },
+        { label: text.paste, role: 'paste' },
+        { type: 'separator' },
+        { label: text.selectAll, role: 'selectAll' },
+      ],
+    },
+    {
+      label: text.window,
+      submenu: [
+        { label: text.minimize, role: 'minimize' },
+        { label: text.zoom, role: 'zoom' },
+        { label: text.closeWindow, role: 'close' },
+      ],
+    },
+  ];
+
+  return Menu.buildFromTemplate(template);
+}
+
+function rebuildApplicationMenu(): void {
+  Menu.setApplicationMenu(isMacOS ? buildApplicationMenu() : null);
+}
+
+function updateApplicationMenuLanguage(language: string | null | undefined): void {
+  appMenuLanguage = normalizeMenuLanguage(language);
+  rebuildApplicationMenu();
+}
+
 function createAppTray(): void {
+  if (isMacOS) return;
   if (appTray) return;
 
   const ico = nativeImage.createFromPath(getAppIconPath('ico'));
@@ -124,8 +261,8 @@ function createWindow() {
   log.info('Creating main window...');
   const appIconPath = getAppIconPath(process.platform === 'win32' ? 'ico' : 'png');
 
-  // Remove menu bar
-  Menu.setApplicationMenu(null);
+  // Remove menu bar on Windows/Linux; use a localized native menu on macOS.
+  rebuildApplicationMenu();
 
   mainWindow = new BrowserWindow({
     width: 1536,
@@ -134,7 +271,11 @@ function createWindow() {
     minHeight: 600,
     title: APP_NAME,
     backgroundColor: '#1a1d29',
-    frame: false,
+    frame: isMacOS,
+    ...(isMacOS ? {
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 14, y: 14 },
+    } : {}),
     icon: appIconPath,
     webPreferences: {
       nodeIntegration: false,
@@ -176,6 +317,13 @@ function createWindow() {
 
   window.on('closed', () => {
     mainWindow = null;
+  });
+
+  window.on('close', (event) => {
+    if (isMacOS && !isQuitting) {
+      event.preventDefault();
+      window.hide();
+    }
   });
 
   window.webContents.on('did-finish-load', () => {
@@ -222,6 +370,7 @@ function createWindow() {
 app.whenReady().then(() => {
   log.info('Initializing database...');
   initDatabase();
+  appMenuLanguage = normalizeMenuLanguage(getSetting('app_language'));
   initializeAISecretStorage();
 
   log.info('Registering IPC handlers...');
@@ -233,18 +382,18 @@ app.whenReady().then(() => {
 
   log.info('Creating window...');
   createWindow();
-  createAppTray();
+  if (!isMacOS) {
+    createAppTray();
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    showMainWindow();
   });
 });
 
 app.on('window-all-closed', () => {
   log.info('All windows closed');
-  if (process.platform !== 'darwin') {
+  if (!isMacOS) {
     quitApplication();
   }
 });
@@ -276,6 +425,11 @@ ipcMain.handle('app:openExternal', async (_event, target: string) => {
   }
 });
 
+ipcMain.handle('app:set-language', async (_event, language: string) => {
+  updateApplicationMenuLanguage(language);
+  return { success: true };
+});
+
 // Window control handlers (for frameless window)
 ipcMain.on('window:minimize', () => {
   mainWindow?.minimize();
@@ -290,6 +444,10 @@ ipcMain.on('window:maximize', () => {
 });
 
 ipcMain.on('window:close', () => {
+  if (isMacOS) {
+    mainWindow?.close();
+    return;
+  }
   quitApplication();
 });
 

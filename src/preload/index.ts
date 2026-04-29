@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   invoke: (channel: string, ...args: unknown[]) => {
     const validChannels = [
       'app:openExternal',
+      'app:set-language',
       'accounts:getAll',
       'accounts:get',
       'accounts:create',
@@ -40,6 +41,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:saveConfig',
       'ai:getSettings',
       'ai:saveSettings',
+      'ai:testConnection',
+      'ai:fetchModels',
+      'ai:getProviderProfiles',
+      'ai:saveProviderProfile',
+      'ai:deleteProviderProfile',
+      'ai:setDefaultProvider',
+      'ai:getProviderAccountsWithModels',
+      'ai:saveProviderAccount',
+      'ai:saveModelProfile',
+      'ai:deleteModelProfile',
+      'ai:setDefaultModelProfile',
       'ai:translate',
       'ai:translateSegments',
       'ai:summarize',
@@ -88,6 +100,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
     ipcRenderer.on('mail:backup-progress', listener);
     return () => ipcRenderer.removeListener('mail:backup-progress', listener);
+  },
+  onOpenSettings: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:open-settings', listener);
+    return () => ipcRenderer.removeListener('app:open-settings', listener);
+  },
+  onComposeNewMail: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:compose-new-mail', listener);
+    return () => ipcRenderer.removeListener('app:compose-new-mail', listener);
+  },
+  onRefreshMail: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:refresh-mail', listener);
+    return () => ipcRenderer.removeListener('app:refresh-mail', listener);
   },
   // Window controls for frameless window
   minimizeWindow: () => ipcRenderer.send('window:minimize'),

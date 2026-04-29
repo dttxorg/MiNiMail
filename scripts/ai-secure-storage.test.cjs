@@ -3,7 +3,28 @@ const fs = require('fs');
 const path = require('path');
 const ts = require('typescript');
 
-function loadTsModule(filePath, overrides = {}) {
+function resolveLocalTsModule(fromFile, specifier) {
+  if (!specifier.startsWith('.')) return null;
+
+  const base = path.resolve(path.dirname(fromFile), specifier);
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    path.join(base, 'index.ts'),
+    path.join(base, 'index.tsx'),
+    path.join(base, 'index.js'),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) || null;
+}
+
+function loadTsModule(filePath, overrides = {}, moduleCache = new Map()) {
+  const resolvedPath = path.resolve(filePath);
+  if (moduleCache.has(resolvedPath)) {
+    return moduleCache.get(resolvedPath).exports;
+  }
+
   const source = fs.readFileSync(filePath, 'utf8');
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -14,15 +35,20 @@ function loadTsModule(filePath, overrides = {}) {
   });
 
   const moduleShim = { exports: {} };
+  moduleCache.set(resolvedPath, moduleShim);
   const localRequire = (specifier) => {
     if (Object.prototype.hasOwnProperty.call(overrides, specifier)) {
       return overrides[specifier];
+    }
+    const localModule = resolveLocalTsModule(resolvedPath, specifier);
+    if (localModule) {
+      return loadTsModule(localModule, overrides, moduleCache);
     }
     return require(specifier);
   };
 
   const fn = new Function('exports', 'require', 'module', '__filename', '__dirname', compiled.outputText);
-  fn(moduleShim.exports, localRequire, moduleShim, filePath, path.dirname(filePath));
+  fn(moduleShim.exports, localRequire, moduleShim, resolvedPath, path.dirname(resolvedPath));
   return moduleShim.exports;
 }
 
@@ -143,7 +169,9 @@ function createEnvironment(encryptionAvailable) {
 
   const aiModule = loadTsModule(path.join(process.cwd(), 'src', 'main', 'services', 'ai.ts'), {
     '../database': databaseModule,
+    '../../database': databaseModule,
     './crypto': cryptoModule,
+    '../crypto': cryptoModule,
     'electron-log': logModule,
     '../../shared/email-ai': createEmailAiStub(),
   });

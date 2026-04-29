@@ -11,6 +11,9 @@
     "build:vite": "vite build",
     "build:electron": "tsc -b tsconfig.main.json --force",
     "test:release": "node scripts/test-release.cjs",
+    "rebuild:native:mac": "electron-rebuild -f -w better-sqlite3",
+    "package:mac": "npm run rebuild:native:mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir",
+    "dist:mac": "npm run rebuild:native:mac && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "dist": "npm run build && electron-builder",
     "dist:dir": "npm run build && electron-builder --dir"
   },
@@ -69,6 +72,15 @@
       "build/icons/**/*",
       "package.json"
     ],
+    "mac": {
+      "icon": "build/icons/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null
+    },
     "win": {
       "icon": "build/icons/icon.ico",
       "target": [

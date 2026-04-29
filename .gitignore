@@ -17,3 +17,4 @@ recordings/
 .claude/
 .claude_state.md
 .superpowers/
+.DS_Store

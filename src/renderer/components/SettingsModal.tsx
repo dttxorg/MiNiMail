@@ -29,6 +29,8 @@ import type { MailBackupReadState } from '../../shared/backup';
 import type { AiPrivacyMode } from '../../shared/email-ai';
 import {
   findOpenAICompatiblePresetByBaseUrl,
+  normalizeOpenAICompatibleChatEndpoint,
+  normalizeOpenAICompatibleModelsEndpoint,
   OPENAI_COMPATIBLE_PROVIDER_PRESETS,
   type OpenAICompatibleProviderPresetId,
 } from '../../shared/openaiCompatibleProviderPresets';
@@ -102,24 +104,268 @@ interface SettingsModalProps {
   onOpenBackupFolder: () => void;
 }
 
-type NavId = 'accounts' | 'backup' | 'ai' | 'about';
+type NavId = 'accounts' | 'backup' | 'ai' | 'aiProvider' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
 
 type AIConfigProfileForm = {
+  id: string;
   providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
   baseUrl: string;
   apiKey: string;
   model: string;
   hasApiKey?: boolean;
+  isDefault?: boolean;
+  isDraft?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
-const EMPTY_AI_CONFIG_PROFILES: Record<AIConfigProfileId, AIConfigProfileForm> = {
-  primary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
-  secondary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+type AIProviderConnectionTestResult = {
+  success: boolean;
+  provider?: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost?: string;
+  endpointPath?: string;
+  model?: string;
+  status?: number;
+  operation?: 'testConnection' | 'fetchModels' | 'callAI';
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
+  responseStructureSummary?: unknown;
+  requestBodyKeys?: string[];
+  parsedPreview?: string;
+  error?: string;
+};
+
+type AIProviderModelListResult = {
+  success: boolean;
+  provider?: {
+    id?: string;
+    label?: string;
+  };
+  endpointHost?: string;
+  endpointPath?: string;
+  model?: string;
+  status?: number;
+  operation?: 'testConnection' | 'fetchModels' | 'callAI';
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
+  requestBodyKeys?: string[];
+  models?: string[];
+  error?: string;
+};
+
+type AIProviderOperationResult = AIProviderConnectionTestResult | AIProviderModelListResult;
+
+type ProviderReadiness = {
+  code: 'ready' | 'needsApiKey' | 'needsModel' | 'needsLocalServer' | 'rateLimited' | 'providerError' | 'untested';
+  label: string;
+  color: string;
+  detail: string;
+};
+
+type AIProviderText = ReturnType<typeof getAIProviderText>;
+
+type AIProviderProfileSnapshot = {
+  defaultProviderId: string;
+  profiles: Array<{
+    id: string;
+    providerPresetId: OpenAICompatibleProviderPresetId;
+    label: string;
+    baseUrl: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
+type AIModelProfileSnapshotForm = {
+  modelProfileId: string;
+  providerAccountId: string;
+  label: string;
+  model: string;
+  isDefault: boolean;
+  taskType?: 'summary' | 'reply' | 'classification';
+  createdAt: string;
+  updatedAt: string;
+};
+
+type AIProviderAccountWithModelsSnapshot = {
+  defaultModelProfileId: string;
+  accounts: Array<{
+    providerAccountId: string;
+    providerPresetId: OpenAICompatibleProviderPresetId;
+    label: string;
+    baseUrl: string;
+    hasApiKey: boolean;
+    isLocal: boolean;
+    createdAt: string;
+    updatedAt: string;
+    modelProfiles: AIModelProfileSnapshotForm[];
+  }>;
+};
+
+type NewProviderAccountForm = {
+  providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
+  baseUrl: string;
+  apiKey: string;
+};
+
+const EMPTY_AI_CONFIG_PROFILES: Record<string, AIConfigProfileForm> = {
+  primary: { id: 'primary', providerPresetId: 'custom', label: 'Profile A', baseUrl: '', apiKey: '', model: '', hasApiKey: false, isDefault: true },
+  secondary: { id: 'secondary', providerPresetId: 'custom', label: 'Profile B', baseUrl: '', apiKey: '', model: '', hasApiKey: false, isDefault: false },
 };
 
 function getOpenAICompatiblePresetById(id: OpenAICompatibleProviderPresetId) {
   return OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === id) ?? OPENAI_COMPATIBLE_PROVIDER_PRESETS[0];
+}
+
+function isLegacyAIProviderProfile(id: string) {
+  return id === 'primary' || id === 'secondary';
+}
+
+function profileSnapshotToForm(profile: AIProviderProfileSnapshot['profiles'][number]): AIConfigProfileForm {
+  return {
+    id: profile.id,
+    providerPresetId: profile.providerPresetId,
+    label: profile.label,
+    baseUrl: profile.baseUrl,
+    apiKey: '',
+    model: profile.model,
+    hasApiKey: profile.hasApiKey,
+    isDefault: profile.isDefault,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
+function providerProfilesToRecord(profiles: AIConfigProfileForm[]): Record<string, AIConfigProfileForm> {
+  return profiles.reduce<Record<string, AIConfigProfileForm>>((acc, profile) => {
+    acc[profile.id] = profile;
+    return acc;
+  }, {});
+}
+
+function redactDiagnosticsText(value: string): string {
+  return value
+    .replace(/Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Authorization: Bearer [REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[REDACTED_API_KEY]')
+    .replace(/AIza[0-9A-Za-z_-]{16,}/g, '[REDACTED_API_KEY]')
+    .replace(/gh[pousr]_[0-9A-Za-z_]{12,}/g, '[REDACTED_TOKEN]');
+}
+
+function truncateDiagnostics(value: string, maxLength = 300): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function getProviderReadiness(
+  profile: AIConfigProfileForm,
+  diagnostics: AIProviderOperationResult | undefined,
+  text: AIProviderText = getAIProviderText('en'),
+): ProviderReadiness {
+  const preset = getOpenAICompatiblePresetById(profile.providerPresetId);
+  const isLocal = Boolean(preset.isLocal);
+  const hasKey = Boolean(profile.hasApiKey || profile.apiKey.trim() || isLocal);
+
+  if (!profile.model.trim()) {
+    return { code: 'needsModel', label: text.status.needsModel, color: '#ff9f0a', detail: text.details.modelMissing };
+  }
+  if (!hasKey) {
+    return { code: 'needsApiKey', label: text.status.needsApiKey, color: '#ff9f0a', detail: text.details.noKeySaved };
+  }
+  if (!diagnostics) {
+    return { code: 'untested', label: text.status.untested, color: '#8e8e93', detail: text.details.noRecentTest };
+  }
+  if (diagnostics.success) {
+    const statusText = diagnostics.status !== undefined ? `HTTP ${diagnostics.status}` : 'OK';
+    return { code: 'ready', label: text.status.ready, color: '#30d158', detail: statusText };
+  }
+  if (diagnostics.status === 429) {
+    return { code: 'rateLimited', label: text.status.rateLimited, color: '#ff9f0a', detail: diagnostics.errorSummary || diagnostics.error || 'HTTP 429' };
+  }
+  if (!diagnostics.status && isLocal) {
+    return { code: 'needsLocalServer', label: text.status.needsLocalServer, color: '#ff9f0a', detail: text.localProviderMayNotRunning };
+  }
+  return {
+    code: 'providerError',
+    label: text.status.providerError,
+    color: '#ff6b6b',
+    detail: diagnostics.errorSummary || diagnostics.error || diagnostics.friendlyMessage || text.status.providerError,
+  };
+}
+
+function getBrowserArch(): string {
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (userAgent.includes('arm64') || userAgent.includes('aarch64')) return 'arm64';
+  if (userAgent.includes('x86_64') || userAgent.includes('x64') || userAgent.includes('wow64')) return 'x64';
+  return 'unknown';
+}
+
+function buildSafeDiagnosticsPayload(params: {
+  appVersion?: string;
+  profile: AIConfigProfileForm;
+  presetLabel: string;
+  presetIsLocal: boolean;
+  isDefault: boolean;
+  result: AIProviderOperationResult;
+}) {
+  const { result } = params;
+  const readiness = getProviderReadiness(params.profile, result);
+  return {
+    app: {
+      name: 'MiNiMail',
+      version: params.appVersion ? redactDiagnosticsText(params.appVersion) : undefined,
+      platform: navigator.platform ? redactDiagnosticsText(navigator.platform) : 'unknown',
+      arch: getBrowserArch(),
+    },
+    provider: {
+      id: result.provider?.id ? redactDiagnosticsText(result.provider.id) : redactDiagnosticsText(params.profile.id),
+      label: result.provider?.label ? redactDiagnosticsText(result.provider.label) : redactDiagnosticsText(params.presetLabel),
+      presetId: redactDiagnosticsText(params.profile.providerPresetId),
+      isDefault: params.isDefault,
+      hasApiKey: Boolean(params.profile.hasApiKey || params.profile.apiKey.trim()),
+      isLocal: params.presetIsLocal,
+    },
+    request: {
+      operation: result.operation,
+      endpointHost: result.endpointHost ? redactDiagnosticsText(result.endpointHost) : undefined,
+      endpointPath: result.endpointPath ? redactDiagnosticsText(result.endpointPath) : undefined,
+      model: result.model ? redactDiagnosticsText(result.model) : undefined,
+      bodyKeys: Array.isArray(result.requestBodyKeys)
+        ? result.requestBodyKeys.map((key) => redactDiagnosticsText(key))
+        : [],
+    },
+    result: {
+      ok: result.success,
+      httpStatus: result.status,
+      readiness: readiness.label,
+      friendlyMessage: result.friendlyMessage ? redactDiagnosticsText(result.friendlyMessage) : undefined,
+      errorSummary: result.errorSummary
+        ? truncateDiagnostics(redactDiagnosticsText(result.errorSummary))
+        : result.error
+          ? truncateDiagnostics(redactDiagnosticsText(result.error))
+          : undefined,
+      modelCount: 'models' in result && Array.isArray(result.models) ? result.models.length : undefined,
+      preview: 'parsedPreview' in result && result.parsedPreview
+        ? truncateDiagnostics(redactDiagnosticsText(result.parsedPreview), 160)
+        : undefined,
+      responseStructureSummary: 'responseStructureSummary' in result ? result.responseStructureSummary : undefined,
+    },
+    timestamp: result.timestamp ? redactDiagnosticsText(result.timestamp) : new Date().toISOString(),
+  };
+}
+
+function formatDiagnosticsMarkdown(payload: unknown): string {
+  return ['```json', JSON.stringify(payload, null, 2), '```'].join('\n');
 }
 
 function getApiProfileText(appLanguage: AppLanguage) {
@@ -130,10 +376,565 @@ function getApiProfileText(appLanguage: AppLanguage) {
     ko: { active: '사용 중', use: '사용', profileA: '구성 A', profileB: '구성 B', keySaved: '키 저장됨', keyEmpty: '키 없음' },
     es: { active: 'Activa', use: 'Usar', profileA: 'Perfil A', profileB: 'Perfil B', keySaved: 'Clave guardada', keyEmpty: 'Sin clave' },
     fr: { active: 'Actif', use: 'Utiliser', profileA: 'Profil A', profileB: 'Profil B', keySaved: 'Clé enregistrée', keyEmpty: 'Aucune clé' },
-    de: { active: 'Aktiv', use: 'Verwenden', profileA: 'Profil A', profileB: 'Profil B', keySaved: 'Key gespeichert', keyEmpty: 'Kein Key' },
+    de: { active: 'Aktiv', use: 'Verwenden', profileA: 'Profil A', profileB: 'Profil B', keySaved: 'Schlüssel gespeichert', keyEmpty: 'Kein Schlüssel' },
     ru: { active: 'Активно', use: 'Использовать', profileA: 'Профиль A', profileB: 'Профиль B', keySaved: 'Ключ сохранён', keyEmpty: 'Нет ключа' },
   };
   return texts[appLanguage] ?? texts.en;
+}
+
+function getAIProviderText(appLanguage: AppLanguage) {
+  const texts = {
+    zh: {
+      title: '模型/API',
+      description: '管理供应商账号，并在每个账号下添加多个模型。',
+      currentDefaultModel: '当前默认模型',
+      noDefaultModel: '还没有默认模型配置。',
+      providerAccounts: '供应商账号',
+      addAccount: '添加账号',
+      cancel: '取消',
+      providerPreset: '供应商',
+      accountLabel: '账号名称',
+      baseUrl: '基础 URL',
+      noBaseUrl: '未配置基础 URL',
+      apiKey: 'API 密钥',
+      optionalLocalKey: '本地服务可不填',
+      pasteApiKey: '粘贴 API 密钥',
+      saveProviderAccount: '保存供应商账号',
+      saving: '保存中...',
+      noProviderAccounts: '暂无供应商账号。',
+      defaultBadge: '默认',
+      modelSingular: '个模型',
+      modelPlural: '个模型',
+      fetchModels: '获取模型',
+      fetchingModels: '获取中...',
+      localProviderHint: '本地服务需要保持运行。',
+      notConfigured: '未配置',
+      manualAddModel: '手动添加模型',
+      addModel: '添加模型',
+      add: '添加',
+      alreadyAdded: '已添加',
+      fetchedModels: '获取到的模型',
+      searchModels: '搜索模型',
+      noModelsReturned: '未返回模型。',
+      modelsUnderProvider: '此账号下的模型',
+      noModelProfiles: '此账号下还没有模型配置。',
+      setDefault: '设为默认',
+      settingDefault: '设置中...',
+      deleteModel: '删除模型',
+      deleting: '删除中...',
+      testSelectedModel: '测试选中模型',
+      testDefaultModel: '测试默认模型',
+      testing: '测试中...',
+      connectionOk: '连接正常',
+      connectionFailed: '连接失败',
+      modelsFetched: '模型已获取',
+      fetchModelsFailed: '获取模型失败',
+      selectProviderAccount: '请选择一个供应商账号。',
+      diagnosticsCopied: '诊断信息已复制',
+      diagnosticsCopyFailed: '复制诊断信息失败',
+      saveAccountFailed: '保存供应商账号失败',
+      modelRequired: '请填写模型 ID。',
+      duplicateModel: '该模型已添加到当前供应商账号。',
+      addModelFailed: '添加模型失败',
+      setDefaultFailed: '设置默认模型失败',
+      deleteModelFailed: '删除模型失败',
+      loadProviderAccountsFailed: '加载供应商账号失败',
+      deleteLastModelBlocked: '至少需要保留一个模型配置。',
+      localProviderMayNotRunning: '本地服务可能未启动。',
+      status: {
+        ready: '可用',
+        needsApiKey: '需要 API 密钥',
+        needsModel: '需要模型',
+        needsLocalServer: '需要本地服务',
+        rateLimited: '限流/额度不足',
+        providerError: '供应商错误',
+        untested: '未测试',
+      },
+      details: {
+        modelMissing: '缺少模型',
+        noKeySaved: '未保存 Key',
+        noRecentTest: '暂无最近测试',
+      },
+      friendly: {
+        apiKey: 'API 密钥或权限可能有问题。',
+        notFound: 'Endpoint 或模型可能不正确。',
+        rateLimited: '额度不足或请求被限流。',
+        upstream: '供应商上游服务异常。',
+        network: '网络异常或服务不可用。',
+      },
+    },
+    en: {
+      title: 'Models & API',
+      description: 'Manage provider accounts and add multiple models under each account.',
+      currentDefaultModel: 'Current default model',
+      noDefaultModel: 'No default model profile is configured yet.',
+      providerAccounts: 'Provider accounts',
+      addAccount: 'Add account',
+      cancel: 'Cancel',
+      providerPreset: 'Provider',
+      accountLabel: 'Account label',
+      baseUrl: 'Base URL',
+      noBaseUrl: 'No Base URL',
+      apiKey: 'API key',
+      optionalLocalKey: 'Optional for local providers',
+      pasteApiKey: 'Paste API key',
+      saveProviderAccount: 'Save provider account',
+      saving: 'Saving...',
+      noProviderAccounts: 'No provider accounts yet.',
+      defaultBadge: 'Default',
+      modelSingular: 'model',
+      modelPlural: 'models',
+      fetchModels: 'Fetch models',
+      fetchingModels: 'Fetching...',
+      localProviderHint: 'The local server must be running.',
+      notConfigured: 'Not configured',
+      manualAddModel: 'Manual add model',
+      addModel: 'Add model',
+      add: 'Add',
+      alreadyAdded: 'Already added',
+      fetchedModels: 'Fetched models',
+      searchModels: 'Search models',
+      noModelsReturned: 'No models returned.',
+      modelsUnderProvider: 'Models under this provider',
+      noModelProfiles: 'No model profiles under this account yet.',
+      setDefault: 'Set default',
+      settingDefault: 'Setting...',
+      deleteModel: 'Delete model',
+      deleting: 'Deleting...',
+      testSelectedModel: 'Test selected model',
+      testDefaultModel: 'Test default model',
+      testing: 'Testing...',
+      connectionOk: 'Connection OK',
+      connectionFailed: 'Connection failed',
+      modelsFetched: 'Models fetched',
+      fetchModelsFailed: 'Fetch models failed',
+      selectProviderAccount: 'Select a provider account.',
+      diagnosticsCopied: 'Diagnostics copied',
+      diagnosticsCopyFailed: 'Failed to copy diagnostics',
+      saveAccountFailed: 'Failed to save provider account',
+      modelRequired: 'Model id is required.',
+      duplicateModel: 'This model is already added under the selected provider account.',
+      addModelFailed: 'Failed to add model',
+      setDefaultFailed: 'Failed to set default model',
+      deleteModelFailed: 'Failed to delete model',
+      loadProviderAccountsFailed: 'Failed to load provider accounts',
+      deleteLastModelBlocked: 'At least one AI model profile is required.',
+      localProviderMayNotRunning: 'Local server may not be running.',
+      status: {
+        ready: 'Ready',
+        needsApiKey: 'Needs API key',
+        needsModel: 'Needs model',
+        needsLocalServer: 'Needs local server',
+        rateLimited: 'Rate limited',
+        providerError: 'Provider error',
+        untested: 'Untested',
+      },
+      details: {
+        modelMissing: 'Model missing',
+        noKeySaved: 'No key saved',
+        noRecentTest: 'No recent test',
+      },
+      friendly: {
+        apiKey: 'API key or permission issue.',
+        notFound: 'Endpoint or model may be incorrect.',
+        rateLimited: 'Quota or rate limit reached.',
+        upstream: 'Provider upstream error.',
+        network: 'Network issue or service unavailable.',
+      },
+    },
+    ja: {
+      title: 'モデル/API',
+      description: 'プロバイダーアカウントを管理し、各アカウントに複数のモデルを追加できます。',
+      currentDefaultModel: '現在の既定モデル',
+      noDefaultModel: '既定のモデル設定はまだありません。',
+      providerAccounts: 'プロバイダーアカウント',
+      addAccount: 'アカウント追加',
+      cancel: 'キャンセル',
+      providerPreset: 'プロバイダー',
+      accountLabel: 'アカウント名',
+      baseUrl: 'ベース URL',
+      noBaseUrl: 'ベース URL 未設定',
+      apiKey: 'API キー',
+      optionalLocalKey: 'ローカルでは任意',
+      pasteApiKey: 'API キーを貼り付け',
+      saveProviderAccount: 'プロバイダーアカウントを保存',
+      saving: '保存中...',
+      noProviderAccounts: 'プロバイダーアカウントはありません。',
+      defaultBadge: '既定',
+      modelSingular: 'モデル',
+      modelPlural: 'モデル',
+      fetchModels: 'モデル取得',
+      fetchingModels: '取得中...',
+      localProviderHint: 'ローカルサーバーを起動しておく必要があります。',
+      notConfigured: '未設定',
+      manualAddModel: 'モデルを手動追加',
+      addModel: 'モデル追加',
+      add: '追加',
+      alreadyAdded: '追加済み',
+      fetchedModels: '取得したモデル',
+      searchModels: 'モデルを検索',
+      noModelsReturned: 'モデルが返されませんでした。',
+      modelsUnderProvider: 'このアカウントのモデル',
+      noModelProfiles: 'このアカウントにはモデル設定がありません。',
+      setDefault: '既定に設定',
+      settingDefault: '設定中...',
+      deleteModel: 'モデル削除',
+      deleting: '削除中...',
+      testSelectedModel: '選択モデルをテスト',
+      testDefaultModel: '既定モデルをテスト',
+      testing: 'テスト中...',
+      connectionOk: '接続正常',
+      connectionFailed: '接続失敗',
+      modelsFetched: 'モデル取得済み',
+      fetchModelsFailed: 'モデル取得失敗',
+      selectProviderAccount: 'プロバイダーアカウントを選択してください。',
+      diagnosticsCopied: '診断情報をコピーしました',
+      diagnosticsCopyFailed: '診断情報のコピーに失敗しました',
+      saveAccountFailed: 'プロバイダーアカウントの保存に失敗しました',
+      modelRequired: 'モデル ID が必要です。',
+      duplicateModel: 'このモデルは選択中のアカウントに追加済みです。',
+      addModelFailed: 'モデル追加に失敗しました',
+      setDefaultFailed: '既定モデルの設定に失敗しました',
+      deleteModelFailed: 'モデル削除に失敗しました',
+      loadProviderAccountsFailed: 'プロバイダーアカウントの読み込みに失敗しました',
+      deleteLastModelBlocked: '少なくとも 1 つのモデル設定が必要です。',
+      localProviderMayNotRunning: 'ローカルサーバーが起動していない可能性があります。',
+      status: { ready: '利用可能', needsApiKey: 'API キーが必要', needsModel: 'モデルが必要', needsLocalServer: 'ローカルサービスが必要', rateLimited: '制限中', providerError: 'プロバイダーエラー', untested: '未テスト' },
+      details: { modelMissing: 'モデル未設定', noKeySaved: 'キー未保存', noRecentTest: '最近のテストなし' },
+      friendly: { apiKey: 'API キーまたは権限に問題があります。', notFound: 'Endpoint またはモデルが誤っている可能性があります。', rateLimited: 'クォータ不足またはレート制限です。', upstream: 'プロバイダー側の障害です。', network: 'ネットワークまたはサービスの問題です。' },
+    },
+    ko: {
+      title: '모델/API',
+      description: '공급자 계정을 관리하고 각 계정 아래에 여러 모델을 추가합니다.',
+      currentDefaultModel: '현재 기본 모델',
+      noDefaultModel: '기본 모델 구성이 아직 없습니다.',
+      providerAccounts: '공급자 계정',
+      addAccount: '계정 추가',
+      cancel: '취소',
+      providerPreset: '공급자',
+      accountLabel: '계정 이름',
+      baseUrl: '기본 URL',
+      noBaseUrl: '기본 URL 없음',
+      apiKey: 'API 키',
+      optionalLocalKey: '로컬 공급자는 선택 사항',
+      pasteApiKey: 'API 키 붙여넣기',
+      saveProviderAccount: '공급자 계정 저장',
+      saving: '저장 중...',
+      noProviderAccounts: '공급자 계정이 없습니다.',
+      defaultBadge: '기본',
+      modelSingular: '모델',
+      modelPlural: '모델',
+      fetchModels: '모델 가져오기',
+      fetchingModels: '가져오는 중...',
+      localProviderHint: '로컬 서버가 실행 중이어야 합니다.',
+      notConfigured: '설정 안 됨',
+      manualAddModel: '모델 수동 추가',
+      addModel: '모델 추가',
+      add: '추가',
+      alreadyAdded: '이미 추가됨',
+      fetchedModels: '가져온 모델',
+      searchModels: '모델 검색',
+      noModelsReturned: '반환된 모델이 없습니다.',
+      modelsUnderProvider: '이 계정의 모델',
+      noModelProfiles: '이 계정에는 모델 구성이 없습니다.',
+      setDefault: '기본으로 설정',
+      settingDefault: '설정 중...',
+      deleteModel: '모델 삭제',
+      deleting: '삭제 중...',
+      testSelectedModel: '선택 모델 테스트',
+      testDefaultModel: '기본 모델 테스트',
+      testing: '테스트 중...',
+      connectionOk: '연결 정상',
+      connectionFailed: '연결 실패',
+      modelsFetched: '모델 가져옴',
+      fetchModelsFailed: '모델 가져오기 실패',
+      selectProviderAccount: '공급자 계정을 선택하세요.',
+      diagnosticsCopied: '진단 정보가 복사됨',
+      diagnosticsCopyFailed: '진단 정보 복사 실패',
+      saveAccountFailed: '공급자 계정 저장 실패',
+      modelRequired: '모델 ID가 필요합니다.',
+      duplicateModel: '이 모델은 선택한 공급자 계정에 이미 추가되어 있습니다.',
+      addModelFailed: '모델 추가 실패',
+      setDefaultFailed: '기본 모델 설정 실패',
+      deleteModelFailed: '모델 삭제 실패',
+      loadProviderAccountsFailed: '공급자 계정 로드 실패',
+      deleteLastModelBlocked: '최소 하나의 모델 구성이 필요합니다.',
+      localProviderMayNotRunning: '로컬 서버가 실행 중이 아닐 수 있습니다.',
+      status: { ready: '사용 가능', needsApiKey: 'API 키 필요', needsModel: '모델 필요', needsLocalServer: '로컬 서버 필요', rateLimited: '제한됨', providerError: '공급자 오류', untested: '미테스트' },
+      details: { modelMissing: '모델 없음', noKeySaved: '키 저장 안 됨', noRecentTest: '최근 테스트 없음' },
+      friendly: { apiKey: 'API 키 또는 권한 문제입니다.', notFound: 'Endpoint 또는 모델이 잘못되었을 수 있습니다.', rateLimited: '할당량 또는 속도 제한입니다.', upstream: '공급자 상위 서비스 오류입니다.', network: '네트워크 또는 서비스 문제입니다.' },
+    },
+    es: {
+      title: 'Modelos/API',
+      description: 'Gestiona cuentas de proveedor y añade varios modelos en cada cuenta.',
+      currentDefaultModel: 'Modelo predeterminado actual',
+      noDefaultModel: 'Aún no hay un modelo predeterminado configurado.',
+      providerAccounts: 'Cuentas de proveedor',
+      addAccount: 'Añadir cuenta',
+      cancel: 'Cancelar',
+      providerPreset: 'Proveedor',
+      accountLabel: 'Nombre de cuenta',
+      baseUrl: 'URL base',
+      noBaseUrl: 'Sin URL base',
+      apiKey: 'Clave API',
+      optionalLocalKey: 'Opcional para proveedores locales',
+      pasteApiKey: 'Pegar clave API',
+      saveProviderAccount: 'Guardar cuenta de proveedor',
+      saving: 'Guardando...',
+      noProviderAccounts: 'No hay cuentas de proveedor.',
+      defaultBadge: 'Predeterminado',
+      modelSingular: 'modelo',
+      modelPlural: 'modelos',
+      fetchModels: 'Obtener modelos',
+      fetchingModels: 'Obteniendo...',
+      localProviderHint: 'El servidor local debe estar en ejecución.',
+      notConfigured: 'Sin configurar',
+      manualAddModel: 'Añadir modelo manualmente',
+      addModel: 'Añadir modelo',
+      add: 'Añadir',
+      alreadyAdded: 'Ya añadido',
+      fetchedModels: 'Modelos obtenidos',
+      searchModels: 'Buscar modelos',
+      noModelsReturned: 'No se devolvieron modelos.',
+      modelsUnderProvider: 'Modelos de esta cuenta',
+      noModelProfiles: 'Esta cuenta aún no tiene modelos configurados.',
+      setDefault: 'Definir predeterminado',
+      settingDefault: 'Definiendo...',
+      deleteModel: 'Eliminar modelo',
+      deleting: 'Eliminando...',
+      testSelectedModel: 'Probar modelo seleccionado',
+      testDefaultModel: 'Probar modelo predeterminado',
+      testing: 'Probando...',
+      connectionOk: 'Conexión correcta',
+      connectionFailed: 'Conexión fallida',
+      modelsFetched: 'Modelos obtenidos',
+      fetchModelsFailed: 'Error al obtener modelos',
+      selectProviderAccount: 'Selecciona una cuenta de proveedor.',
+      diagnosticsCopied: 'Diagnóstico copiado',
+      diagnosticsCopyFailed: 'No se pudo copiar el diagnóstico',
+      saveAccountFailed: 'No se pudo guardar la cuenta de proveedor',
+      modelRequired: 'Se requiere el ID del modelo.',
+      duplicateModel: 'Este modelo ya está añadido a la cuenta seleccionada.',
+      addModelFailed: 'No se pudo añadir el modelo',
+      setDefaultFailed: 'No se pudo definir el modelo predeterminado',
+      deleteModelFailed: 'No se pudo eliminar el modelo',
+      loadProviderAccountsFailed: 'No se pudieron cargar las cuentas de proveedor',
+      deleteLastModelBlocked: 'Debe quedar al menos una configuración de modelo.',
+      localProviderMayNotRunning: 'Es posible que el servidor local no esté en ejecución.',
+      status: { ready: 'Listo', needsApiKey: 'Necesita clave API', needsModel: 'Necesita modelo', needsLocalServer: 'Necesita servidor local', rateLimited: 'Limitado', providerError: 'Error del proveedor', untested: 'Sin probar' },
+      details: { modelMissing: 'Falta el modelo', noKeySaved: 'Clave no guardada', noRecentTest: 'Sin prueba reciente' },
+      friendly: { apiKey: 'Problema de clave API o permisos.', notFound: 'Endpoint o modelo posiblemente incorrecto.', rateLimited: 'Cuota o límite alcanzado.', upstream: 'Error del proveedor.', network: 'Problema de red o servicio no disponible.' },
+    },
+    fr: {
+      title: 'Modèles/API',
+      description: 'Gérez les comptes fournisseurs et ajoutez plusieurs modèles sous chaque compte.',
+      currentDefaultModel: 'Modèle par défaut actuel',
+      noDefaultModel: 'Aucun modèle par défaut n’est encore configuré.',
+      providerAccounts: 'Comptes fournisseur',
+      addAccount: 'Ajouter un compte',
+      cancel: 'Annuler',
+      providerPreset: 'Fournisseur',
+      accountLabel: 'Nom du compte',
+      baseUrl: 'URL de base',
+      noBaseUrl: 'Aucune URL de base',
+      apiKey: 'Clé API',
+      optionalLocalKey: 'Optionnelle pour les fournisseurs locaux',
+      pasteApiKey: 'Coller la clé API',
+      saveProviderAccount: 'Enregistrer le compte fournisseur',
+      saving: 'Enregistrement...',
+      noProviderAccounts: 'Aucun compte fournisseur.',
+      defaultBadge: 'Par défaut',
+      modelSingular: 'modèle',
+      modelPlural: 'modèles',
+      fetchModels: 'Charger les modèles',
+      fetchingModels: 'Chargement...',
+      localProviderHint: 'Le serveur local doit être lancé.',
+      notConfigured: 'Non configuré',
+      manualAddModel: 'Ajouter un modèle manuellement',
+      addModel: 'Ajouter un modèle',
+      add: 'Ajouter',
+      alreadyAdded: 'Déjà ajouté',
+      fetchedModels: 'Modèles chargés',
+      searchModels: 'Rechercher des modèles',
+      noModelsReturned: 'Aucun modèle retourné.',
+      modelsUnderProvider: 'Modèles de ce compte',
+      noModelProfiles: 'Aucun modèle configuré pour ce compte.',
+      setDefault: 'Définir par défaut',
+      settingDefault: 'Définition...',
+      deleteModel: 'Supprimer le modèle',
+      deleting: 'Suppression...',
+      testSelectedModel: 'Tester le modèle sélectionné',
+      testDefaultModel: 'Tester le modèle par défaut',
+      testing: 'Test...',
+      connectionOk: 'Connexion réussie',
+      connectionFailed: 'Connexion échouée',
+      modelsFetched: 'Modèles chargés',
+      fetchModelsFailed: 'Échec du chargement',
+      selectProviderAccount: 'Sélectionnez un compte fournisseur.',
+      diagnosticsCopied: 'Diagnostic copié',
+      diagnosticsCopyFailed: 'Échec de la copie du diagnostic',
+      saveAccountFailed: 'Échec de l’enregistrement du compte fournisseur',
+      modelRequired: 'L’ID du modèle est requis.',
+      duplicateModel: 'Ce modèle est déjà ajouté à ce compte.',
+      addModelFailed: 'Échec de l’ajout du modèle',
+      setDefaultFailed: 'Échec de la définition par défaut',
+      deleteModelFailed: 'Échec de la suppression du modèle',
+      loadProviderAccountsFailed: 'Échec du chargement des comptes fournisseur',
+      deleteLastModelBlocked: 'Au moins une configuration de modèle est requise.',
+      localProviderMayNotRunning: 'Le serveur local n’est peut-être pas lancé.',
+      status: { ready: 'Prêt', needsApiKey: 'Clé API requise', needsModel: 'Modèle requis', needsLocalServer: 'Serveur local requis', rateLimited: 'Limité', providerError: 'Erreur fournisseur', untested: 'Non testé' },
+      details: { modelMissing: 'Modèle manquant', noKeySaved: 'Clé non enregistrée', noRecentTest: 'Aucun test récent' },
+      friendly: { apiKey: 'Problème de clé API ou de permissions.', notFound: 'Endpoint ou modèle possiblement incorrect.', rateLimited: 'Quota ou limite atteint.', upstream: 'Erreur du fournisseur.', network: 'Problème réseau ou service indisponible.' },
+    },
+    de: {
+      title: 'Modelle/API',
+      description: 'Anbieterkonten verwalten und mehrere Modelle pro Konto hinzufügen.',
+      currentDefaultModel: 'Aktuelles Standardmodell',
+      noDefaultModel: 'Noch kein Standardmodell konfiguriert.',
+      providerAccounts: 'Anbieterkonten',
+      addAccount: 'Konto hinzufügen',
+      cancel: 'Abbrechen',
+      providerPreset: 'Anbieter',
+      accountLabel: 'Kontoname',
+      baseUrl: 'Basis-URL',
+      noBaseUrl: 'Keine Basis-URL',
+      apiKey: 'API-Schlüssel',
+      optionalLocalKey: 'Für lokale Anbieter optional',
+      pasteApiKey: 'API-Schlüssel einfügen',
+      saveProviderAccount: 'Anbieterkonto speichern',
+      saving: 'Speichern...',
+      noProviderAccounts: 'Keine Anbieterkonten vorhanden.',
+      defaultBadge: 'Standard',
+      modelSingular: 'Modell',
+      modelPlural: 'Modelle',
+      fetchModels: 'Modelle abrufen',
+      fetchingModels: 'Abrufen...',
+      localProviderHint: 'Der lokale Server muss laufen.',
+      notConfigured: 'Nicht konfiguriert',
+      manualAddModel: 'Modell manuell hinzufügen',
+      addModel: 'Modell hinzufügen',
+      add: 'Hinzufügen',
+      alreadyAdded: 'Bereits hinzugefügt',
+      fetchedModels: 'Abgerufene Modelle',
+      searchModels: 'Modelle suchen',
+      noModelsReturned: 'Keine Modelle zurückgegeben.',
+      modelsUnderProvider: 'Modelle dieses Kontos',
+      noModelProfiles: 'Für dieses Konto sind noch keine Modelle konfiguriert.',
+      setDefault: 'Als Standard setzen',
+      settingDefault: 'Wird gesetzt...',
+      deleteModel: 'Modell löschen',
+      deleting: 'Löschen...',
+      testSelectedModel: 'Ausgewähltes Modell testen',
+      testDefaultModel: 'Standardmodell testen',
+      testing: 'Test läuft...',
+      connectionOk: 'Verbindung OK',
+      connectionFailed: 'Verbindung fehlgeschlagen',
+      modelsFetched: 'Modelle abgerufen',
+      fetchModelsFailed: 'Modelle abrufen fehlgeschlagen',
+      selectProviderAccount: 'Wählen Sie ein Anbieterkonto aus.',
+      diagnosticsCopied: 'Diagnose kopiert',
+      diagnosticsCopyFailed: 'Diagnose konnte nicht kopiert werden',
+      saveAccountFailed: 'Anbieterkonto konnte nicht gespeichert werden',
+      modelRequired: 'Modell-ID ist erforderlich.',
+      duplicateModel: 'Dieses Modell wurde diesem Konto bereits hinzugefügt.',
+      addModelFailed: 'Modell konnte nicht hinzugefügt werden',
+      setDefaultFailed: 'Standardmodell konnte nicht gesetzt werden',
+      deleteModelFailed: 'Modell konnte nicht gelöscht werden',
+      loadProviderAccountsFailed: 'Anbieterkonten konnten nicht geladen werden',
+      deleteLastModelBlocked: 'Mindestens eine Modellkonfiguration ist erforderlich.',
+      localProviderMayNotRunning: 'Der lokale Server läuft möglicherweise nicht.',
+      status: { ready: 'Bereit', needsApiKey: 'API-Schlüssel nötig', needsModel: 'Modell nötig', needsLocalServer: 'Lokaler Server nötig', rateLimited: 'Begrenzt', providerError: 'Anbieterfehler', untested: 'Ungetestet' },
+      details: { modelMissing: 'Modell fehlt', noKeySaved: 'Schlüssel nicht gespeichert', noRecentTest: 'Kein aktueller Test' },
+      friendly: { apiKey: 'Problem mit API-Schlüssel oder Berechtigung.', notFound: 'Endpoint oder Modell könnte falsch sein.', rateLimited: 'Kontingent oder Limit erreicht.', upstream: 'Fehler beim Anbieter.', network: 'Netzwerkproblem oder Dienst nicht verfügbar.' },
+    },
+    ru: {
+      title: 'Модели/API',
+      description: 'Управляйте аккаунтами провайдеров и добавляйте несколько моделей в каждый аккаунт.',
+      currentDefaultModel: 'Текущая модель по умолчанию',
+      noDefaultModel: 'Модель по умолчанию ещё не настроена.',
+      providerAccounts: 'Аккаунты провайдеров',
+      addAccount: 'Добавить аккаунт',
+      cancel: 'Отмена',
+      providerPreset: 'Провайдер',
+      accountLabel: 'Название аккаунта',
+      baseUrl: 'Базовый URL',
+      noBaseUrl: 'Базовый URL не задан',
+      apiKey: 'API-ключ',
+      optionalLocalKey: 'Необязательно для локальных провайдеров',
+      pasteApiKey: 'Вставьте API-ключ',
+      saveProviderAccount: 'Сохранить аккаунт провайдера',
+      saving: 'Сохранение...',
+      noProviderAccounts: 'Аккаунтов провайдеров пока нет.',
+      defaultBadge: 'По умолчанию',
+      modelSingular: 'модель',
+      modelPlural: 'моделей',
+      fetchModels: 'Получить модели',
+      fetchingModels: 'Получение...',
+      localProviderHint: 'Локальный сервер должен быть запущен.',
+      notConfigured: 'Не настроено',
+      manualAddModel: 'Добавить модель вручную',
+      addModel: 'Добавить модель',
+      add: 'Добавить',
+      alreadyAdded: 'Уже добавлено',
+      fetchedModels: 'Полученные модели',
+      searchModels: 'Поиск моделей',
+      noModelsReturned: 'Модели не возвращены.',
+      modelsUnderProvider: 'Модели этого аккаунта',
+      noModelProfiles: 'В этом аккаунте ещё нет моделей.',
+      setDefault: 'Сделать основной',
+      settingDefault: 'Настройка...',
+      deleteModel: 'Удалить модель',
+      deleting: 'Удаление...',
+      testSelectedModel: 'Проверить выбранную модель',
+      testDefaultModel: 'Проверить модель по умолчанию',
+      testing: 'Проверка...',
+      connectionOk: 'Подключение OK',
+      connectionFailed: 'Ошибка подключения',
+      modelsFetched: 'Модели получены',
+      fetchModelsFailed: 'Не удалось получить модели',
+      selectProviderAccount: 'Выберите аккаунт провайдера.',
+      diagnosticsCopied: 'Диагностика скопирована',
+      diagnosticsCopyFailed: 'Не удалось скопировать диагностику',
+      saveAccountFailed: 'Не удалось сохранить аккаунт провайдера',
+      modelRequired: 'Нужен ID модели.',
+      duplicateModel: 'Эта модель уже добавлена в выбранный аккаунт.',
+      addModelFailed: 'Не удалось добавить модель',
+      setDefaultFailed: 'Не удалось выбрать модель по умолчанию',
+      deleteModelFailed: 'Не удалось удалить модель',
+      loadProviderAccountsFailed: 'Не удалось загрузить аккаунты провайдеров',
+      deleteLastModelBlocked: 'Нужна хотя бы одна конфигурация модели.',
+      localProviderMayNotRunning: 'Локальный сервер может быть не запущен.',
+      status: { ready: 'Готово', needsApiKey: 'Нужен API-ключ', needsModel: 'Нужна модель', needsLocalServer: 'Нужен локальный сервер', rateLimited: 'Лимит', providerError: 'Ошибка провайдера', untested: 'Не проверено' },
+      details: { modelMissing: 'Модель не задана', noKeySaved: 'Ключ не сохранён', noRecentTest: 'Нет недавней проверки' },
+      friendly: { apiKey: 'Проблема с API-ключом или правами.', notFound: 'Endpoint или модель могут быть неверными.', rateLimited: 'Достигнут лимит или квота.', upstream: 'Ошибка на стороне провайдера.', network: 'Проблема сети или сервис недоступен.' },
+    },
+  };
+  return texts[appLanguage] ?? texts.en;
+}
+
+function getLocalizedProviderResultMessage(
+  result: AIProviderOperationResult,
+  text: AIProviderText,
+  isLocalProvider: boolean,
+): string | undefined {
+  if (result.success) {
+    return result.operation === 'fetchModels' ? text.modelsFetched : text.connectionOk;
+  }
+  if (result.status === 401 || result.status === 403) return text.friendly.apiKey;
+  if (result.status === 404) return text.friendly.notFound;
+  if (result.status === 429) return text.friendly.rateLimited;
+  if (result.status === 500 || result.status === 502 || result.status === 503) return text.friendly.upstream;
+  if (!result.status && isLocalProvider) return text.localProviderMayNotRunning;
+  if (!result.status) return text.friendly.network;
+  return result.friendlyMessage ? redactDiagnosticsText(result.friendlyMessage) : undefined;
+}
+
+function localizeAIProviderError(message: string | undefined, text: AIProviderText): string | undefined {
+  if (!message) return undefined;
+  if (/at least one AI model profile is required/i.test(message)) return text.deleteLastModelBlocked;
+  if (/already exists/i.test(message)) return text.duplicateModel;
+  if (/model id is required/i.test(message)) return text.modelRequired;
+  return redactDiagnosticsText(message);
 }
 
 function getSettingsText(appLanguage: AppLanguage) {
@@ -887,15 +1688,84 @@ export function SettingsModal({
   const [activeNav, setActiveNav] = useState<NavId>('accounts');
   const [saved, setSaved] = useState(false);
   const [apiSaveError, setApiSaveError] = useState<string | null>(null);
-  const [selectedApiProfile, setSelectedApiProfile] = useState<AIConfigProfileId>('primary');
-  const [activeApiProfile, setActiveApiProfile] = useState<AIConfigProfileId>('primary');
-  const [apiProfiles, setApiProfiles] = useState<Record<AIConfigProfileId, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
+  const [selectedApiProfile, setSelectedApiProfile] = useState<string>('primary');
+  const [activeApiProfile, setActiveApiProfile] = useState<string>('primary');
+  const [apiProfiles, setApiProfiles] = useState<Record<string, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
+  const [providerAccountsSnapshot, setProviderAccountsSnapshot] = useState<AIProviderAccountWithModelsSnapshot | null>(null);
+  const [selectedProviderAccountId, setSelectedProviderAccountId] = useState<string>('');
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<AIProviderConnectionTestResult | null>(null);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [modelListResult, setModelListResult] = useState<AIProviderModelListResult | null>(null);
+  const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, AIProviderOperationResult>>({});
+  const [diagnosticsCopyStatus, setDiagnosticsCopyStatus] = useState<string | null>(null);
+  const [isAddingProviderAccount, setIsAddingProviderAccount] = useState(false);
+  const [newProviderAccountForm, setNewProviderAccountForm] = useState<NewProviderAccountForm>({
+    providerPresetId: 'openai',
+    label: 'OpenAI',
+    baseUrl: getOpenAICompatiblePresetById('openai').baseUrl,
+    apiKey: '',
+  });
+  const [isSavingProviderAccount, setIsSavingProviderAccount] = useState(false);
+  const [manualModelId, setManualModelId] = useState('');
+  const [isSavingModelProfile, setIsSavingModelProfile] = useState(false);
+  const [isDeletingModelProfile, setIsDeletingModelProfile] = useState<string | null>(null);
+  const [isSettingDefaultModelProfile, setIsSettingDefaultModelProfile] = useState<string | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
   const apiProfileUi = useMemo(() => getApiProfileText(normalizedLanguage), [normalizedLanguage]);
-  const selectedApiProfileForm = apiProfiles[selectedApiProfile];
+  const aiProviderUi = useMemo(() => getAIProviderText(normalizedLanguage), [normalizedLanguage]);
+  const modelsApiLabel = aiProviderUi.title;
+  const apiProfileList = useMemo(() => Object.values(apiProfiles), [apiProfiles]);
+  const selectedApiProfileForm = apiProfiles[selectedApiProfile] ?? apiProfileList[0] ?? EMPTY_AI_CONFIG_PROFILES.primary;
   const selectedProviderPreset = getOpenAICompatiblePresetById(selectedApiProfileForm.providerPresetId);
+  const providerAccounts = providerAccountsSnapshot?.accounts ?? [];
+  const defaultModelProfileId = providerAccountsSnapshot?.defaultModelProfileId || '';
+  const defaultProviderAccount = providerAccounts.find((account) =>
+    account.modelProfiles.some((modelProfile) => modelProfile.modelProfileId === defaultModelProfileId),
+  );
+  const defaultModelProfile = defaultProviderAccount?.modelProfiles.find((modelProfile) =>
+    modelProfile.modelProfileId === defaultModelProfileId,
+  );
+  const selectedProviderAccount = providerAccounts.find((account) => account.providerAccountId === selectedProviderAccountId)
+    ?? defaultProviderAccount
+    ?? providerAccounts[0];
+  const selectedProviderAccountPreset = getOpenAICompatiblePresetById(selectedProviderAccount?.providerPresetId ?? 'custom');
+  const selectedProviderAccountModels = selectedProviderAccount?.modelProfiles ?? [];
+  const selectedProviderAccountDefaultModel = selectedProviderAccountModels.find((modelProfile) => modelProfile.isDefault)
+    ?? selectedProviderAccountModels[0];
+  const chatEndpointPreview = useMemo(() => {
+    try {
+      return selectedApiProfileForm.baseUrl.trim()
+        ? normalizeOpenAICompatibleChatEndpoint(selectedApiProfileForm.baseUrl)
+        : '';
+    } catch {
+      return '';
+    }
+  }, [selectedApiProfileForm.baseUrl]);
+  const modelsEndpointPreview = useMemo(() => {
+    try {
+      return selectedApiProfileForm.baseUrl.trim()
+        ? normalizeOpenAICompatibleModelsEndpoint(selectedApiProfileForm.baseUrl)
+        : '';
+    } catch {
+      return '';
+    }
+  }, [selectedApiProfileForm.baseUrl]);
+  const visibleModelOptions = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    return models
+      .filter((model) => !query || model.toLowerCase().includes(query))
+      .slice(0, 100);
+  }, [modelListResult, modelSearchQuery]);
+  const modelMatchCount = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    return query ? models.filter((model) => model.toLowerCase().includes(query)).length : models.length;
+  }, [modelListResult, modelSearchQuery]);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const cacheRangeOptions = useMemo(() => getMailCacheRangeOptions(normalizedLanguage), [normalizedLanguage]);
   const autoFetchOptions = useMemo(() => getAutoFetchIntervalOptions(normalizedLanguage), [normalizedLanguage]);
@@ -905,16 +1775,93 @@ export function SettingsModal({
     ? Math.min(100, Math.round((backupState.progress.processed / backupState.progress.total) * 100))
     : 0;
 
+  function applyProviderProfileSnapshot(snapshot: AIProviderProfileSnapshot) {
+    const profiles = snapshot.profiles.map(profileSnapshotToForm);
+    const record = providerProfilesToRecord(profiles);
+    setApiProfiles(record);
+    setActiveApiProfile(snapshot.defaultProviderId);
+    setSelectedApiProfile((current) => record[current] ? current : snapshot.defaultProviderId || profiles[0]?.id || 'primary');
+  }
+
+  function applyProviderAccountsWithModelsSnapshot(snapshot: AIProviderAccountWithModelsSnapshot) {
+    setProviderAccountsSnapshot(snapshot);
+    setSelectedProviderAccountId((current) => {
+      if (snapshot.accounts.some((account) => account.providerAccountId === current)) return current;
+      const defaultAccount = snapshot.accounts.find((account) =>
+        account.modelProfiles.some((modelProfile) => modelProfile.modelProfileId === snapshot.defaultModelProfileId),
+      );
+      return defaultAccount?.providerAccountId || snapshot.accounts[0]?.providerAccountId || '';
+    });
+  }
+
+  async function refreshProviderAccountsWithModels(preferredAccountId?: string) {
+    const response = await window.electronAPI.invoke('ai:getProviderAccountsWithModels') as {
+      success: boolean;
+      data?: AIProviderAccountWithModelsSnapshot;
+      error?: string;
+    };
+    if (!response.success || !response.data) {
+      throw new Error(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.loadProviderAccountsFailed);
+    }
+    applyProviderAccountsWithModelsSnapshot(response.data);
+    if (preferredAccountId && response.data.accounts.some((account) => account.providerAccountId === preferredAccountId)) {
+      setSelectedProviderAccountId(preferredAccountId);
+    }
+  }
+
+  function legacyProfileIdFromProviderAccountId(providerAccountId: string): string {
+    return providerAccountId.startsWith('account_')
+      ? providerAccountId.slice('account_'.length)
+      : providerAccountId;
+  }
+
+  function accountModelToProfileForm(
+    account: NonNullable<typeof selectedProviderAccount>,
+    modelProfile?: AIModelProfileSnapshotForm,
+  ): AIConfigProfileForm {
+    return {
+      id: legacyProfileIdFromProviderAccountId(account.providerAccountId),
+      providerPresetId: account.providerPresetId,
+      label: account.label,
+      baseUrl: account.baseUrl,
+      apiKey: '',
+      model: modelProfile?.model || '',
+      hasApiKey: account.hasApiKey,
+      isDefault: modelProfile?.modelProfileId === defaultModelProfileId,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
   useEffect(() => {
     if (!isOpen) return;
     setActiveNav('accounts');
     setApiSaveError(null);
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
   }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
     void (async () => {
       try {
+        const providerProfilesResponse = await window.electronAPI.invoke('ai:getProviderProfiles') as {
+          success: boolean;
+          data?: AIProviderProfileSnapshot;
+        };
+        if (providerProfilesResponse.success && providerProfilesResponse.data) {
+          applyProviderProfileSnapshot(providerProfilesResponse.data);
+          const accountsWithModelsResponse = await window.electronAPI.invoke('ai:getProviderAccountsWithModels') as {
+            success: boolean;
+            data?: AIProviderAccountWithModelsSnapshot;
+          };
+          if (accountsWithModelsResponse.success && accountsWithModelsResponse.data) {
+            applyProviderAccountsWithModelsSnapshot(accountsWithModelsResponse.data);
+          }
+          return;
+        }
+
         const cfg = await window.electronAPI.invoke('ai:getConfig') as {
           success: boolean;
           data?: {
@@ -936,18 +1883,24 @@ export function SettingsModal({
           setSelectedApiProfile(activeProfileId);
           setApiProfiles({
             primary: {
+              id: 'primary',
               baseUrl: cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '',
+              label: 'Profile A',
               providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.primary?.model || cfg.data.model || '',
               hasApiKey: cfg.data.profiles?.primary?.hasApiKey ?? cfg.data.hasApiKey,
+              isDefault: activeProfileId === 'primary',
             },
             secondary: {
+              id: 'secondary',
               baseUrl: cfg.data.profiles?.secondary?.baseUrl || '',
+              label: 'Profile B',
               providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.secondary?.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.secondary?.model || '',
               hasApiKey: cfg.data.profiles?.secondary?.hasApiKey ?? false,
+              isDefault: activeProfileId === 'secondary',
             },
           });
         }
@@ -957,14 +1910,218 @@ export function SettingsModal({
     })();
   }, [isOpen]);
 
+  useEffect(() => {
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
+    setDiagnosticsCopyStatus(null);
+  }, [selectedApiProfile]);
+
+  useEffect(() => {
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
+    setManualModelId('');
+    setDiagnosticsCopyStatus(null);
+    setApiSaveError(null);
+  }, [selectedProviderAccountId]);
+
   function updateSelectedApiProfile(patch: Partial<AIConfigProfileForm>) {
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
     setApiProfiles((prev) => ({
       ...prev,
       [selectedApiProfile]: {
+        ...selectedApiProfileForm,
         ...prev[selectedApiProfile],
         ...patch,
       },
     }));
+  }
+
+  async function handleFetchModels() {
+    setIsFetchingModels(true);
+    setModelListResult(null);
+    setModelSearchQuery('');
+    setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:fetchModels', {
+        profileId: selectedApiProfile,
+        providerId: selectedProviderPreset.id,
+        providerLabel: selectedProviderPreset.label,
+        baseUrl: selectedApiProfileForm.baseUrl,
+        apiKey: selectedApiProfileForm.apiKey.trim() || undefined,
+        model: selectedApiProfileForm.model,
+        localProvider: Boolean(selectedProviderPreset.isLocal),
+      }) as AIProviderModelListResult;
+      setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
+    } catch (error) {
+      const response: AIProviderModelListResult = {
+        success: false,
+        provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        model: selectedApiProfileForm.model,
+        operation: 'fetchModels',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: selectedProviderPreset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: [],
+        error: (error as Error).message,
+      };
+      setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
+    } finally {
+      setIsFetchingModels(false);
+    }
+  }
+
+  async function handleTestConnection() {
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+    setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:testConnection', {
+        profileId: selectedApiProfile,
+        providerId: selectedProviderPreset.id,
+        providerLabel: selectedProviderPreset.label,
+        baseUrl: selectedApiProfileForm.baseUrl,
+        apiKey: selectedApiProfileForm.apiKey.trim() || undefined,
+        model: selectedApiProfileForm.model,
+        localProvider: Boolean(selectedProviderPreset.isLocal),
+      }) as AIProviderConnectionTestResult;
+      setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
+    } catch (error) {
+      const response: AIProviderConnectionTestResult = {
+        success: false,
+        provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        model: selectedApiProfileForm.model,
+        operation: 'testConnection',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: selectedProviderPreset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+        error: (error as Error).message,
+      };
+      setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
+    } finally {
+      setIsTestingConnection(false);
+    }
+  }
+
+  async function handleFetchModelsForProviderAccount(
+    account: NonNullable<typeof selectedProviderAccount>,
+    modelProfile?: AIModelProfileSnapshotForm,
+  ) {
+    setIsFetchingModels(true);
+    setModelListResult(null);
+    setModelSearchQuery('');
+    setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
+    const preset = getOpenAICompatiblePresetById(account.providerPresetId);
+    const profileId = legacyProfileIdFromProviderAccountId(account.providerAccountId);
+    try {
+      const response = await window.electronAPI.invoke('ai:fetchModels', {
+        profileId,
+        providerAccountId: account.providerAccountId,
+        providerId: preset.id,
+        providerLabel: preset.label,
+        baseUrl: account.baseUrl,
+        model: modelProfile?.model || '',
+        localProvider: Boolean(account.isLocal || preset.isLocal),
+      }) as AIProviderModelListResult;
+      setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [profileId]: response }));
+    } catch (error) {
+      const response: AIProviderModelListResult = {
+        success: false,
+        provider: { id: preset.id, label: preset.label },
+        model: modelProfile?.model || '',
+        operation: 'fetchModels',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: account.isLocal || preset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: [],
+        error: (error as Error).message,
+      };
+      setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [profileId]: response }));
+    } finally {
+      setIsFetchingModels(false);
+    }
+  }
+
+  async function handleTestProviderAccountModel(
+    account: NonNullable<typeof selectedProviderAccount>,
+    modelProfile?: AIModelProfileSnapshotForm,
+  ) {
+    if (!modelProfile?.model) return;
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+    setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
+    const preset = getOpenAICompatiblePresetById(account.providerPresetId);
+    const profileId = legacyProfileIdFromProviderAccountId(account.providerAccountId);
+    try {
+      const response = await window.electronAPI.invoke('ai:testConnection', {
+        profileId,
+        providerAccountId: account.providerAccountId,
+        providerId: preset.id,
+        providerLabel: preset.label,
+        baseUrl: account.baseUrl,
+        model: modelProfile.model,
+        localProvider: Boolean(account.isLocal || preset.isLocal),
+      }) as AIProviderConnectionTestResult;
+      setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [profileId]: response }));
+    } catch (error) {
+      const response: AIProviderConnectionTestResult = {
+        success: false,
+        provider: { id: preset.id, label: preset.label },
+        model: modelProfile.model,
+        operation: 'testConnection',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: account.isLocal || preset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+        error: (error as Error).message,
+      };
+      setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [profileId]: response }));
+    } finally {
+      setIsTestingConnection(false);
+    }
+  }
+
+  async function handleCopyDiagnostics(result: AIProviderOperationResult) {
+    try {
+      const appVersion = await window.electronAPI.getVersion().catch(() => undefined);
+      const payload = buildSafeDiagnosticsPayload({
+        appVersion,
+        profile: selectedApiProfileForm,
+        presetLabel: selectedProviderPreset.label,
+        presetIsLocal: Boolean(selectedProviderPreset.isLocal),
+        isDefault: activeApiProfile === selectedApiProfile,
+        result,
+      });
+      await navigator.clipboard.writeText(formatDiagnosticsMarkdown(payload));
+      setDiagnosticsCopyStatus(aiProviderUi.diagnosticsCopied);
+      window.setTimeout(() => setDiagnosticsCopyStatus(null), 2400);
+    } catch (error) {
+      setDiagnosticsCopyStatus(aiProviderUi.diagnosticsCopyFailed);
+    }
   }
 
   function handleProviderPresetChange(presetId: OpenAICompatibleProviderPresetId) {
@@ -989,58 +2146,296 @@ export function SettingsModal({
     });
   }
 
+  function handleAddProviderProfile() {
+    const id = `provider_${Date.now().toString(36)}`;
+    const draft: AIConfigProfileForm = {
+      id,
+      providerPresetId: 'custom',
+      label: 'New Provider',
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+      hasApiKey: false,
+      isDefault: false,
+      isDraft: true,
+    };
+    setApiProfiles((prev) => ({ ...prev, [id]: draft }));
+    setSelectedApiProfile(id);
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
+  }
+
+  async function refreshProviderProfiles(preferredProfileId?: string) {
+    const response = await window.electronAPI.invoke('ai:getProviderProfiles') as {
+      success: boolean;
+      data?: AIProviderProfileSnapshot;
+      error?: string;
+    };
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to load AI provider profiles');
+    }
+    applyProviderProfileSnapshot(response.data);
+    if (preferredProfileId && response.data.profiles.some((profile) => profile.id === preferredProfileId)) {
+      setSelectedApiProfile(preferredProfileId);
+    }
+  }
+
   async function handleSaveApi() {
     try {
       setApiSaveError(null);
-      const payload: {
-        profileId: AIConfigProfileId;
-        activeProfileId: AIConfigProfileId;
-        baseUrl: string;
-        apiKey?: string;
-        model: string;
-      } = {
-        profileId: selectedApiProfile,
-        activeProfileId: activeApiProfile,
+      const payload = {
+        id: selectedApiProfileForm.id,
+        providerPresetId: selectedApiProfileForm.providerPresetId,
+        label: selectedApiProfileForm.label,
         baseUrl: selectedApiProfileForm.baseUrl,
         model: selectedApiProfileForm.model,
+        isDefault: selectedApiProfileForm.id === activeApiProfile,
+        ...(selectedApiProfileForm.apiKey.trim() ? { apiKey: selectedApiProfileForm.apiKey } : {}),
       };
-      if (selectedApiProfileForm.apiKey.trim()) {
-        payload.apiKey = selectedApiProfileForm.apiKey;
-      }
-      const response = await window.electronAPI.invoke('ai:saveConfig', payload) as { success: boolean; error?: string };
+      const response = await window.electronAPI.invoke('ai:saveProviderProfile', payload) as {
+        success: boolean;
+        data?: { snapshot?: AIProviderProfileSnapshot };
+        error?: string;
+      };
       if (!response.success) {
         setApiSaveError(response.error || 'Failed to save AI config');
         return;
       }
-      setApiProfiles((prev) => ({
-        ...prev,
-        [selectedApiProfile]: {
-          ...prev[selectedApiProfile],
-          apiKey: '',
-          hasApiKey: Boolean(selectedApiProfileForm.apiKey.trim() || prev[selectedApiProfile].hasApiKey),
-        },
-      }));
+      if (response.data?.snapshot) {
+        applyProviderProfileSnapshot(response.data.snapshot);
+        setSelectedApiProfile(selectedApiProfileForm.id);
+      } else {
+        await refreshProviderProfiles(selectedApiProfileForm.id);
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
-      setApiSaveError((error as Error).message);
+      setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.saveAccountFailed);
     }
   }
 
-  async function handleActivateApiProfile(profileId: AIConfigProfileId) {
+  async function handleActivateApiProfile(profileId: string) {
     try {
       setApiSaveError(null);
-      const response = await window.electronAPI.invoke('ai:saveConfig', { activeProfileId: profileId }) as { success: boolean; error?: string };
+      const response = await window.electronAPI.invoke('ai:setDefaultProvider', profileId) as {
+        success: boolean;
+        data?: AIProviderProfileSnapshot;
+        error?: string;
+      };
       if (!response.success) {
         setApiSaveError(response.error || 'Failed to switch AI profile');
         return;
       }
-      setActiveApiProfile(profileId);
+      if (response.data) {
+        applyProviderProfileSnapshot(response.data);
+      } else {
+        await refreshProviderProfiles(profileId);
+      }
       setSelectedApiProfile(profileId);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
+      setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.addModelFailed);
+    }
+  }
+
+  async function handleDeleteProviderProfile(profileId: string) {
+    if (isLegacyAIProviderProfile(profileId)) return;
+
+    const profile = apiProfiles[profileId];
+    if (profile?.isDraft) {
+      const nextProfiles = { ...apiProfiles };
+      delete nextProfiles[profileId];
+      setApiProfiles(nextProfiles);
+      const fallbackId = activeApiProfile in nextProfiles ? activeApiProfile : Object.keys(nextProfiles)[0] || 'primary';
+      setSelectedApiProfile(fallbackId);
+      return;
+    }
+
+    try {
+      setApiSaveError(null);
+      const response = await window.electronAPI.invoke('ai:deleteProviderProfile', profileId) as {
+        success: boolean;
+        data?: AIProviderProfileSnapshot;
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(response.error || 'Failed to delete AI provider');
+        return;
+      }
+      if (response.data) {
+        applyProviderProfileSnapshot(response.data);
+      } else {
+        await refreshProviderProfiles();
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.setDefaultFailed);
+    }
+  }
+
+  function handleNewProviderAccountPresetChange(presetId: OpenAICompatibleProviderPresetId) {
+    const preset = getOpenAICompatiblePresetById(presetId);
+    setNewProviderAccountForm((current) => ({
+      ...current,
+      providerPresetId: preset.id,
+      label: current.label.trim() && current.label !== getOpenAICompatiblePresetById(current.providerPresetId).label
+        ? current.label
+        : preset.label,
+      baseUrl: preset.isCustom ? current.baseUrl : preset.baseUrl,
+    }));
+  }
+
+  async function handleSaveProviderAccount() {
+    const preset = getOpenAICompatiblePresetById(newProviderAccountForm.providerPresetId);
+    setIsSavingProviderAccount(true);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:saveProviderAccount', {
+        providerPresetId: newProviderAccountForm.providerPresetId,
+        label: newProviderAccountForm.label.trim() || preset.label,
+        baseUrl: newProviderAccountForm.baseUrl.trim(),
+        apiKey: newProviderAccountForm.apiKey.trim() || undefined,
+        isLocal: Boolean(preset.isLocal),
+      }) as {
+        success: boolean;
+        data?: {
+          account?: { providerAccountId: string };
+          snapshot?: AIProviderAccountWithModelsSnapshot;
+        };
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.saveAccountFailed);
+        return;
+      }
+
+      if (response.data?.snapshot) {
+        applyProviderAccountsWithModelsSnapshot(response.data.snapshot);
+      } else {
+        await refreshProviderAccountsWithModels(response.data?.account?.providerAccountId);
+      }
+      if (response.data?.account?.providerAccountId) {
+        setSelectedProviderAccountId(response.data.account.providerAccountId);
+      }
+      setNewProviderAccountForm({
+        providerPresetId: 'openai',
+        label: 'OpenAI',
+        baseUrl: getOpenAICompatiblePresetById('openai').baseUrl,
+        apiKey: '',
+      });
+      setIsAddingProviderAccount(false);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.deleteModelFailed);
+    } finally {
+      setIsSavingProviderAccount(false);
+    }
+  }
+
+  function modelExistsUnderSelectedAccount(model: string): boolean {
+    const normalizedModel = model.trim();
+    return Boolean(normalizedModel && selectedProviderAccountModels.some((profile) => profile.model === normalizedModel));
+  }
+
+  async function handleAddModelToSelectedAccount(model: string) {
+    if (!selectedProviderAccount) return;
+    const trimmedModel = model.trim();
+    if (!trimmedModel) {
+      setApiSaveError(aiProviderUi.modelRequired);
+      return;
+    }
+    if (modelExistsUnderSelectedAccount(trimmedModel)) {
+      setApiSaveError(aiProviderUi.duplicateModel);
+      return;
+    }
+
+    setIsSavingModelProfile(true);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:saveModelProfile', {
+        providerAccountId: selectedProviderAccount.providerAccountId,
+        label: trimmedModel,
+        model: trimmedModel,
+      }) as {
+        success: boolean;
+        data?: { snapshot?: AIProviderAccountWithModelsSnapshot };
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.addModelFailed);
+        return;
+      }
+      if (response.data?.snapshot) {
+        applyProviderAccountsWithModelsSnapshot(response.data.snapshot);
+        setSelectedProviderAccountId(selectedProviderAccount.providerAccountId);
+      } else {
+        await refreshProviderAccountsWithModels(selectedProviderAccount.providerAccountId);
+      }
+      setManualModelId('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
       setApiSaveError((error as Error).message);
+    } finally {
+      setIsSavingModelProfile(false);
+    }
+  }
+
+  async function handleSetDefaultModelProfile(modelProfileId: string) {
+    setIsSettingDefaultModelProfile(modelProfileId);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:setDefaultModelProfile', modelProfileId) as {
+        success: boolean;
+        data?: AIProviderAccountWithModelsSnapshot;
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.setDefaultFailed);
+        return;
+      }
+      if (response.data) {
+        applyProviderAccountsWithModelsSnapshot(response.data);
+      } else {
+        await refreshProviderAccountsWithModels(selectedProviderAccount?.providerAccountId);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    } finally {
+      setIsSettingDefaultModelProfile(null);
+    }
+  }
+
+  async function handleDeleteModelProfile(modelProfileId: string) {
+    setIsDeletingModelProfile(modelProfileId);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:deleteModelProfile', modelProfileId) as {
+        success: boolean;
+        data?: AIProviderAccountWithModelsSnapshot;
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.deleteModelFailed);
+        return;
+      }
+      if (response.data) {
+        applyProviderAccountsWithModelsSnapshot(response.data);
+      } else {
+        await refreshProviderAccountsWithModels(selectedProviderAccount?.providerAccountId);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    } finally {
+      setIsDeletingModelProfile(null);
     }
   }
 
@@ -1059,10 +2454,422 @@ export function SettingsModal({
     }
   }
 
+  function renderAIProviderPage() {
+    return (
+      <div className="px-6 py-5">
+        <div className="mx-auto w-full max-w-[620px]">
+          <div className="mb-4">
+            <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>
+              {modelsApiLabel}
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: '#48484a' }}>
+              {aiProviderUi.description}
+            </p>
+          </div>
+          {apiSaveError && (
+            <div className="mb-3 rounded-lg px-3 py-2 text-[11px]" style={{ backgroundColor: 'rgba(255,69,58,0.12)', color: '#ff6b6b' }}>
+              {apiSaveError}
+            </div>
+          )}
+
+          <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
+            <div className="flex items-center gap-2 mb-2.5">
+              <Sparkles className="w-3 h-3" style={{ color: '#64d2ff' }} />
+              <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                {aiProviderUi.currentDefaultModel}
+              </span>
+            </div>
+            {defaultProviderAccount && defaultModelProfile ? (() => {
+              const readiness = getProviderReadiness(
+                accountModelToProfileForm(defaultProviderAccount, defaultModelProfile),
+                providerDiagnostics[legacyProfileIdFromProviderAccountId(defaultProviderAccount.providerAccountId)],
+                aiProviderUi,
+              );
+              const preset = getOpenAICompatiblePresetById(defaultProviderAccount.providerPresetId);
+              return (
+                <div className="rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-[12px] font-medium text-white">{defaultProviderAccount.label}</div>
+                      <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                        {preset.label} · {defaultModelProfile.label}
+                      </div>
+                      <div className="mt-1 break-all text-[10px]" style={{ color: '#c7c7cc' }}>{defaultModelProfile.model}</div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                        <span style={{ color: readiness.color }}>{readiness.label}</span>
+                        <span className="truncate" style={{ color: '#636366' }}>{truncateDiagnostics(readiness.detail, 96)}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleTestProviderAccountModel(defaultProviderAccount, defaultModelProfile)}
+                      disabled={isTestingConnection || !defaultModelProfile.model.trim()}
+                      className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {isTestingConnection
+                        ? aiProviderUi.testing
+                        : aiProviderUi.testDefaultModel}
+                    </button>
+                  </div>
+                </div>
+              );
+            })() : (
+              <div className="rounded-lg px-2.5 py-2 text-[11px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                {aiProviderUi.noDefaultModel}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-3">
+            <div className="rounded-xl px-3 py-3" style={{ backgroundColor: '#161618' }}>
+              <div className="flex items-center justify-between gap-2 mb-2.5">
+                <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                  {aiProviderUi.providerAccounts}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingProviderAccount((value) => !value);
+                    setApiSaveError(null);
+                  }}
+                  className="rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                  style={{ backgroundColor: '#1e1e20' }}
+                >
+                  {isAddingProviderAccount
+                    ? aiProviderUi.cancel
+                    : aiProviderUi.addAccount}
+                </button>
+              </div>
+              {isAddingProviderAccount && (
+                <div className="mb-2.5 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="grid gap-2">
+                    <label className="block">
+                      <span className="mb-1 block text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.providerPreset}</span>
+                      <select
+                        value={newProviderAccountForm.providerPresetId}
+                        onChange={(event) => handleNewProviderAccountPresetChange(event.target.value as OpenAICompatibleProviderPresetId)}
+                        className="w-full rounded-md px-2 py-1.5 text-[11px] text-white focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                      >
+                        {OPENAI_COMPATIBLE_PROVIDER_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>{preset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.accountLabel}</span>
+                      <input
+                        type="text"
+                        value={newProviderAccountForm.label}
+                        onChange={(event) => setNewProviderAccountForm((current) => ({ ...current, label: event.target.value }))}
+                        className="w-full rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                        placeholder="SiliconFlow"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.baseUrl}</span>
+                      <input
+                        type="text"
+                        value={newProviderAccountForm.baseUrl}
+                        onChange={(event) => setNewProviderAccountForm((current) => ({ ...current, baseUrl: event.target.value }))}
+                        className="w-full rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                        placeholder="https://api.example.com/v1"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 block text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.apiKey}</span>
+                      <input
+                        type="password"
+                        value={newProviderAccountForm.apiKey}
+                        onChange={(event) => setNewProviderAccountForm((current) => ({ ...current, apiKey: event.target.value }))}
+                        className="w-full rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                        placeholder={getOpenAICompatiblePresetById(newProviderAccountForm.providerPresetId).isLocal ? aiProviderUi.optionalLocalKey : aiProviderUi.pasteApiKey}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveProviderAccount()}
+                      disabled={isSavingProviderAccount || !newProviderAccountForm.baseUrl.trim()}
+                      className="rounded-md px-2 py-1.5 text-[11px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      style={{ backgroundColor: '#0071e3' }}
+                    >
+                      {isSavingProviderAccount
+                        ? aiProviderUi.saving
+                        : aiProviderUi.saveProviderAccount}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                {providerAccounts.length === 0 && (
+                  <div className="rounded-lg px-2.5 py-2 text-[10px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                    {aiProviderUi.noProviderAccounts}
+                  </div>
+                )}
+                {providerAccounts.map((account) => {
+                  const preset = getOpenAICompatiblePresetById(account.providerPresetId);
+                  const isSelected = selectedProviderAccount?.providerAccountId === account.providerAccountId;
+                  const ownsDefault = account.modelProfiles.some((modelProfile) => modelProfile.modelProfileId === defaultModelProfileId);
+                  const summaryModel = account.modelProfiles.find((modelProfile) => modelProfile.isDefault) ?? account.modelProfiles[0];
+                  const readiness = getProviderReadiness(
+                    accountModelToProfileForm(account, summaryModel),
+                    providerDiagnostics[legacyProfileIdFromProviderAccountId(account.providerAccountId)],
+                    aiProviderUi,
+                  );
+                  return (
+                    <button
+                      key={account.providerAccountId}
+                      type="button"
+                      onClick={() => {
+                        setSelectedProviderAccountId(account.providerAccountId);
+                        setConnectionTestResult(null);
+                        setModelListResult(null);
+                        setModelSearchQuery('');
+                      }}
+                      className="block w-full rounded-lg px-2.5 py-2 text-left cursor-pointer"
+                      style={{
+                        backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
+                        border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-[11px] font-medium text-white">{account.label || preset.label}</span>
+                        {ownsDefault && <span className="shrink-0 text-[10px]" style={{ color: '#64d2ff' }}>{aiProviderUi.defaultBadge}</span>}
+                      </div>
+                      <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                        {preset.label} · {account.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                      </div>
+                      <div className="mt-1 truncate text-[10px]" style={{ color: '#636366' }}>{account.baseUrl || aiProviderUi.noBaseUrl}</div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-[10px]">
+                        <span style={{ color: readiness.color }}>{readiness.label}</span>
+                        <span style={{ color: '#8e8e93' }}>
+                          {account.modelProfiles.length} {account.modelProfiles.length === 1 ? aiProviderUi.modelSingular : aiProviderUi.modelPlural}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-xl px-3 py-3" style={{ backgroundColor: '#161618' }}>
+              {selectedProviderAccount ? (
+                <>
+                  <div className="flex items-start justify-between gap-3 mb-2.5">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-medium text-white">{selectedProviderAccount.label}</div>
+                      <div className="mt-1 text-[10px]" style={{ color: '#8e8e93' }}>
+                        {selectedProviderAccountPreset.label} · {selectedProviderAccount.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleFetchModelsForProviderAccount(selectedProviderAccount, selectedProviderAccountDefaultModel)}
+                      disabled={isFetchingModels || !selectedProviderAccount.baseUrl.trim()}
+                      className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {isFetchingModels ? aiProviderUi.fetchingModels : aiProviderUi.fetchModels}
+                    </button>
+                  </div>
+                  <div className="rounded-lg px-2.5 py-2 mb-2" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div className="text-[10px] mb-1" style={{ color: '#8e8e93' }}>{aiProviderUi.baseUrl}</div>
+                    <div className="break-all text-[10px]" style={{ color: '#c7c7cc' }}>
+                      {selectedProviderAccount.baseUrl || aiProviderUi.notConfigured}
+                    </div>
+                    {selectedProviderAccount.isLocal && (
+                      <div className="mt-1 text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.localProviderHint}</div>
+                    )}
+                  </div>
+                  <div className="rounded-lg px-2.5 py-2 mb-2.5" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div className="text-[10px] font-medium mb-1.5" style={{ color: '#8e8e93' }}>
+                      {aiProviderUi.manualAddModel}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={manualModelId}
+                        onChange={(event) => {
+                          setManualModelId(event.target.value);
+                          setApiSaveError(null);
+                        }}
+                        className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                        placeholder="Pro/zai-org/GLM-4.7"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleAddModelToSelectedAccount(manualModelId)}
+                        disabled={isSavingModelProfile || !manualModelId.trim() || modelExistsUnderSelectedAccount(manualModelId)}
+                        className="shrink-0 rounded-md px-2 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {modelExistsUnderSelectedAccount(manualModelId) ? aiProviderUi.alreadyAdded : aiProviderUi.addModel}
+                      </button>
+                    </div>
+                  </div>
+
+                  {modelListResult?.success && (
+                    <div className="rounded-lg px-2.5 py-2 mb-2.5" style={{ backgroundColor: '#0d0d0f' }}>
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <span className="text-[10px] font-medium" style={{ color: '#8e8e93' }}>
+                          {aiProviderUi.fetchedModels}
+                        </span>
+                        <span className="text-[10px]" style={{ color: '#636366' }}>
+                          {visibleModelOptions.length} / {modelMatchCount}
+                        </span>
+                      </div>
+                      {(modelListResult.models?.length ?? 0) > 0 ? (
+                        <>
+                          <input
+                            type="text"
+                            value={modelSearchQuery}
+                            onChange={(event) => setModelSearchQuery(event.target.value)}
+                            className="mb-1.5 w-full rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                            style={{ backgroundColor: '#161618' }}
+                            placeholder={aiProviderUi.searchModels}
+                          />
+                          <div className="max-h-44 space-y-1 overflow-y-auto pr-1">
+                            {visibleModelOptions.map((model) => {
+                              const alreadyAdded = modelExistsUnderSelectedAccount(model);
+                              return (
+                                <div
+                                  key={model}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5"
+                                  style={{ backgroundColor: '#161618' }}
+                                >
+                                  <span className="min-w-0 flex-1 break-all text-[10px]" style={{ color: '#c7c7cc' }}>{model}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleAddModelToSelectedAccount(model)}
+                                    disabled={alreadyAdded || isSavingModelProfile}
+                                    className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                    style={{ backgroundColor: alreadyAdded ? '#2a2a2d' : '#0071e3' }}
+                                  >
+                                    {alreadyAdded ? aiProviderUi.alreadyAdded : aiProviderUi.add}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[10px]" style={{ color: '#8e8e93' }}>{aiProviderUi.noModelsReturned}</div>
+                      )}
+                    </div>
+                  )}
+                  <div className="mb-2.5">
+                    <div className="text-[10px] font-medium mb-1.5" style={{ color: '#8e8e93' }}>
+                      {aiProviderUi.modelsUnderProvider}
+                    </div>
+                    <div className="space-y-1.5">
+                      {selectedProviderAccountModels.length === 0 && (
+                        <div className="rounded-lg px-2.5 py-2 text-[10px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                          {aiProviderUi.noModelProfiles}
+                        </div>
+                      )}
+                      {selectedProviderAccountModels.map((modelProfile) => (
+                        <div key={modelProfile.modelProfileId} className="rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="min-w-0 truncate text-[11px] font-medium text-white">{modelProfile.label || modelProfile.model}</span>
+                            {modelProfile.isDefault && <span className="shrink-0 text-[10px]" style={{ color: '#64d2ff' }}>{aiProviderUi.defaultBadge}</span>}
+                          </div>
+                          <div className="mt-1 break-all text-[10px]" style={{ color: '#c7c7cc' }}>{modelProfile.model}</div>
+                          <div className="mt-2 flex items-center gap-1.5">
+                            {!modelProfile.isDefault && (
+                              <button
+                                type="button"
+                                onClick={() => void handleSetDefaultModelProfile(modelProfile.modelProfileId)}
+                                disabled={isSettingDefaultModelProfile === modelProfile.modelProfileId}
+                                className="rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                style={{ backgroundColor: '#1e1e20' }}
+                              >
+                                {isSettingDefaultModelProfile === modelProfile.modelProfileId ? aiProviderUi.settingDefault : aiProviderUi.setDefault}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteModelProfile(modelProfile.modelProfileId)}
+                              disabled={isDeletingModelProfile === modelProfile.modelProfileId}
+                              className="rounded-md px-2 py-1 text-[10px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                              style={{ backgroundColor: 'rgba(255,69,58,0.12)', color: '#ff6b6b' }}
+                            >
+                              {isDeletingModelProfile === modelProfile.modelProfileId ? aiProviderUi.deleting : aiProviderUi.deleteModel}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleTestProviderAccountModel(selectedProviderAccount, selectedProviderAccountDefaultModel)}
+                    disabled={isTestingConnection || !selectedProviderAccountDefaultModel?.model.trim()}
+                    className="w-full rounded-lg py-1.5 text-[11px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                    style={{ backgroundColor: '#2a2a2d' }}
+                  >
+                    {isTestingConnection ? aiProviderUi.testing : aiProviderUi.testSelectedModel}
+                  </button>
+
+                  {(connectionTestResult || modelListResult) && (
+                    <div className="mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed" style={{ backgroundColor: '#0d0d0f', color: '#c7c7cc' }}>
+                      {connectionTestResult && (
+                        <div style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
+                          {connectionTestResult.success ? aiProviderUi.connectionOk : aiProviderUi.connectionFailed}
+                          {connectionTestResult.status !== undefined ? ` · HTTP ${connectionTestResult.status}` : ''}
+                        </div>
+                      )}
+                      {modelListResult && (
+                        <div style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
+                          {modelListResult.success
+                            ? `${aiProviderUi.modelsFetched}${modelListResult.models?.length ? ` · ${modelListResult.models.length}` : ''}`
+                            : aiProviderUi.fetchModelsFailed}
+                          {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                        </div>
+                      )}
+                      {(connectionTestResult?.endpointHost || modelListResult?.endpointHost) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {connectionTestResult?.endpointHost || modelListResult?.endpointHost}
+                          {' '}
+                          {connectionTestResult?.endpointPath || modelListResult?.endpointPath || ''}
+                        </div>
+                      )}
+                      {(connectionTestResult || modelListResult) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {connectionTestResult
+                            ? getLocalizedProviderResultMessage(connectionTestResult, aiProviderUi, Boolean(selectedProviderAccount.isLocal || selectedProviderAccountPreset.isLocal))
+                            : modelListResult
+                              ? getLocalizedProviderResultMessage(modelListResult, aiProviderUi, Boolean(selectedProviderAccount.isLocal || selectedProviderAccountPreset.isLocal))
+                              : ''}
+                        </div>
+                      )}
+                      {(connectionTestResult?.errorSummary || modelListResult?.errorSummary) && (
+                        <div style={{ color: '#ff9f0a' }}>{connectionTestResult?.errorSummary || modelListResult?.errorSummary}</div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-lg px-2.5 py-2 text-[11px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                  {aiProviderUi.selectProviderAccount}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const navItems: Array<{ id: NavId; label: string; group: 'personal' | 'app' | 'system'; icon: React.ReactNode }> = [
     { id: 'accounts', label: ui.nav.accounts, group: 'personal', icon: <User className="w-3.5 h-3.5" /> },
     { id: 'backup', label: ui.backupNav, group: 'personal', icon: <Download className="w-3.5 h-3.5" /> },
     { id: 'ai', label: ui.nav.ai, group: 'app', icon: <Sparkles className="w-3.5 h-3.5" /> },
+    { id: 'aiProvider', label: modelsApiLabel, group: 'app', icon: <Key className="w-3.5 h-3.5" /> },
     { id: 'about', label: ui.nav.about, group: 'system', icon: <Info className="w-3.5 h-3.5" /> },
   ];
 
@@ -1523,6 +3330,7 @@ export function SettingsModal({
               </div>
             </div>
           )}
+          {activeNav === 'aiProvider' && renderAIProviderPage()}
           {activeNav === 'ai' && (
             <div className="px-6 py-5">
               <div className="mx-auto w-full max-w-[560px]">
@@ -1533,6 +3341,7 @@ export function SettingsModal({
                 <p className="text-[11px] mt-0.5" style={{ color: '#48484a' }}>{ui.aiDescription}</p>
               </div>
 
+              {false && (
               <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
                 <div className="flex items-center gap-2 mb-2.5">
                   <Key className="w-3 h-3" style={{ color: '#ff9f0a' }} />
@@ -1544,35 +3353,117 @@ export function SettingsModal({
                 <p className="mb-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
                   Most providers only require selecting a preset, entering an API key, and choosing a model. Custom endpoints are also supported.
                 </p>
-                <div className="mb-2 grid grid-cols-2 gap-1.5">
-                  {(['primary', 'secondary'] as AIConfigProfileId[]).map((profileId) => {
-                    const isSelected = selectedApiProfile === profileId;
-                    const isActive = activeApiProfile === profileId;
-                    const profile = apiProfiles[profileId];
-                    return (
-                      <button
-                        key={profileId}
-                        type="button"
-                        onClick={() => setSelectedApiProfile(profileId)}
-                        className="rounded-lg px-2.5 py-2 text-left text-[11px] cursor-pointer"
-                        style={{
-                          backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
-                          border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
-                          color: '#f5f5f7',
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{profileId === 'primary' ? apiProfileUi.profileA : apiProfileUi.profileB}</span>
-                          {isActive && <span style={{ color: '#64d2ff' }}>{apiProfileUi.active}</span>}
+                <div className="mb-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-medium" style={{ color: '#8e8e93' }}>Provider profiles</span>
+                    <button
+                      type="button"
+                      onClick={handleAddProviderProfile}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add provider
+                    </button>
+                  </div>
+                  <div className="max-h-44 space-y-1 overflow-y-auto pr-0.5">
+                    {apiProfileList.map((profile) => {
+                      const profileId = profile.id;
+                      const preset = getOpenAICompatiblePresetById(profile.providerPresetId);
+                      const isSelected = selectedApiProfile === profileId;
+                      const isActive = activeApiProfile === profileId;
+                      const canDelete = !profile.isDraft && !isLegacyAIProviderProfile(profileId) && apiProfileList.length > 1;
+                      const readiness = getProviderReadiness(profile, providerDiagnostics[profileId]);
+                      return (
+                        <div
+                          key={profileId}
+                          onClick={() => setSelectedApiProfile(profileId)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              setSelectedApiProfile(profileId);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          className="w-full rounded-lg px-2.5 py-2 text-left text-[11px] cursor-pointer"
+                          style={{
+                            backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
+                            border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
+                            color: '#f5f5f7',
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate">{profile.label || preset.label}</span>
+                            <span className="flex shrink-0 items-center gap-1">
+                              {profile.isDraft && <span style={{ color: '#ff9f0a' }}>Draft</span>}
+                              {isActive && <span style={{ color: '#64d2ff' }}>Default</span>}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                            {preset.label} · {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                            <span style={{ color: readiness.color }}>{readiness.label}</span>
+                            <span className="truncate" style={{ color: '#636366' }}>
+                              {truncateDiagnostics(readiness.detail, 72)}
+                            </span>
+                          </div>
+                          {isSelected && (
+                            <div className="mt-2 flex gap-1.5">
+                              {!isActive && !profile.isDraft && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleActivateApiProfile(profileId);
+                                  }}
+                                  className="rounded-md px-2 py-1 text-[10px]"
+                                  style={{ backgroundColor: '#1e1e20', color: '#ffffff' }}
+                                >
+                                  Set default
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={!canDelete}
+                                title={isLegacyAIProviderProfile(profileId) ? 'Legacy compatibility profiles cannot be deleted yet.' : undefined}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (canDelete) {
+                                    void handleDeleteProviderProfile(profileId);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
+                                style={{
+                                  backgroundColor: '#1e1e20',
+                                  color: canDelete ? '#ff6b6b' : '#636366',
+                                }}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
-                          {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
-                        </div>
-                      </button>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  {isLegacyAIProviderProfile(selectedApiProfile) && (
+                    <div className="text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      Primary and secondary profiles are kept for legacy compatibility and cannot be deleted yet.
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    placeholder="Provider label"
+                    value={selectedApiProfileForm.label}
+                    onChange={(e) => updateSelectedApiProfile({ label: e.target.value })}
+                    className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                    style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                  />
                   <select
                     value={selectedApiProfileForm.providerPresetId}
                     onChange={(e) => handleProviderPresetChange(e.target.value as OpenAICompatibleProviderPresetId)}
@@ -1601,6 +3492,11 @@ export function SettingsModal({
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
+                  {selectedApiProfileForm.hasApiKey && !selectedApiProfileForm.apiKey && (
+                    <div className="text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      API key saved. Leave this empty to keep the existing key.
+                    </div>
+                  )}
                   <input
                     type="text"
                     placeholder="Model (gpt-4o-mini)"
@@ -1609,6 +3505,156 @@ export function SettingsModal({
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
+                </div>
+                <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]" style={{ color: '#8e8e93' }}>Models endpoint</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => modelListResult && void handleCopyDiagnostics(modelListResult)}
+                        disabled={!modelListResult}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {modelListResult ? 'Copy diagnostics' : 'Run fetch first'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleFetchModels()}
+                        disabled={isFetchingModels || !selectedApiProfileForm.baseUrl.trim()}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {isFetchingModels ? 'Fetching...' : 'Fetch models'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: modelsEndpointPreview ? '#c7c7cc' : '#636366' }}>
+                    {modelsEndpointPreview || 'Enter a Base URL to preview the models endpoint.'}
+                  </div>
+                  {selectedProviderPreset.isLocal && (
+                    <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      Local providers require the local server to be running.
+                    </div>
+                  )}
+                  {modelListResult && (
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult.success ? '#c7c7cc' : '#ff6b6b' }}>
+                      <div style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
+                        {modelListResult.success ? 'Models fetched' : 'Fetch models failed'}
+                      </div>
+                      {(modelListResult.endpointHost || modelListResult.endpointPath) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {modelListResult.endpointHost || 'unknown-host'} {modelListResult.endpointPath || ''}
+                          {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                        </div>
+                      )}
+                      {modelListResult.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {modelListResult.model}</div>
+                      )}
+                      {modelListResult.friendlyMessage && (
+                        <div style={{ color: modelListResult.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {modelListResult.friendlyMessage}
+                        </div>
+                      )}
+                      {modelListResult.success ? (
+                        <>
+                          <div style={{ color: '#30d158' }}>
+                            {modelListResult.models?.length ? `${modelListResult.models.length} models found` : 'No models returned'}
+                          </div>
+                          {(modelListResult.models?.length ?? 0) > 0 && (
+                            <>
+                              <input
+                                type="search"
+                                aria-label="Search models"
+                                placeholder="Search models"
+                                value={modelSearchQuery}
+                                onChange={(e) => setModelSearchQuery(e.target.value)}
+                                className="mt-2 w-full py-1.5 px-2.5 rounded-md text-[10px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#161618' }}
+                              />
+                              <div className="mt-1 text-[10px]" style={{ color: '#8e8e93' }}>
+                                Showing {visibleModelOptions.length} of {modelMatchCount} matches
+                              </div>
+                              <div className="mt-1 max-h-36 overflow-y-auto rounded-md" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                                {visibleModelOptions.map((model) => (
+                                  <button
+                                    key={model}
+                                    type="button"
+                                    onClick={() => updateSelectedApiProfile({ model })}
+                                    className="block w-full px-2 py-1.5 text-left text-[10px] text-white cursor-pointer hover:bg-zinc-800"
+                                  >
+                                    {model}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </>
+                      ) : (
+                        <div>{modelListResult.errorSummary || modelListResult.error || 'Failed to fetch models'}</div>
+                      )}
+                      {diagnosticsCopyStatus && (
+                        <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px]" style={{ color: '#8e8e93' }}>Chat Completions endpoint</span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => connectionTestResult && void handleCopyDiagnostics(connectionTestResult)}
+                        disabled={!connectionTestResult}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {connectionTestResult ? 'Copy diagnostics' : 'Run test first'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleTestConnection()}
+                        disabled={isTestingConnection || !selectedApiProfileForm.baseUrl.trim() || !selectedApiProfileForm.model.trim()}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: chatEndpointPreview ? '#c7c7cc' : '#636366' }}>
+                    {chatEndpointPreview || 'Enter a Base URL to preview the final endpoint.'}
+                  </div>
+                  {connectionTestResult && (
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
+                      <div>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</div>
+                      {(connectionTestResult.endpointHost || connectionTestResult.endpointPath) && (
+                        <div style={{ color: '#8e8e93' }}>
+                          {connectionTestResult.endpointHost || 'unknown-host'} {connectionTestResult.endpointPath || ''}
+                          {connectionTestResult.status !== undefined ? ` · HTTP ${connectionTestResult.status}` : ''}
+                        </div>
+                      )}
+                      {connectionTestResult.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {connectionTestResult.model}</div>
+                      )}
+                      {connectionTestResult.friendlyMessage && (
+                        <div style={{ color: connectionTestResult.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {connectionTestResult.friendlyMessage}
+                        </div>
+                      )}
+                      {connectionTestResult.parsedPreview && (
+                        <div style={{ color: '#c7c7cc' }}>Preview: {connectionTestResult.parsedPreview}</div>
+                      )}
+                      {connectionTestResult.error && (
+                        <div>{connectionTestResult.errorSummary || connectionTestResult.error}</div>
+                      )}
+                      {diagnosticsCopyStatus && (
+                        <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {selectedProviderPreset.note && (
                   <p className="mt-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
@@ -1620,7 +3666,7 @@ export function SettingsModal({
                     Ollama / LM Studio / vLLM require the local server to be running.
                   </p>
                 )}
-                {activeApiProfile !== selectedApiProfile && (
+                {activeApiProfile !== selectedApiProfile && !selectedApiProfileForm.isDraft && (
                   <button
                     onClick={() => void handleActivateApiProfile(selectedApiProfile)}
                     className="w-full mt-2 py-1.5 rounded-lg text-[11px] font-medium text-white transition-colors cursor-pointer"
@@ -1644,6 +3690,7 @@ export function SettingsModal({
                   </p>
                 )}
               </div>
+              )}
 
               <div className="flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl" style={{ backgroundColor: '#161618' }}>
                 <div className="flex items-center gap-2">

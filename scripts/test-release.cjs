@@ -182,6 +182,11 @@ const checks = [
     args: ['scripts/electron-sandbox-security.test.cjs'],
   },
   {
+    name: 'macOS native experience regression',
+    command: process.execPath,
+    args: ['scripts/macos-native-experience.test.cjs'],
+  },
+  {
     name: 'mail detail layout/body rendering regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/mail-detail-layout-regression.test.ts'],
