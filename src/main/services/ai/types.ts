@@ -97,7 +97,7 @@ export type AIConfigSaveInput = Partial<AIConfig> & {
 };
 
 export interface AIProviderTestConnectionRequest {
-  profileId?: AIConfigProfileId;
+  profileId?: string;
   providerId?: string;
   providerLabel?: string;
   baseUrl: string;
@@ -120,7 +120,7 @@ export interface AIProviderTestConnectionResult {
 }
 
 export interface AIProviderModelListRequest {
-  profileId?: AIConfigProfileId;
+  profileId?: string;
   providerId?: string;
   providerLabel?: string;
   baseUrl: string;

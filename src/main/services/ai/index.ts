@@ -28,6 +28,8 @@ export {
   saveAIConfig,
 } from './aiConfigStore';
 export {
+  deleteAIProviderProfile,
+  getAIProviderConfigById,
   getAIProviderProfileSnapshot,
   saveAIProviderProfile,
   setDefaultAIProviderProfile,

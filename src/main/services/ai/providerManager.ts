@@ -1,5 +1,6 @@
 import log from 'electron-log';
-import { getAIConfig, getAIConfigForProfile } from './aiConfigStore';
+import { getAIConfig } from './aiConfigStore';
+import { getAIProviderConfigById } from './aiProviderProfileStore';
 import { normalizeOpenAICompatibleEndpoint } from './endpointNormalizer';
 import {
   appendProviderErrorHint,
@@ -107,7 +108,7 @@ export async function callAI(request: AIRequest): Promise<AIResponse> {
 }
 
 function resolveTestConnectionConfig(request: AIProviderTestConnectionRequest): AIConfig {
-  const savedProfile = request.profileId ? getAIConfigForProfile(request.profileId) : getAIConfig();
+  const savedProfile = request.profileId ? getAIProviderConfigById(request.profileId) ?? getAIConfig() : getAIConfig();
   return {
     baseUrl: request.baseUrl || savedProfile.baseUrl,
     apiKey: request.apiKey?.trim() || savedProfile.apiKey,

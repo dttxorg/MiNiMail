@@ -108,11 +108,17 @@ type NavId = 'accounts' | 'backup' | 'ai' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
 
 type AIConfigProfileForm = {
+  id: string;
   providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
   baseUrl: string;
   apiKey: string;
   model: string;
   hasApiKey?: boolean;
+  isDefault?: boolean;
+  isDraft?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 type AIProviderConnectionTestResult = {
@@ -142,13 +148,54 @@ type AIProviderModelListResult = {
   error?: string;
 };
 
-const EMPTY_AI_CONFIG_PROFILES: Record<AIConfigProfileId, AIConfigProfileForm> = {
-  primary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
-  secondary: { providerPresetId: 'custom', baseUrl: '', apiKey: '', model: '', hasApiKey: false },
+type AIProviderProfileSnapshot = {
+  defaultProviderId: string;
+  profiles: Array<{
+    id: string;
+    providerPresetId: OpenAICompatibleProviderPresetId;
+    label: string;
+    baseUrl: string;
+    model: string;
+    hasApiKey: boolean;
+    isDefault: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
+const EMPTY_AI_CONFIG_PROFILES: Record<string, AIConfigProfileForm> = {
+  primary: { id: 'primary', providerPresetId: 'custom', label: 'Profile A', baseUrl: '', apiKey: '', model: '', hasApiKey: false, isDefault: true },
+  secondary: { id: 'secondary', providerPresetId: 'custom', label: 'Profile B', baseUrl: '', apiKey: '', model: '', hasApiKey: false, isDefault: false },
 };
 
 function getOpenAICompatiblePresetById(id: OpenAICompatibleProviderPresetId) {
   return OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === id) ?? OPENAI_COMPATIBLE_PROVIDER_PRESETS[0];
+}
+
+function isLegacyAIProviderProfile(id: string) {
+  return id === 'primary' || id === 'secondary';
+}
+
+function profileSnapshotToForm(profile: AIProviderProfileSnapshot['profiles'][number]): AIConfigProfileForm {
+  return {
+    id: profile.id,
+    providerPresetId: profile.providerPresetId,
+    label: profile.label,
+    baseUrl: profile.baseUrl,
+    apiKey: '',
+    model: profile.model,
+    hasApiKey: profile.hasApiKey,
+    isDefault: profile.isDefault,
+    createdAt: profile.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+}
+
+function providerProfilesToRecord(profiles: AIConfigProfileForm[]): Record<string, AIConfigProfileForm> {
+  return profiles.reduce<Record<string, AIConfigProfileForm>>((acc, profile) => {
+    acc[profile.id] = profile;
+    return acc;
+  }, {});
 }
 
 function getApiProfileText(appLanguage: AppLanguage) {
@@ -916,9 +963,9 @@ export function SettingsModal({
   const [activeNav, setActiveNav] = useState<NavId>('accounts');
   const [saved, setSaved] = useState(false);
   const [apiSaveError, setApiSaveError] = useState<string | null>(null);
-  const [selectedApiProfile, setSelectedApiProfile] = useState<AIConfigProfileId>('primary');
-  const [activeApiProfile, setActiveApiProfile] = useState<AIConfigProfileId>('primary');
-  const [apiProfiles, setApiProfiles] = useState<Record<AIConfigProfileId, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
+  const [selectedApiProfile, setSelectedApiProfile] = useState<string>('primary');
+  const [activeApiProfile, setActiveApiProfile] = useState<string>('primary');
+  const [apiProfiles, setApiProfiles] = useState<Record<string, AIConfigProfileForm>>(EMPTY_AI_CONFIG_PROFILES);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestResult, setConnectionTestResult] = useState<AIProviderConnectionTestResult | null>(null);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -928,7 +975,8 @@ export function SettingsModal({
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
   const apiProfileUi = useMemo(() => getApiProfileText(normalizedLanguage), [normalizedLanguage]);
-  const selectedApiProfileForm = apiProfiles[selectedApiProfile];
+  const apiProfileList = useMemo(() => Object.values(apiProfiles), [apiProfiles]);
+  const selectedApiProfileForm = apiProfiles[selectedApiProfile] ?? apiProfileList[0] ?? EMPTY_AI_CONFIG_PROFILES.primary;
   const selectedProviderPreset = getOpenAICompatiblePresetById(selectedApiProfileForm.providerPresetId);
   const chatEndpointPreview = useMemo(() => {
     try {
@@ -969,6 +1017,14 @@ export function SettingsModal({
     ? Math.min(100, Math.round((backupState.progress.processed / backupState.progress.total) * 100))
     : 0;
 
+  function applyProviderProfileSnapshot(snapshot: AIProviderProfileSnapshot) {
+    const profiles = snapshot.profiles.map(profileSnapshotToForm);
+    const record = providerProfilesToRecord(profiles);
+    setApiProfiles(record);
+    setActiveApiProfile(snapshot.defaultProviderId);
+    setSelectedApiProfile((current) => record[current] ? current : snapshot.defaultProviderId || profiles[0]?.id || 'primary');
+  }
+
   useEffect(() => {
     if (!isOpen) return;
     setActiveNav('accounts');
@@ -982,6 +1038,15 @@ export function SettingsModal({
     if (!isOpen) return;
     void (async () => {
       try {
+        const providerProfilesResponse = await window.electronAPI.invoke('ai:getProviderProfiles') as {
+          success: boolean;
+          data?: AIProviderProfileSnapshot;
+        };
+        if (providerProfilesResponse.success && providerProfilesResponse.data) {
+          applyProviderProfileSnapshot(providerProfilesResponse.data);
+          return;
+        }
+
         const cfg = await window.electronAPI.invoke('ai:getConfig') as {
           success: boolean;
           data?: {
@@ -1003,18 +1068,24 @@ export function SettingsModal({
           setSelectedApiProfile(activeProfileId);
           setApiProfiles({
             primary: {
+              id: 'primary',
               baseUrl: cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '',
+              label: 'Profile A',
               providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.primary?.baseUrl || cfg.data.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.primary?.model || cfg.data.model || '',
               hasApiKey: cfg.data.profiles?.primary?.hasApiKey ?? cfg.data.hasApiKey,
+              isDefault: activeProfileId === 'primary',
             },
             secondary: {
+              id: 'secondary',
               baseUrl: cfg.data.profiles?.secondary?.baseUrl || '',
+              label: 'Profile B',
               providerPresetId: findOpenAICompatiblePresetByBaseUrl(cfg.data.profiles?.secondary?.baseUrl || '').id,
               apiKey: '',
               model: cfg.data.profiles?.secondary?.model || '',
               hasApiKey: cfg.data.profiles?.secondary?.hasApiKey ?? false,
+              isDefault: activeProfileId === 'secondary',
             },
           });
         }
@@ -1037,6 +1108,7 @@ export function SettingsModal({
     setApiProfiles((prev) => ({
       ...prev,
       [selectedApiProfile]: {
+        ...selectedApiProfileForm,
         ...prev[selectedApiProfile],
         ...patch,
       },
@@ -1117,37 +1189,68 @@ export function SettingsModal({
     });
   }
 
+  function handleAddProviderProfile() {
+    const id = `provider_${Date.now().toString(36)}`;
+    const draft: AIConfigProfileForm = {
+      id,
+      providerPresetId: 'custom',
+      label: 'New Provider',
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+      hasApiKey: false,
+      isDefault: false,
+      isDraft: true,
+    };
+    setApiProfiles((prev) => ({ ...prev, [id]: draft }));
+    setSelectedApiProfile(id);
+    setConnectionTestResult(null);
+    setModelListResult(null);
+    setModelSearchQuery('');
+  }
+
+  async function refreshProviderProfiles(preferredProfileId?: string) {
+    const response = await window.electronAPI.invoke('ai:getProviderProfiles') as {
+      success: boolean;
+      data?: AIProviderProfileSnapshot;
+      error?: string;
+    };
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to load AI provider profiles');
+    }
+    applyProviderProfileSnapshot(response.data);
+    if (preferredProfileId && response.data.profiles.some((profile) => profile.id === preferredProfileId)) {
+      setSelectedApiProfile(preferredProfileId);
+    }
+  }
+
   async function handleSaveApi() {
     try {
       setApiSaveError(null);
-      const payload: {
-        profileId: AIConfigProfileId;
-        activeProfileId: AIConfigProfileId;
-        baseUrl: string;
-        apiKey?: string;
-        model: string;
-      } = {
-        profileId: selectedApiProfile,
-        activeProfileId: activeApiProfile,
+      const payload = {
+        id: selectedApiProfileForm.id,
+        providerPresetId: selectedApiProfileForm.providerPresetId,
+        label: selectedApiProfileForm.label,
         baseUrl: selectedApiProfileForm.baseUrl,
         model: selectedApiProfileForm.model,
+        isDefault: selectedApiProfileForm.id === activeApiProfile,
+        ...(selectedApiProfileForm.apiKey.trim() ? { apiKey: selectedApiProfileForm.apiKey } : {}),
       };
-      if (selectedApiProfileForm.apiKey.trim()) {
-        payload.apiKey = selectedApiProfileForm.apiKey;
-      }
-      const response = await window.electronAPI.invoke('ai:saveConfig', payload) as { success: boolean; error?: string };
+      const response = await window.electronAPI.invoke('ai:saveProviderProfile', payload) as {
+        success: boolean;
+        data?: { snapshot?: AIProviderProfileSnapshot };
+        error?: string;
+      };
       if (!response.success) {
         setApiSaveError(response.error || 'Failed to save AI config');
         return;
       }
-      setApiProfiles((prev) => ({
-        ...prev,
-        [selectedApiProfile]: {
-          ...prev[selectedApiProfile],
-          apiKey: '',
-          hasApiKey: Boolean(selectedApiProfileForm.apiKey.trim() || prev[selectedApiProfile].hasApiKey),
-        },
-      }));
+      if (response.data?.snapshot) {
+        applyProviderProfileSnapshot(response.data.snapshot);
+        setSelectedApiProfile(selectedApiProfileForm.id);
+      } else {
+        await refreshProviderProfiles(selectedApiProfileForm.id);
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
@@ -1155,16 +1258,60 @@ export function SettingsModal({
     }
   }
 
-  async function handleActivateApiProfile(profileId: AIConfigProfileId) {
+  async function handleActivateApiProfile(profileId: string) {
     try {
       setApiSaveError(null);
-      const response = await window.electronAPI.invoke('ai:saveConfig', { activeProfileId: profileId }) as { success: boolean; error?: string };
+      const response = await window.electronAPI.invoke('ai:setDefaultProvider', profileId) as {
+        success: boolean;
+        data?: AIProviderProfileSnapshot;
+        error?: string;
+      };
       if (!response.success) {
         setApiSaveError(response.error || 'Failed to switch AI profile');
         return;
       }
-      setActiveApiProfile(profileId);
+      if (response.data) {
+        applyProviderProfileSnapshot(response.data);
+      } else {
+        await refreshProviderProfiles(profileId);
+      }
       setSelectedApiProfile(profileId);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    }
+  }
+
+  async function handleDeleteProviderProfile(profileId: string) {
+    if (isLegacyAIProviderProfile(profileId)) return;
+
+    const profile = apiProfiles[profileId];
+    if (profile?.isDraft) {
+      const nextProfiles = { ...apiProfiles };
+      delete nextProfiles[profileId];
+      setApiProfiles(nextProfiles);
+      const fallbackId = activeApiProfile in nextProfiles ? activeApiProfile : Object.keys(nextProfiles)[0] || 'primary';
+      setSelectedApiProfile(fallbackId);
+      return;
+    }
+
+    try {
+      setApiSaveError(null);
+      const response = await window.electronAPI.invoke('ai:deleteProviderProfile', profileId) as {
+        success: boolean;
+        data?: AIProviderProfileSnapshot;
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(response.error || 'Failed to delete AI provider');
+        return;
+      }
+      if (response.data) {
+        applyProviderProfileSnapshot(response.data);
+      } else {
+        await refreshProviderProfiles();
+      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (error) {
@@ -1672,35 +1819,110 @@ export function SettingsModal({
                 <p className="mb-2 text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
                   Most providers only require selecting a preset, entering an API key, and choosing a model. Custom endpoints are also supported.
                 </p>
-                <div className="mb-2 grid grid-cols-2 gap-1.5">
-                  {(['primary', 'secondary'] as AIConfigProfileId[]).map((profileId) => {
-                    const isSelected = selectedApiProfile === profileId;
-                    const isActive = activeApiProfile === profileId;
-                    const profile = apiProfiles[profileId];
-                    return (
-                      <button
-                        key={profileId}
-                        type="button"
-                        onClick={() => setSelectedApiProfile(profileId)}
-                        className="rounded-lg px-2.5 py-2 text-left text-[11px] cursor-pointer"
-                        style={{
-                          backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
-                          border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
-                          color: '#f5f5f7',
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{profileId === 'primary' ? apiProfileUi.profileA : apiProfileUi.profileB}</span>
-                          {isActive && <span style={{ color: '#64d2ff' }}>{apiProfileUi.active}</span>}
+                <div className="mb-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-medium" style={{ color: '#8e8e93' }}>Provider profiles</span>
+                    <button
+                      type="button"
+                      onClick={handleAddProviderProfile}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add provider
+                    </button>
+                  </div>
+                  <div className="max-h-44 space-y-1 overflow-y-auto pr-0.5">
+                    {apiProfileList.map((profile) => {
+                      const profileId = profile.id;
+                      const preset = getOpenAICompatiblePresetById(profile.providerPresetId);
+                      const isSelected = selectedApiProfile === profileId;
+                      const isActive = activeApiProfile === profileId;
+                      const canDelete = !profile.isDraft && !isLegacyAIProviderProfile(profileId) && apiProfileList.length > 1;
+                      return (
+                        <div
+                          key={profileId}
+                          onClick={() => setSelectedApiProfile(profileId)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              setSelectedApiProfile(profileId);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          className="w-full rounded-lg px-2.5 py-2 text-left text-[11px] cursor-pointer"
+                          style={{
+                            backgroundColor: isSelected ? 'rgba(0,113,227,0.18)' : '#0d0d0f',
+                            border: `1px solid ${isSelected ? 'rgba(0,113,227,0.58)' : 'rgba(255,255,255,0.06)'}`,
+                            color: '#f5f5f7',
+                          }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate">{profile.label || preset.label}</span>
+                            <span className="flex shrink-0 items-center gap-1">
+                              {profile.isDraft && <span style={{ color: '#ff9f0a' }}>Draft</span>}
+                              {isActive && <span style={{ color: '#64d2ff' }}>Default</span>}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                            {preset.label} · {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                          </div>
+                          {isSelected && (
+                            <div className="mt-2 flex gap-1.5">
+                              {!isActive && !profile.isDraft && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleActivateApiProfile(profileId);
+                                  }}
+                                  className="rounded-md px-2 py-1 text-[10px]"
+                                  style={{ backgroundColor: '#1e1e20', color: '#ffffff' }}
+                                >
+                                  Set default
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={!canDelete}
+                                title={isLegacyAIProviderProfile(profileId) ? 'Legacy compatibility profiles cannot be deleted yet.' : undefined}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (canDelete) {
+                                    void handleDeleteProviderProfile(profileId);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
+                                style={{
+                                  backgroundColor: '#1e1e20',
+                                  color: canDelete ? '#ff6b6b' : '#636366',
+                                }}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
-                          {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
-                        </div>
-                      </button>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                  {isLegacyAIProviderProfile(selectedApiProfile) && (
+                    <div className="text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      Primary and secondary profiles are kept for legacy compatibility and cannot be deleted yet.
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1.5">
+                  <input
+                    type="text"
+                    placeholder="Provider label"
+                    value={selectedApiProfileForm.label}
+                    onChange={(e) => updateSelectedApiProfile({ label: e.target.value })}
+                    className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                    style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
+                  />
                   <select
                     value={selectedApiProfileForm.providerPresetId}
                     onChange={(e) => handleProviderPresetChange(e.target.value as OpenAICompatibleProviderPresetId)}
@@ -1729,6 +1951,11 @@ export function SettingsModal({
                     className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
                     style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                   />
+                  {selectedApiProfileForm.hasApiKey && !selectedApiProfileForm.apiKey && (
+                    <div className="text-[10px] leading-relaxed" style={{ color: '#8e8e93' }}>
+                      API key saved. Leave this empty to keep the existing key.
+                    </div>
+                  )}
                   <input
                     type="text"
                     placeholder="Model (gpt-4o-mini)"
@@ -1854,7 +2081,7 @@ export function SettingsModal({
                     Ollama / LM Studio / vLLM require the local server to be running.
                   </p>
                 )}
-                {activeApiProfile !== selectedApiProfile && (
+                {activeApiProfile !== selectedApiProfile && !selectedApiProfileForm.isDraft && (
                   <button
                     onClick={() => void handleActivateApiProfile(selectedApiProfile)}
                     className="w-full mt-2 py-1.5 rounded-lg text-[11px] font-medium text-white transition-colors cursor-pointer"

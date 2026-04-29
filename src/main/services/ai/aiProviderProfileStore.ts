@@ -1,5 +1,6 @@
 import log from 'electron-log';
 import {
+  deleteSecureSetting,
   getSecureSetting,
   getSetting,
   setSecureSetting,
@@ -48,6 +49,12 @@ function oldProfileSettingKey(profileId: AIConfigProfileId, field: keyof AIConfi
 
 function providerApiKeyKey(profileId: string): string {
   return `ai_provider_api_key_${profileId}`;
+}
+
+function assertValidProviderProfileId(profileId: string): void {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(profileId)) {
+    throw new Error('Invalid AI provider profile id.');
+  }
 }
 
 function isLegacyProfileId(profileId: string): profileId is AIConfigProfileId {
@@ -211,6 +218,17 @@ export function getDefaultAIProviderConfig(): AIConfig | null {
   };
 }
 
+export function getAIProviderConfigById(profileId: string): AIConfig | null {
+  assertValidProviderProfileId(profileId);
+  const profile = ensureStoredProviderProfiles().find((item) => item.id === profileId);
+  if (!profile) return null;
+  return {
+    baseUrl: profile.baseUrl,
+    apiKey: getProviderProfileApiKey(profile.id),
+    model: profile.model,
+  };
+}
+
 export function getFirstAvailableAIProviderConfig(): AIConfig | null {
   const profile = ensureStoredProviderProfiles().find((item) => item.baseUrl && item.model);
   if (!profile) return null;
@@ -225,6 +243,7 @@ export function saveAIProviderProfile(input: SaveProviderProfileInput): AIProvid
   const profiles = ensureStoredProviderProfiles();
   const timestamp = nowIso();
   const id = input.id || `provider_${Date.now().toString(36)}`;
+  assertValidProviderProfileId(id);
   const existing = profiles.find((profile) => profile.id === id);
   const nextProfile: StoredAIProviderProfile = {
     id,
@@ -243,6 +262,13 @@ export function saveAIProviderProfile(input: SaveProviderProfileInput): AIProvid
 
   if (input.apiKey !== undefined && input.apiKey.trim()) {
     setSecureSetting(providerApiKeyKey(id), input.apiKey.trim());
+    if (isLegacyProfileId(id)) {
+      setSecureSetting(oldProfileSettingKey(id, 'apiKey'), input.apiKey.trim());
+    }
+  }
+  if (isLegacyProfileId(id)) {
+    setSetting(oldProfileSettingKey(id, 'baseUrl'), nextProfile.baseUrl);
+    setSetting(oldProfileSettingKey(id, 'model'), nextProfile.model);
   }
   if (input.isDefault) {
     setDefaultAIProviderProfile(id);
@@ -253,11 +279,46 @@ export function saveAIProviderProfile(input: SaveProviderProfileInput): AIProvid
 }
 
 export function setDefaultAIProviderProfile(profileId: string): void {
+  assertValidProviderProfileId(profileId);
   const profiles = ensureStoredProviderProfiles();
   if (!profiles.some((profile) => profile.id === profileId)) {
     throw new Error('AI provider profile not found.');
   }
   setSetting(DEFAULT_PROVIDER_SETTING_KEY, profileId);
+  if (isLegacyProfileId(profileId)) {
+    setSetting('ai_active_profile', profileId);
+  }
+}
+
+export function deleteAIProviderProfile(profileId: string): AIProviderProfileSnapshot {
+  assertValidProviderProfileId(profileId);
+  if (isLegacyProfileId(profileId)) {
+    throw new Error('Built-in legacy profiles cannot be deleted in this version.');
+  }
+
+  const profiles = ensureStoredProviderProfiles();
+  const target = profiles.find((profile) => profile.id === profileId);
+  if (!target) {
+    throw new Error('AI provider profile not found.');
+  }
+  if (profiles.length <= 1) {
+    throw new Error('At least one AI provider profile is required.');
+  }
+
+  const remainingProfiles = profiles.filter((profile) => profile.id !== profileId);
+  persistProviderProfiles(remainingProfiles);
+  deleteSecureSetting(providerApiKeyKey(profileId));
+
+  const currentDefaultProviderId = getSetting(DEFAULT_PROVIDER_SETTING_KEY);
+  if (currentDefaultProviderId === profileId) {
+    const fallbackProviderId = remainingProfiles[0].id;
+    setSetting(DEFAULT_PROVIDER_SETTING_KEY, fallbackProviderId);
+    if (isLegacyProfileId(fallbackProviderId)) {
+      setSetting('ai_active_profile', fallbackProviderId);
+    }
+  }
+
+  return getAIProviderProfileSnapshot();
 }
 
 export function syncLegacyAIConfigToProviderProfile(profileId: AIConfigProfileId, config: Partial<AIConfig>): void {

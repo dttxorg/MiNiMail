@@ -3,6 +3,7 @@ import { getSetting, setSetting } from '../database';
 import {
   buildOpenAICompatibleRequestBody,
   callAI,
+  deleteAIProviderProfile,
   fetchOpenAICompatibleModels,
   getAIConfig,
   getAIConfigSnapshot,
@@ -55,6 +56,7 @@ import {
 export {
   buildOpenAICompatibleRequestBody,
   callAI,
+  deleteAIProviderProfile,
   fetchOpenAICompatibleModels,
   getAIConfig,
   getAIConfigSnapshot,

@@ -1039,6 +1039,7 @@ function testDefaultProviderSwitchControlsGetAIConfig() {
 
   aiModule.getAIProviderProfileSnapshot();
   aiModule.setDefaultAIProviderProfile('secondary');
+  assert.strictEqual(dbValues.ai_active_profile, 'secondary', 'legacy active profile should sync for secondary default');
   assert.deepStrictEqual(aiModule.getAIConfig(), {
     baseUrl: 'https://api.siliconflow.cn/v1',
     apiKey: 'secret-secondary-key',
@@ -1046,11 +1047,168 @@ function testDefaultProviderSwitchControlsGetAIConfig() {
   });
 
   aiModule.setDefaultAIProviderProfile('primary');
+  assert.strictEqual(dbValues.ai_active_profile, 'primary', 'legacy active profile should sync for primary default');
   assert.deepStrictEqual(aiModule.getAIConfig(), {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: 'secret-primary-key',
     model: 'gpt-4o-mini',
   });
+}
+
+function testSaveProviderProfileAddsAndUpdatesMetadata() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+
+  const added = aiModule.saveAIProviderProfile({
+    id: 'custom_siliconflow',
+    providerPresetId: 'siliconflow',
+    label: 'Work SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey: 'secret-new-provider-key',
+    isDefault: true,
+  });
+  assert.strictEqual(added.id, 'custom_siliconflow');
+  assert.strictEqual(added.hasApiKey, true);
+  assert.strictEqual(secureValues.ai_provider_api_key_custom_siliconflow, 'secret-new-provider-key');
+  assert(!String(dbValues.ai_provider_profiles).includes('secret-new-provider-key'), 'provider metadata must not contain API key');
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey: 'secret-new-provider-key',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+
+  aiModule.saveAIProviderProfile({
+    id: 'custom_siliconflow',
+    providerPresetId: 'siliconflow',
+    label: 'Updated SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen3.6-35B-A3B',
+    apiKey: '',
+  });
+  assert.strictEqual(
+    secureValues.ai_provider_api_key_custom_siliconflow,
+    'secret-new-provider-key',
+    'empty API key should not overwrite existing provider key',
+  );
+  const updated = aiModule.getAIProviderProfileSnapshot().profiles.find((profile) => profile.id === 'custom_siliconflow');
+  assert(updated, 'updated provider should remain in snapshot');
+  assert.strictEqual(updated.label, 'Updated SiliconFlow');
+  assert.strictEqual(updated.model, 'Qwen/Qwen3.6-35B-A3B');
+}
+
+function testSaveLegacyProviderProfileKeepsOldSettingsInSync() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+
+  aiModule.saveAIProviderProfile({
+    id: 'secondary',
+    providerPresetId: 'gemini',
+    label: 'Profile B',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash',
+    apiKey: 'secret-secondary-new-key',
+    isDefault: true,
+  });
+
+  assert.strictEqual(dbValues.ai_secondary_base_url, 'https://generativelanguage.googleapis.com/v1beta/openai/');
+  assert.strictEqual(dbValues.ai_secondary_model, 'gemini-2.5-flash');
+  assert.strictEqual(dbValues.ai_active_profile, 'secondary');
+  assert.strictEqual(secureValues.ai_secondary_api_key, 'secret-secondary-new-key');
+  assert.strictEqual(secureValues.ai_provider_api_key_secondary, 'secret-secondary-new-key');
+}
+
+function testDeleteNonDefaultProviderRemovesOnlyProviderKey() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+  aiModule.saveAIProviderProfile({
+    id: 'custom_delete_me',
+    providerPresetId: 'custom',
+    label: 'Delete Me',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/gpt-4o-mini',
+    apiKey: 'secret-delete-key',
+  });
+
+  aiModule.deleteAIProviderProfile('custom_delete_me');
+  const snapshot = aiModule.getAIProviderProfileSnapshot();
+  assert(!snapshot.profiles.some((profile) => profile.id === 'custom_delete_me'));
+  assert.strictEqual(secureValues.ai_provider_api_key_custom_delete_me, undefined, 'provider secure key should be deleted');
+  assert.strictEqual(secureValues.ai_api_key, 'secret-primary-key', 'legacy primary key should not be deleted');
+  assert.strictEqual(dbValues.ai_default_provider_id, 'primary');
+}
+
+function testDeleteDefaultProviderFallsBack() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+  aiModule.saveAIProviderProfile({
+    id: 'custom_default_delete',
+    providerPresetId: 'custom',
+    label: 'Default Delete',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/gpt-4o-mini',
+    apiKey: 'secret-delete-default-key',
+    isDefault: true,
+  });
+
+  aiModule.deleteAIProviderProfile('custom_default_delete');
+  assert.strictEqual(dbValues.ai_default_provider_id, 'primary', 'default should fall back after deleting default provider');
+  assert.strictEqual(dbValues.ai_active_profile, 'primary', 'legacy active profile should sync when fallback is primary');
+  assert.strictEqual(secureValues.ai_provider_api_key_custom_default_delete, undefined);
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'secret-primary-key',
+    model: 'gpt-4o-mini',
+  });
+}
+
+function testDeleteProviderGuards() {
+  const { aiModule, dbValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+
+  assert.throws(
+    () => aiModule.deleteAIProviderProfile('primary'),
+    /legacy profiles cannot be deleted/i,
+    'primary should not be deletable in Phase 4B',
+  );
+  assert.throws(
+    () => aiModule.deleteAIProviderProfile('../bad'),
+    /invalid AI provider profile id/i,
+    'unsafe provider ids should be rejected',
+  );
+
+  dbValues.ai_provider_profiles = JSON.stringify([
+    {
+      id: 'custom_only',
+      providerPresetId: 'custom',
+      label: 'Only',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'openai/gpt-4o-mini',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  dbValues.ai_default_provider_id = 'custom_only';
+  assert.throws(
+    () => aiModule.deleteAIProviderProfile('custom_only'),
+    /at least one AI provider profile is required/i,
+    'last provider should not be deletable',
+  );
 }
 
 function testMissingDefaultProviderFallsBackToLegacyActiveProfile() {
@@ -1117,6 +1275,11 @@ async function run() {
   testProviderProfileMigrationIsIdempotent();
   testExistingProviderProfilesDoNotRepeatLegacyMigration();
   testDefaultProviderSwitchControlsGetAIConfig();
+  testSaveProviderProfileAddsAndUpdatesMetadata();
+  testSaveLegacyProviderProfileKeepsOldSettingsInSync();
+  testDeleteNonDefaultProviderRemovesOnlyProviderKey();
+  testDeleteDefaultProviderFallsBack();
+  testDeleteProviderGuards();
   testMissingDefaultProviderFallsBackToLegacyActiveProfile();
   console.log('openai compatible provider tests passed');
 }

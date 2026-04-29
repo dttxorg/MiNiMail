@@ -1,5 +1,6 @@
 import log from 'electron-log';
-import { getAIConfig, getAIConfigForProfile } from './aiConfigStore';
+import { getAIConfig } from './aiConfigStore';
+import { getAIProviderConfigById } from './aiProviderProfileStore';
 import { normalizeOpenAICompatibleModelListEndpoint } from './endpointNormalizer';
 import {
   appendProviderErrorHint,
@@ -22,7 +23,7 @@ type ModelListItem = {
 };
 
 function resolveModelListConfig(request: AIProviderModelListRequest): AIConfig {
-  const savedProfile = request.profileId ? getAIConfigForProfile(request.profileId) : getAIConfig();
+  const savedProfile = request.profileId ? getAIProviderConfigById(request.profileId) ?? getAIConfig() : getAIConfig();
   return {
     baseUrl: request.baseUrl || savedProfile.baseUrl,
     apiKey: request.apiKey?.trim() || savedProfile.apiKey,
