@@ -48,12 +48,20 @@ export {
 } from './responseParser';
 export {
   appendProviderErrorHint,
+  buildSafeProviderDiagnostics,
   getEndpointLogFields,
   getOpenAICompatibleProviderErrorHint,
+  getProviderFriendlyMessage,
   readProviderErrorResponse,
   redactApiKey,
+  redactDiagnosticText,
   sanitizeProviderErrorBody,
   sanitizeProviderError,
+  summarizeProviderErrorForUi,
+} from './providerDiagnostics';
+export type {
+  AIProviderDiagnosticsOperation,
+  SafeProviderDiagnostics,
 } from './providerDiagnostics';
 export {
   callAI,

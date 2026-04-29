@@ -1,4 +1,5 @@
 import type { OpenAICompatibleProviderPresetId } from '../../../shared/openaiCompatibleProviderPresets';
+import type { AIProviderDiagnosticsOperation } from './providerDiagnostics';
 
 export interface AIConfig {
   baseUrl: string;
@@ -103,6 +104,7 @@ export interface AIProviderTestConnectionRequest {
   baseUrl: string;
   apiKey?: string;
   model: string;
+  localProvider?: boolean;
 }
 
 export interface AIProviderTestConnectionResult {
@@ -115,6 +117,11 @@ export interface AIProviderTestConnectionResult {
   endpointPath: string;
   model: string;
   status?: number;
+  operation?: AIProviderDiagnosticsOperation;
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
+  responseStructureSummary?: unknown;
   parsedPreview?: string;
   error?: string;
 }
@@ -137,7 +144,12 @@ export interface AIProviderModelListResult {
   };
   endpointHost: string;
   endpointPath: string;
+  model?: string;
   status?: number;
+  operation?: AIProviderDiagnosticsOperation;
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
   models?: string[];
   error?: string;
 }

@@ -6,9 +6,11 @@ import {
   appendProviderErrorHint,
   getEndpointLogFields,
   getOpenAICompatibleProviderErrorHint,
+  getProviderFriendlyMessage,
   readProviderErrorResponse,
   redactApiKey,
   sanitizeProviderError,
+  summarizeProviderErrorForUi,
 } from './providerDiagnostics';
 import { buildOpenAICompatibleRequestBody } from './requestSanitizer';
 import {
@@ -24,6 +26,16 @@ import type {
 } from './types';
 
 const TEST_CONNECTION_PROMPT = 'Reply with OK.';
+
+function isLocalEndpoint(endpoint: string, localProvider?: boolean): boolean {
+  if (localProvider) return true;
+  try {
+    const { hostname } = new URL(endpoint);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch {
+    return Boolean(localProvider);
+  }
+}
 
 export async function callAI(request: AIRequest): Promise<AIResponse> {
   const config = getAIConfig();
@@ -131,6 +143,29 @@ function buildTestConnectionResultBase(
   };
 }
 
+function withTestConnectionDiagnostics(
+  result: AIProviderTestConnectionResult,
+  params: {
+    localProvider?: boolean;
+    responseStructureSummary?: unknown;
+  } = {},
+): AIProviderTestConnectionResult {
+  const errorSummary = summarizeProviderErrorForUi(result.error);
+  return {
+    ...result,
+    operation: 'testConnection',
+    timestamp: new Date().toISOString(),
+    friendlyMessage: getProviderFriendlyMessage({
+      status: result.status,
+      error: result.error,
+      operation: 'testConnection',
+      localProvider: params.localProvider,
+    }),
+    ...(errorSummary ? { errorSummary } : {}),
+    ...(params.responseStructureSummary ? { responseStructureSummary: params.responseStructureSummary } : {}),
+  };
+}
+
 export async function testOpenAICompatibleConnection(
   request: AIProviderTestConnectionRequest,
 ): Promise<AIProviderTestConnectionResult> {
@@ -140,18 +175,18 @@ export async function testOpenAICompatibleConnection(
   try {
     if (!config.apiKey) {
       endpoint = config.baseUrl ? normalizeOpenAICompatibleEndpoint(config.baseUrl) : '';
-      return {
+      return withTestConnectionDiagnostics({
         success: false,
         ...buildTestConnectionResultBase(request, endpoint, config.model),
         error: 'API key not configured. Please set your AI API key in Settings.',
-      };
+      });
     }
     if (!config.baseUrl) {
-      return {
+      return withTestConnectionDiagnostics({
         success: false,
         ...buildTestConnectionResultBase(request, '', config.model),
         error: 'API base URL not configured.',
-      };
+      });
     }
 
     endpoint = normalizeOpenAICompatibleEndpoint(config.baseUrl);
@@ -203,7 +238,10 @@ export async function testOpenAICompatibleConnection(
         status: response.status,
         providerError: error,
       });
-      return { success: false, ...resultBase, status: response.status, error };
+      return withTestConnectionDiagnostics(
+        { success: false, ...resultBase, status: response.status, error },
+        { localProvider: isLocalEndpoint(endpoint, request.localProvider) },
+      );
     }
 
     const data = await response.json();
@@ -218,7 +256,10 @@ export async function testOpenAICompatibleConnection(
         status: response.status,
         providerError: error,
       });
-      return { success: false, ...resultBase, status: response.status, error };
+      return withTestConnectionDiagnostics(
+        { success: false, ...resultBase, status: response.status, error },
+        { localProvider: isLocalEndpoint(endpoint, request.localProvider) },
+      );
     }
 
     const content = parseOpenAICompatibleResponse(data);
@@ -236,20 +277,26 @@ export async function testOpenAICompatibleConnection(
       const error = responseStructure.hasReasoningContent
         ? 'Provider returned reasoning content without final answer.'
         : 'No content in AI response';
-      return { success: false, ...resultBase, status: response.status, error };
+      return withTestConnectionDiagnostics(
+        { success: false, ...resultBase, status: response.status, error },
+        {
+          localProvider: isLocalEndpoint(endpoint, request.localProvider),
+          responseStructureSummary: responseStructure,
+        },
+      );
     }
 
-    return {
+    return withTestConnectionDiagnostics({
       success: true,
       ...resultBase,
       status: response.status,
       parsedPreview: content.trim().slice(0, 120),
-    };
+    });
   } catch (err) {
-    return {
+    return withTestConnectionDiagnostics({
       success: false,
       ...buildTestConnectionResultBase(request, endpoint, config.model),
       error: redactApiKey((err as Error).message, config.apiKey),
-    };
+    }, { localProvider: isLocalEndpoint(endpoint || config.baseUrl, request.localProvider) });
   }
 }

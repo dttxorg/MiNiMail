@@ -732,6 +732,69 @@ async function testConnectionPlainTextErrorBodyIsRedactedAndTruncated() {
   assert(!JSON.stringify(logs).includes(apiKey), 'test connection logs must not leak API key');
 }
 
+function testFriendlyProviderErrorMessages() {
+  const { aiModule } = loadAiService();
+  const cases = [
+    [401, 'API key or provider permission may be invalid.'],
+    [403, 'API key or provider permission may be invalid.'],
+    [404, 'Endpoint or model may be incorrect.'],
+    [429, 'Quota exceeded or rate limited by provider.'],
+    [500, 'Provider upstream temporary error.'],
+    [502, 'Provider upstream temporary error.'],
+    [503, 'Provider upstream temporary error.'],
+  ];
+
+  for (const [status, expected] of cases) {
+    assert.strictEqual(
+      aiModule.getProviderFriendlyMessage({ status, operation: 'testConnection' }),
+      expected,
+      `expected friendly message for HTTP ${status}`,
+    );
+  }
+  assert.strictEqual(
+    aiModule.getProviderFriendlyMessage({ error: 'fetch failed', operation: 'fetchModels' }),
+    'Network error. Check your connection or provider availability.',
+  );
+  assert.strictEqual(
+    aiModule.getProviderFriendlyMessage({ error: 'fetch failed', operation: 'fetchModels', localProvider: true }),
+    'Ollama / LM Studio / vLLM local server may not be running.',
+  );
+}
+
+function testSafeProviderDiagnosticsWhitelist() {
+  const { aiModule } = loadAiService();
+  const apiKey = ['sk', 'thisShouldNeverAppearInDiagnostics1234567890'].join('-');
+  const diagnostics = aiModule.buildSafeProviderDiagnostics({
+    appVersion: '1.0.0',
+    platform: 'darwin',
+    provider: { id: 'custom', label: 'Custom OpenAI Compatible' },
+    endpointHost: 'api.example.com',
+    endpointPath: '/v1/chat/completions',
+    model: 'openai/gpt-4o-mini',
+    operation: 'testConnection',
+    status: 401,
+    errorSummary: `Authorization: Bearer ${apiKey} failed`,
+    responseStructureSummary: { topLevelKeys: ['error'] },
+    timestamp: '2026-04-29T00:00:00.000Z',
+    prompt: 'Reply with OK.',
+    emailBody: 'private email body',
+    emailSubject: 'private subject',
+    contacts: ['person@example.com'],
+    attachmentNames: ['invoice.pdf'],
+  });
+  const serialized = JSON.stringify(diagnostics);
+
+  assert(serialized.includes('api.example.com'), 'safe diagnostics should include endpoint host');
+  assert(serialized.includes('/v1/chat/completions'), 'safe diagnostics should include endpoint path');
+  assert(!serialized.includes(apiKey), 'safe diagnostics must not include API key');
+  assert(!serialized.includes(`Authorization: Bearer ${apiKey}`), 'safe diagnostics must not include Authorization header');
+  assert(!serialized.includes('Reply with OK.'), 'safe diagnostics must not include prompt');
+  assert(!serialized.includes('private email body'), 'safe diagnostics must not include email body');
+  assert(!serialized.includes('private subject'), 'safe diagnostics must not include email subject');
+  assert(!serialized.includes('person@example.com'), 'safe diagnostics must not include contacts');
+  assert(!serialized.includes('invoice.pdf'), 'safe diagnostics must not include attachment names');
+}
+
 async function testConnectionReasoningOnlyResponseFailsCleanly() {
   const { aiModule } = loadAiService({
     baseUrl: 'https://api.siliconflow.cn/v1',
@@ -927,6 +990,56 @@ async function testFetchModelsProviderErrorIsRedacted() {
   assert(String(response.error).includes('code: rate_limit_exceeded'), 'model list error should include provider code');
   assert(!JSON.stringify(response).includes(apiKey), 'model list response must not leak API key');
   assert(!JSON.stringify(logs).includes(apiKey), 'model list logs must not leak API key');
+}
+
+async function testFetchModelsLocalOfflineFriendlyMessage() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'http://localhost:1234/v1',
+    model: 'local-model',
+    apiKey: '',
+  });
+  global.fetch = async () => {
+    throw new Error('connect ECONNREFUSED 127.0.0.1:1234');
+  };
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'lm-studio',
+    providerLabel: 'LM Studio',
+    baseUrl: 'http://localhost:1234/v1',
+    model: 'local-model',
+    localProvider: true,
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.model, 'local-model');
+  assert.strictEqual(response.operation, 'fetchModels');
+  assert(String(response.friendlyMessage).includes('local server may not be running'));
+  assert(String(response.errorSummary).includes('ECONNREFUSED'), 'network error summary should be visible');
+}
+
+async function testFetchModelsFailureKeepsCurrentModel() {
+  const { aiModule } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey: 'secret-compatible-key',
+  });
+  global.fetch = async () => createFetchResponse({
+    error: { message: 'not found' },
+  }, 404);
+
+  const response = await aiModule.fetchOpenAICompatibleModels({
+    profileId: 'primary',
+    providerId: 'siliconflow',
+    providerLabel: 'SiliconFlow',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+
+  assert.strictEqual(response.success, false);
+  assert.strictEqual(response.model, 'Pro/zai-org/GLM-4.7');
+  assert.strictEqual(response.status, 404);
+  assert.strictEqual(response.friendlyMessage, 'Endpoint or model may be incorrect.');
 }
 
 function testProviderProfilesMigrateLegacyPrimaryAsDefault() {
@@ -1263,6 +1376,8 @@ async function run() {
   await testConnectionProviderErrorDoesNotLeakApiKey();
   await testConnectionGemini429JsonErrorBodyIsParsedAndRedacted();
   await testConnectionPlainTextErrorBodyIsRedactedAndTruncated();
+  testFriendlyProviderErrorMessages();
+  testSafeProviderDiagnosticsWhitelist();
   await testConnectionReasoningOnlyResponseFailsCleanly();
   testModelListParserVariants();
   await testFetchModelsUsesNormalizedEndpointAndBearerAuth();
@@ -1270,6 +1385,8 @@ async function run() {
   await testFetchModelsAllowsLocalProviderWithoutApiKey();
   await testFetchModelsRequiresApiKeyForRemoteProvider();
   await testFetchModelsProviderErrorIsRedacted();
+  await testFetchModelsLocalOfflineFriendlyMessage();
+  await testFetchModelsFailureKeepsCurrentModel();
   testProviderProfilesMigrateLegacyPrimaryAsDefault();
   testProviderProfilesMigrateLegacySecondaryAndActiveDefault();
   testProviderProfileMigrationIsIdempotent();

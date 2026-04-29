@@ -6,9 +6,11 @@ import {
   appendProviderErrorHint,
   getEndpointLogFields,
   getOpenAICompatibleProviderErrorHint,
+  getProviderFriendlyMessage,
   readProviderErrorResponse,
   redactApiKey,
   sanitizeProviderError,
+  summarizeProviderErrorForUi,
 } from './providerDiagnostics';
 import type {
   AIConfig,
@@ -44,13 +46,36 @@ function isLocalModelProvider(endpoint: string, request: AIProviderModelListRequ
 function buildModelListResultBase(
   request: AIProviderModelListRequest,
   endpoint: string,
-): Pick<AIProviderModelListResult, 'provider' | 'endpointHost' | 'endpointPath'> {
+  model?: string,
+): Pick<AIProviderModelListResult, 'provider' | 'endpointHost' | 'endpointPath' | 'model'> {
   return {
     provider: {
       id: request.providerId,
       label: request.providerLabel,
     },
     ...getEndpointLogFields(endpoint),
+    model,
+  };
+}
+
+function withModelListDiagnostics(
+  result: AIProviderModelListResult,
+  params: {
+    localProvider?: boolean;
+  } = {},
+): AIProviderModelListResult {
+  const errorSummary = summarizeProviderErrorForUi(result.error);
+  return {
+    ...result,
+    operation: 'fetchModels',
+    timestamp: new Date().toISOString(),
+    friendlyMessage: getProviderFriendlyMessage({
+      status: result.status,
+      error: result.error,
+      operation: 'fetchModels',
+      localProvider: params.localProvider,
+    }),
+    ...(errorSummary ? { errorSummary } : {}),
   };
 }
 
@@ -94,22 +119,22 @@ export async function fetchOpenAICompatibleModels(
 
   try {
     if (!config.baseUrl) {
-      return {
+      return withModelListDiagnostics({
         success: false,
-        ...buildModelListResultBase(request, ''),
+        ...buildModelListResultBase(request, '', config.model),
         error: 'API base URL not configured.',
-      };
+      });
     }
 
     endpoint = normalizeOpenAICompatibleModelListEndpoint(config.baseUrl);
     const endpointLogFields = getEndpointLogFields(endpoint);
     const localProvider = isLocalModelProvider(endpoint, request);
     if (!localProvider && !config.apiKey) {
-      return {
+      return withModelListDiagnostics({
         success: false,
-        ...buildModelListResultBase(request, endpoint),
+        ...buildModelListResultBase(request, endpoint, config.model),
         error: 'API key not configured. Please set your AI API key in Settings.',
-      };
+      }, { localProvider });
     }
 
     const headers: Record<string, string> = {};
@@ -138,7 +163,7 @@ export async function fetchOpenAICompatibleModels(
       status: response.status,
     });
 
-    const resultBase = buildModelListResultBase(request, endpoint);
+    const resultBase = buildModelListResultBase(request, endpoint, config.model);
 
     if (!response.ok) {
       const error = appendProviderErrorHint(
@@ -153,7 +178,10 @@ export async function fetchOpenAICompatibleModels(
         status: response.status,
         providerError: error,
       });
-      return { success: false, ...resultBase, status: response.status, error };
+      return withModelListDiagnostics(
+        { success: false, ...resultBase, status: response.status, error },
+        { localProvider },
+      );
     }
 
     const data = await response.json();
@@ -167,20 +195,24 @@ export async function fetchOpenAICompatibleModels(
         status: response.status,
         providerError: error,
       });
-      return { success: false, ...resultBase, status: response.status, error };
+      return withModelListDiagnostics(
+        { success: false, ...resultBase, status: response.status, error },
+        { localProvider },
+      );
     }
 
-    return {
+    return withModelListDiagnostics({
       success: true,
       ...resultBase,
       status: response.status,
       models: parseOpenAICompatibleModelList(data),
-    };
+    });
   } catch (err) {
-    return {
+    const localProvider = isLocalModelProvider(endpoint || config.baseUrl, request);
+    return withModelListDiagnostics({
       success: false,
-      ...buildModelListResultBase(request, endpoint),
+      ...buildModelListResultBase(request, endpoint, config.model),
       error: redactApiKey((err as Error).message, config.apiKey),
-    };
+    }, { localProvider });
   }
 }

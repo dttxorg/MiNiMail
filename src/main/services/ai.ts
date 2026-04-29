@@ -2,12 +2,14 @@
 import { getSetting, setSetting } from '../database';
 import {
   buildOpenAICompatibleRequestBody,
+  buildSafeProviderDiagnostics,
   callAI,
   deleteAIProviderProfile,
   fetchOpenAICompatibleModels,
   getAIConfig,
   getAIConfigSnapshot,
   getAIProviderProfileSnapshot,
+  getProviderFriendlyMessage,
   initializeAISecretStorage,
   normalizeOpenAICompatibleEndpoint,
   normalizeOpenAICompatibleModelListEndpoint,
@@ -17,12 +19,14 @@ import {
   saveAIProviderProfile,
   setDefaultAIProviderProfile,
   summarizeOpenAICompatibleResponseStructure,
+  summarizeProviderErrorForUi,
   testOpenAICompatibleConnection,
   type AIConfig,
   type AIConfigProfile,
   type AIConfigProfileId,
   type AIConfigSnapshot,
   type AIEmailSource,
+  type AIProviderDiagnosticsOperation,
   type AIProviderTestConnectionRequest,
   type AIProviderTestConnectionResult,
   type AIProviderModelListRequest,
@@ -32,6 +36,7 @@ import {
   type AIRequest,
   type AIResponse,
   type AITranslateSegmentsResponse,
+  type SafeProviderDiagnostics,
   type SaveProviderProfileInput,
 } from './ai/index';
 import {
@@ -55,12 +60,14 @@ import {
 
 export {
   buildOpenAICompatibleRequestBody,
+  buildSafeProviderDiagnostics,
   callAI,
   deleteAIProviderProfile,
   fetchOpenAICompatibleModels,
   getAIConfig,
   getAIConfigSnapshot,
   getAIProviderProfileSnapshot,
+  getProviderFriendlyMessage,
   initializeAISecretStorage,
   normalizeOpenAICompatibleEndpoint,
   normalizeOpenAICompatibleModelListEndpoint,
@@ -70,6 +77,7 @@ export {
   saveAIProviderProfile,
   setDefaultAIProviderProfile,
   summarizeOpenAICompatibleResponseStructure,
+  summarizeProviderErrorForUi,
   testOpenAICompatibleConnection,
 };
 export type {
@@ -78,6 +86,7 @@ export type {
   AIConfigProfileId,
   AIConfigSnapshot,
   AIEmailSource,
+  AIProviderDiagnosticsOperation,
   AIProviderTestConnectionRequest,
   AIProviderTestConnectionResult,
   AIProviderModelListRequest,
@@ -87,6 +96,7 @@ export type {
   AIRequest,
   AIResponse,
   AITranslateSegmentsResponse,
+  SafeProviderDiagnostics,
   SaveProviderProfileInput,
 };
 

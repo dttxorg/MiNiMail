@@ -131,6 +131,11 @@ type AIProviderConnectionTestResult = {
   endpointPath?: string;
   model?: string;
   status?: number;
+  operation?: 'testConnection' | 'fetchModels' | 'callAI';
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
+  responseStructureSummary?: unknown;
   parsedPreview?: string;
   error?: string;
 };
@@ -143,9 +148,22 @@ type AIProviderModelListResult = {
   };
   endpointHost?: string;
   endpointPath?: string;
+  model?: string;
   status?: number;
+  operation?: 'testConnection' | 'fetchModels' | 'callAI';
+  timestamp?: string;
+  friendlyMessage?: string;
+  errorSummary?: string;
   models?: string[];
   error?: string;
+};
+
+type AIProviderOperationResult = AIProviderConnectionTestResult | AIProviderModelListResult;
+
+type ProviderReadiness = {
+  label: string;
+  color: string;
+  detail: string;
 };
 
 type AIProviderProfileSnapshot = {
@@ -196,6 +214,83 @@ function providerProfilesToRecord(profiles: AIConfigProfileForm[]): Record<strin
     acc[profile.id] = profile;
     return acc;
   }, {});
+}
+
+function redactDiagnosticsText(value: string): string {
+  return value
+    .replace(/Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Authorization: Bearer [REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, '[REDACTED_API_KEY]')
+    .replace(/AIza[0-9A-Za-z_-]{16,}/g, '[REDACTED_API_KEY]')
+    .replace(/gh[pousr]_[0-9A-Za-z_]{12,}/g, '[REDACTED_TOKEN]');
+}
+
+function truncateDiagnostics(value: string, maxLength = 300): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function getProviderReadiness(
+  profile: AIConfigProfileForm,
+  diagnostics: AIProviderOperationResult | undefined,
+): ProviderReadiness {
+  const preset = getOpenAICompatiblePresetById(profile.providerPresetId);
+  const isLocal = Boolean(preset.isLocal);
+  const hasKey = Boolean(profile.hasApiKey || profile.apiKey.trim() || isLocal);
+
+  if (!profile.model.trim()) {
+    return { label: 'Needs model', color: '#ff9f0a', detail: 'Model missing' };
+  }
+  if (!hasKey) {
+    return { label: 'Needs API key', color: '#ff9f0a', detail: 'No key saved' };
+  }
+  if (!diagnostics) {
+    return { label: 'Untested', color: '#8e8e93', detail: 'No recent test' };
+  }
+  if (diagnostics.success) {
+    const statusText = diagnostics.status !== undefined ? `HTTP ${diagnostics.status}` : 'OK';
+    return { label: 'Ready', color: '#30d158', detail: statusText };
+  }
+  if (diagnostics.status === 429) {
+    return { label: 'Rate limited', color: '#ff9f0a', detail: diagnostics.errorSummary || diagnostics.error || 'HTTP 429' };
+  }
+  if (!diagnostics.status && isLocal) {
+    return { label: 'Needs local server', color: '#ff9f0a', detail: diagnostics.friendlyMessage || 'Local server may not be running' };
+  }
+  return {
+    label: 'Provider error',
+    color: '#ff6b6b',
+    detail: diagnostics.errorSummary || diagnostics.error || diagnostics.friendlyMessage || 'Provider error',
+  };
+}
+
+function buildSafeDiagnosticsPayload(params: {
+  appVersion?: string;
+  platform?: string;
+  result: AIProviderOperationResult;
+}) {
+  const { result } = params;
+  return {
+    appVersion: params.appVersion ? redactDiagnosticsText(params.appVersion) : undefined,
+    platform: params.platform ? redactDiagnosticsText(params.platform) : undefined,
+    provider: result.provider
+      ? {
+          id: result.provider.id ? redactDiagnosticsText(result.provider.id) : undefined,
+          label: result.provider.label ? redactDiagnosticsText(result.provider.label) : undefined,
+        }
+      : undefined,
+    endpointHost: result.endpointHost ? redactDiagnosticsText(result.endpointHost) : undefined,
+    endpointPath: result.endpointPath ? redactDiagnosticsText(result.endpointPath) : undefined,
+    model: result.model ? redactDiagnosticsText(result.model) : undefined,
+    operation: result.operation,
+    status: result.status,
+    errorSummary: result.errorSummary
+      ? truncateDiagnostics(redactDiagnosticsText(result.errorSummary))
+      : result.error
+        ? truncateDiagnostics(redactDiagnosticsText(result.error))
+        : undefined,
+    responseStructureSummary: 'responseStructureSummary' in result ? result.responseStructureSummary : undefined,
+    timestamp: result.timestamp ? redactDiagnosticsText(result.timestamp) : new Date().toISOString(),
+  };
 }
 
 function getApiProfileText(appLanguage: AppLanguage) {
@@ -971,6 +1066,8 @@ export function SettingsModal({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [modelListResult, setModelListResult] = useState<AIProviderModelListResult | null>(null);
   const [modelSearchQuery, setModelSearchQuery] = useState('');
+  const [providerDiagnostics, setProviderDiagnostics] = useState<Record<string, AIProviderOperationResult>>({});
+  const [diagnosticsCopyStatus, setDiagnosticsCopyStatus] = useState<string | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -1099,6 +1196,7 @@ export function SettingsModal({
     setConnectionTestResult(null);
     setModelListResult(null);
     setModelSearchQuery('');
+    setDiagnosticsCopyStatus(null);
   }, [selectedApiProfile]);
 
   function updateSelectedApiProfile(patch: Partial<AIConfigProfileForm>) {
@@ -1120,6 +1218,7 @@ export function SettingsModal({
     setModelListResult(null);
     setModelSearchQuery('');
     setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
     try {
       const response = await window.electronAPI.invoke('ai:fetchModels', {
         profileId: selectedApiProfile,
@@ -1131,12 +1230,22 @@ export function SettingsModal({
         localProvider: Boolean(selectedProviderPreset.isLocal),
       }) as AIProviderModelListResult;
       setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
     } catch (error) {
-      setModelListResult({
+      const response: AIProviderModelListResult = {
         success: false,
         provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        model: selectedApiProfileForm.model,
+        operation: 'fetchModels',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: selectedProviderPreset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
         error: (error as Error).message,
-      });
+      };
+      setModelListResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
     } finally {
       setIsFetchingModels(false);
     }
@@ -1146,6 +1255,7 @@ export function SettingsModal({
     setIsTestingConnection(true);
     setConnectionTestResult(null);
     setApiSaveError(null);
+    setDiagnosticsCopyStatus(null);
     try {
       const response = await window.electronAPI.invoke('ai:testConnection', {
         profileId: selectedApiProfile,
@@ -1154,16 +1264,42 @@ export function SettingsModal({
         baseUrl: selectedApiProfileForm.baseUrl,
         apiKey: selectedApiProfileForm.apiKey.trim() || undefined,
         model: selectedApiProfileForm.model,
+        localProvider: Boolean(selectedProviderPreset.isLocal),
       }) as AIProviderConnectionTestResult;
       setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
     } catch (error) {
-      setConnectionTestResult({
+      const response: AIProviderConnectionTestResult = {
         success: false,
         provider: { id: selectedProviderPreset.id, label: selectedProviderPreset.label },
+        model: selectedApiProfileForm.model,
+        operation: 'testConnection',
+        timestamp: new Date().toISOString(),
+        friendlyMessage: selectedProviderPreset.isLocal
+          ? 'Ollama / LM Studio / vLLM local server may not be running.'
+          : 'Network error. Check your connection or provider availability.',
+        errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
         error: (error as Error).message,
-      });
+      };
+      setConnectionTestResult(response);
+      setProviderDiagnostics((prev) => ({ ...prev, [selectedApiProfile]: response }));
     } finally {
       setIsTestingConnection(false);
+    }
+  }
+
+  async function handleCopyDiagnostics(result: AIProviderOperationResult) {
+    try {
+      const appVersion = await window.electronAPI.getVersion().catch(() => undefined);
+      const payload = buildSafeDiagnosticsPayload({
+        appVersion,
+        platform: navigator.platform || 'unknown',
+        result,
+      });
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setDiagnosticsCopyStatus('Diagnostics copied');
+    } catch (error) {
+      setDiagnosticsCopyStatus((error as Error).message || 'Failed to copy diagnostics');
     }
   }
 
@@ -1839,6 +1975,7 @@ export function SettingsModal({
                       const isSelected = selectedApiProfile === profileId;
                       const isActive = activeApiProfile === profileId;
                       const canDelete = !profile.isDraft && !isLegacyAIProviderProfile(profileId) && apiProfileList.length > 1;
+                      const readiness = getProviderReadiness(profile, providerDiagnostics[profileId]);
                       return (
                         <div
                           key={profileId}
@@ -1867,6 +2004,12 @@ export function SettingsModal({
                           </div>
                           <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
                             {preset.label} · {profile.model || 'Model'} · {profile.hasApiKey ? apiProfileUi.keySaved : apiProfileUi.keyEmpty}
+                          </div>
+                          <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                            <span style={{ color: readiness.color }}>{readiness.label}</span>
+                            <span className="truncate" style={{ color: '#636366' }}>
+                              {truncateDiagnostics(readiness.detail, 72)}
+                            </span>
                           </div>
                           {isSelected && (
                             <div className="mt-2 flex gap-1.5">
@@ -1988,10 +2131,31 @@ export function SettingsModal({
                   )}
                   {modelListResult && (
                     <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult.success ? '#c7c7cc' : '#ff6b6b' }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
+                          {modelListResult.success ? 'Models fetched' : 'Fetch models failed'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyDiagnostics(modelListResult)}
+                          className="rounded-md px-2 py-1 text-[10px] text-white cursor-pointer"
+                          style={{ backgroundColor: '#1e1e20' }}
+                        >
+                          Copy diagnostics
+                        </button>
+                      </div>
                       {(modelListResult.endpointHost || modelListResult.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
                           {modelListResult.endpointHost || 'unknown-host'} {modelListResult.endpointPath || ''}
                           {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                        </div>
+                      )}
+                      {modelListResult.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {modelListResult.model}</div>
+                      )}
+                      {modelListResult.friendlyMessage && (
+                        <div style={{ color: modelListResult.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {modelListResult.friendlyMessage}
                         </div>
                       )}
                       {modelListResult.success ? (
@@ -2029,7 +2193,10 @@ export function SettingsModal({
                           )}
                         </>
                       ) : (
-                        <div>{modelListResult.error || 'Failed to fetch models'}</div>
+                        <div>{modelListResult.errorSummary || modelListResult.error || 'Failed to fetch models'}</div>
+                      )}
+                      {diagnosticsCopyStatus && (
+                        <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>
                       )}
                     </div>
                   )}
@@ -2052,7 +2219,17 @@ export function SettingsModal({
                   </div>
                   {connectionTestResult && (
                     <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
-                      <div>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyDiagnostics(connectionTestResult)}
+                          className="rounded-md px-2 py-1 text-[10px] text-white cursor-pointer"
+                          style={{ backgroundColor: '#1e1e20' }}
+                        >
+                          Copy diagnostics
+                        </button>
+                      </div>
                       {(connectionTestResult.endpointHost || connectionTestResult.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
                           {connectionTestResult.endpointHost || 'unknown-host'} {connectionTestResult.endpointPath || ''}
@@ -2062,11 +2239,19 @@ export function SettingsModal({
                       {connectionTestResult.model && (
                         <div style={{ color: '#8e8e93' }}>Model: {connectionTestResult.model}</div>
                       )}
+                      {connectionTestResult.friendlyMessage && (
+                        <div style={{ color: connectionTestResult.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {connectionTestResult.friendlyMessage}
+                        </div>
+                      )}
                       {connectionTestResult.parsedPreview && (
                         <div style={{ color: '#c7c7cc' }}>Preview: {connectionTestResult.parsedPreview}</div>
                       )}
                       {connectionTestResult.error && (
-                        <div>{connectionTestResult.error}</div>
+                        <div>{connectionTestResult.errorSummary || connectionTestResult.error}</div>
+                      )}
+                      {diagnosticsCopyStatus && (
+                        <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>
                       )}
                     </div>
                   )}
