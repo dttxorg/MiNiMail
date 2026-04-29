@@ -16,6 +16,13 @@ import {
   type AIConfigSaveInput,
   type AIConfigSnapshot,
 } from './types';
+import {
+  getAIProviderProfileSnapshot,
+  getDefaultAIProviderConfig,
+  getFirstAvailableAIProviderConfig,
+  setDefaultAIProviderProfile,
+  syncLegacyAIConfigToProviderProfile,
+} from './aiProviderProfileStore';
 
 export function normalizeAIConfigProfileId(value: string | null): AIConfigProfileId {
   return value === 'secondary' ? 'secondary' : 'primary';
@@ -93,17 +100,27 @@ export function getAIConfigSnapshot(): AIConfigSnapshot {
       primary: getAIConfigForProfile('primary'),
       secondary: getAIConfigForProfile('secondary'),
     },
+    providerProfiles: getAIProviderProfileSnapshot(),
   };
 }
 
 export function getAIConfig(): AIConfig {
+  const defaultProviderConfig = getDefaultAIProviderConfig();
+  if (defaultProviderConfig) return defaultProviderConfig;
+
   const snapshot = getAIConfigSnapshot();
   const activeProfile = snapshot.profiles[snapshot.activeProfileId];
-  return {
+  const legacyConfig = {
     baseUrl: activeProfile.baseUrl,
     apiKey: activeProfile.apiKey,
     model: activeProfile.model,
   };
+  if (legacyConfig.baseUrl && legacyConfig.model) return legacyConfig;
+
+  const firstProviderConfig = getFirstAvailableAIProviderConfig();
+  if (firstProviderConfig) return firstProviderConfig;
+
+  return DEFAULT_CONFIG;
 }
 
 export function saveAIConfig(config: AIConfigSaveInput): void {
@@ -127,6 +144,10 @@ export function saveAIConfig(config: AIConfigSaveInput): void {
 
   if (config.baseUrl !== undefined) setSetting(getAIProfileSettingKey(profileId, 'baseUrl'), config.baseUrl);
   if (config.model !== undefined) setSetting(getAIProfileSettingKey(profileId, 'model'), config.model);
-  if (config.activeProfileId !== undefined) setSetting('ai_active_profile', config.activeProfileId);
+  syncLegacyAIConfigToProviderProfile(profileId, config);
+  if (config.activeProfileId !== undefined) {
+    setSetting('ai_active_profile', config.activeProfileId);
+    setDefaultAIProviderProfile(config.activeProfileId);
+  }
   log.info('AI config saved', { profileId, activeProfileId: config.activeProfileId });
 }

@@ -1,3 +1,5 @@
+import type { OpenAICompatibleProviderPresetId } from '../../../shared/openaiCompatibleProviderPresets';
+
 export interface AIConfig {
   baseUrl: string;
   apiKey: string;
@@ -14,7 +16,35 @@ export interface AIConfigProfile extends AIConfig {
 export interface AIConfigSnapshot {
   activeProfileId: AIConfigProfileId;
   profiles: Record<AIConfigProfileId, AIConfigProfile>;
+  providerProfiles?: AIProviderProfileSnapshot;
 }
+
+export interface AIProviderProfile {
+  id: string;
+  providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AIProviderProfileSnapshot {
+  defaultProviderId: string;
+  profiles: AIProviderProfile[];
+}
+
+export type SaveProviderProfileInput = {
+  id?: string;
+  providerPresetId: OpenAICompatibleProviderPresetId;
+  label: string;
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  isDefault?: boolean;
+};
 
 export interface AIRequest {
   prompt: string;

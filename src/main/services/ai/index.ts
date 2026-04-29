@@ -9,11 +9,14 @@ export type {
   AIProviderTestConnectionResult,
   AIProviderModelListRequest,
   AIProviderModelListResult,
+  AIProviderProfile,
+  AIProviderProfileSnapshot,
   AIRequest,
   AIResponse,
   AITranslateSegmentsResponse,
   OpenAICompatibleMessage,
   OpenAICompatibleRequestBody,
+  SaveProviderProfileInput,
 } from './types';
 export { DEFAULT_CONFIG } from './types';
 export {
@@ -24,6 +27,11 @@ export {
   normalizeAIConfigProfileId,
   saveAIConfig,
 } from './aiConfigStore';
+export {
+  getAIProviderProfileSnapshot,
+  saveAIProviderProfile,
+  setDefaultAIProviderProfile,
+} from './aiProviderProfileStore';
 export { normalizeOpenAICompatibleEndpoint } from './endpointNormalizer';
 export { normalizeOpenAICompatibleModelListEndpoint } from './endpointNormalizer';
 export { buildOpenAICompatibleRequestBody } from './requestSanitizer';

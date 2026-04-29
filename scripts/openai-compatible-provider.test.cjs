@@ -929,6 +929,160 @@ async function testFetchModelsProviderErrorIsRedacted() {
   assert(!JSON.stringify(logs).includes(apiKey), 'model list logs must not leak API key');
 }
 
+function testProviderProfilesMigrateLegacyPrimaryAsDefault() {
+  const apiKey = 'secret-primary-provider-key';
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash',
+    apiKey,
+  });
+
+  const snapshot = aiModule.getAIProviderProfileSnapshot();
+  const primary = snapshot.profiles.find((profile) => profile.id === 'primary');
+
+  assert.strictEqual(snapshot.defaultProviderId, 'primary');
+  assert(primary, 'legacy primary should migrate into provider profiles');
+  assert.strictEqual(primary.baseUrl, 'https://generativelanguage.googleapis.com/v1beta/openai/');
+  assert.strictEqual(primary.model, 'gemini-2.5-flash');
+  assert.strictEqual(primary.providerPresetId, 'gemini');
+  assert.strictEqual(primary.hasApiKey, true);
+  assert.strictEqual(primary.isDefault, true);
+  assert(!JSON.stringify(snapshot).includes(apiKey), 'provider profile snapshot must not include raw API key');
+  assert(!String(dbValues.ai_provider_profiles).includes(apiKey), 'provider metadata must not include raw API key');
+  assert.strictEqual(secureValues.ai_api_key, apiKey, 'legacy secure key should be retained');
+  assert.strictEqual(secureValues.ai_provider_api_key_primary, apiKey, 'provider secure key should be copied');
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    apiKey,
+    model: 'gemini-2.5-flash',
+  });
+}
+
+function testProviderProfilesMigrateLegacySecondaryAndActiveDefault() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+  dbValues.ai_active_profile = 'secondary';
+  dbValues.ai_secondary_base_url = 'https://api.siliconflow.cn/v1';
+  dbValues.ai_secondary_model = 'Pro/zai-org/GLM-4.7';
+  secureValues.ai_secondary_api_key = 'secret-secondary-key';
+
+  const snapshot = aiModule.getAIProviderProfileSnapshot();
+  const secondary = snapshot.profiles.find((profile) => profile.id === 'secondary');
+
+  assert.strictEqual(snapshot.defaultProviderId, 'secondary');
+  assert(secondary, 'legacy secondary should migrate into provider profiles');
+  assert.strictEqual(secondary.baseUrl, 'https://api.siliconflow.cn/v1');
+  assert.strictEqual(secondary.model, 'Pro/zai-org/GLM-4.7');
+  assert.strictEqual(secondary.providerPresetId, 'siliconflow');
+  assert.strictEqual(secondary.hasApiKey, true);
+  assert.strictEqual(secondary.isDefault, true);
+  assert.strictEqual(secureValues.ai_secondary_api_key, 'secret-secondary-key', 'legacy secondary secure key should be retained');
+  assert.strictEqual(secureValues.ai_provider_api_key_secondary, 'secret-secondary-key', 'secondary provider secure key should be copied');
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey: 'secret-secondary-key',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+}
+
+function testProviderProfileMigrationIsIdempotent() {
+  const { aiModule, dbValues } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey: 'secret-compatible-key',
+  });
+
+  const first = aiModule.getAIProviderProfileSnapshot();
+  const storedOnce = dbValues.ai_provider_profiles;
+  const second = aiModule.getAIProviderProfileSnapshot();
+
+  assert.strictEqual(first.profiles.length, second.profiles.length);
+  assert.strictEqual(dbValues.ai_provider_profiles, storedOnce, 'provider profile migration should not rewrite existing profiles');
+}
+
+function testExistingProviderProfilesDoNotRepeatLegacyMigration() {
+  const { aiModule, dbValues } = loadAiService({
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Pro/zai-org/GLM-4.7',
+    apiKey: 'secret-compatible-key',
+  });
+  dbValues.ai_provider_profiles = JSON.stringify([
+    {
+      id: 'custom-existing',
+      providerPresetId: 'custom',
+      label: 'Existing Custom',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'openai/gpt-4o-mini',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  dbValues.ai_default_provider_id = 'custom-existing';
+
+  const snapshot = aiModule.getAIProviderProfileSnapshot();
+  assert.strictEqual(snapshot.profiles.length, 1, 'existing provider profile metadata should not be remigrated');
+  assert.strictEqual(snapshot.profiles[0].id, 'custom-existing');
+}
+
+function testDefaultProviderSwitchControlsGetAIConfig() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+  dbValues.ai_secondary_base_url = 'https://api.siliconflow.cn/v1';
+  dbValues.ai_secondary_model = 'Pro/zai-org/GLM-4.7';
+  secureValues.ai_secondary_api_key = 'secret-secondary-key';
+
+  aiModule.getAIProviderProfileSnapshot();
+  aiModule.setDefaultAIProviderProfile('secondary');
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey: 'secret-secondary-key',
+    model: 'Pro/zai-org/GLM-4.7',
+  });
+
+  aiModule.setDefaultAIProviderProfile('primary');
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'secret-primary-key',
+    model: 'gpt-4o-mini',
+  });
+}
+
+function testMissingDefaultProviderFallsBackToLegacyActiveProfile() {
+  const { aiModule, dbValues, secureValues } = loadAiService({
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    apiKey: 'secret-primary-key',
+  });
+  dbValues.ai_provider_profiles = JSON.stringify([
+    {
+      id: 'custom-existing',
+      providerPresetId: 'custom',
+      label: 'Existing Custom',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'openai/gpt-4o-mini',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ]);
+  dbValues.ai_default_provider_id = 'missing-provider';
+  dbValues.ai_active_profile = 'secondary';
+  dbValues.ai_secondary_base_url = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+  dbValues.ai_secondary_model = 'gemini-2.5-flash';
+  secureValues.ai_secondary_api_key = 'secret-secondary-key';
+
+  assert.deepStrictEqual(aiModule.getAIConfig(), {
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    apiKey: 'secret-secondary-key',
+    model: 'gemini-2.5-flash',
+  });
+}
+
 async function run() {
   await testEndpointNormalization();
   testModelEndpointNormalization();
@@ -958,6 +1112,12 @@ async function run() {
   await testFetchModelsAllowsLocalProviderWithoutApiKey();
   await testFetchModelsRequiresApiKeyForRemoteProvider();
   await testFetchModelsProviderErrorIsRedacted();
+  testProviderProfilesMigrateLegacyPrimaryAsDefault();
+  testProviderProfilesMigrateLegacySecondaryAndActiveDefault();
+  testProviderProfileMigrationIsIdempotent();
+  testExistingProviderProfilesDoNotRepeatLegacyMigration();
+  testDefaultProviderSwitchControlsGetAIConfig();
+  testMissingDefaultProviderFallsBackToLegacyActiveProfile();
   console.log('openai compatible provider tests passed');
 }
 
