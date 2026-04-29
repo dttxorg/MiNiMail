@@ -100,6 +100,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('mail:backup-progress', listener);
     return () => ipcRenderer.removeListener('mail:backup-progress', listener);
   },
+  onOpenSettings: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:open-settings', listener);
+    return () => ipcRenderer.removeListener('app:open-settings', listener);
+  },
+  onComposeNewMail: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:compose-new-mail', listener);
+    return () => ipcRenderer.removeListener('app:compose-new-mail', listener);
+  },
+  onRefreshMail: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:refresh-mail', listener);
+    return () => ipcRenderer.removeListener('app:refresh-mail', listener);
+  },
   // Window controls for frameless window
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),

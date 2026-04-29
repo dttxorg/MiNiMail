@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage, type MenuItemConstructorOptions } from 'electron';
 import path from 'path';
 import log from 'electron-log';
 import { initDatabase, closeDatabase } from './database';
@@ -35,6 +35,7 @@ const trustedOpenPathRoots = new Set<string>();
 
 const isSmokeTest = process.env.MINIMAIL_ELECTRON_SMOKE === '1';
 const isDev = !app.isPackaged && !isSmokeTest;
+const isMacOS = process.platform === 'darwin';
 
 app.setName(APP_NAME);
 if (process.platform === 'win32') {
@@ -88,7 +89,66 @@ function showMainWindow(): void {
   mainWindow.focus();
 }
 
+function openSettingsWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:open-settings');
+}
+
+function openComposeWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:compose-new-mail');
+}
+
+function refreshMailWindow(): void {
+  showMainWindow();
+  mainWindow?.webContents.send('app:refresh-mail');
+}
+
+function buildApplicationMenu(): Menu {
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: APP_NAME,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings...', accelerator: 'Command+,', click: openSettingsWindow },
+        { type: 'separator' },
+        { label: `Quit ${APP_NAME}`, accelerator: 'Command+Q', click: quitApplication },
+      ],
+    },
+    {
+      label: 'Mail',
+      submenu: [
+        { label: 'Compose New Mail', accelerator: 'Command+N', click: openComposeWindow },
+        { label: 'Refresh Mail', accelerator: 'Command+R', click: refreshMailWindow },
+        { label: 'Search Mail', accelerator: 'Command+F', enabled: false },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { role: 'close' },
+      ],
+    },
+  ];
+
+  return Menu.buildFromTemplate(template);
+}
+
 function createAppTray(): void {
+  if (isMacOS) return;
   if (appTray) return;
 
   const ico = nativeImage.createFromPath(getAppIconPath('ico'));
@@ -125,7 +185,7 @@ function createWindow() {
   const appIconPath = getAppIconPath(process.platform === 'win32' ? 'ico' : 'png');
 
   // Remove menu bar
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(isMacOS ? buildApplicationMenu() : null);
 
   mainWindow = new BrowserWindow({
     width: 1536,
@@ -134,7 +194,11 @@ function createWindow() {
     minHeight: 600,
     title: APP_NAME,
     backgroundColor: '#1a1d29',
-    frame: false,
+    frame: isMacOS,
+    ...(isMacOS ? {
+      titleBarStyle: 'hiddenInset' as const,
+      trafficLightPosition: { x: 14, y: 14 },
+    } : {}),
     icon: appIconPath,
     webPreferences: {
       nodeIntegration: false,
@@ -176,6 +240,13 @@ function createWindow() {
 
   window.on('closed', () => {
     mainWindow = null;
+  });
+
+  window.on('close', (event) => {
+    if (isMacOS && !isQuitting) {
+      event.preventDefault();
+      window.hide();
+    }
   });
 
   window.webContents.on('did-finish-load', () => {
@@ -233,18 +304,18 @@ app.whenReady().then(() => {
 
   log.info('Creating window...');
   createWindow();
-  createAppTray();
+  if (!isMacOS) {
+    createAppTray();
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    showMainWindow();
   });
 });
 
 app.on('window-all-closed', () => {
   log.info('All windows closed');
-  if (process.platform !== 'darwin') {
+  if (!isMacOS) {
     quitApplication();
   }
 });
@@ -290,6 +361,10 @@ ipcMain.on('window:maximize', () => {
 });
 
 ipcMain.on('window:close', () => {
+  if (isMacOS) {
+    mainWindow?.close();
+    return;
+  }
   quitApplication();
 });
 
