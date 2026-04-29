@@ -554,6 +554,7 @@ function getAppUi(appLanguage: AppLanguage) {
 
 function App() {
   const { t, i18n } = useTranslation();
+  const isMacOS = useMemo(() => typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform), []);
   const [selectedFolder, setSelectedFolder] = useState<string>('inbox');
   const [selectedEmail, setSelectedEmail] = useState<RendererMailSummary | null>(null);
   const [showCompose, setShowCompose] = useState(false);
@@ -914,6 +915,13 @@ function App() {
       }
     })();
   }, [backupState.selectedAccountId, loadAccountFolders, showSettings]);
+
+  useEffect(() => {
+    const electronApi = window.electronAPI as typeof window.electronAPI & {
+      onOpenSettings?: (callback: () => void) => () => void;
+    };
+    return electronApi.onOpenSettings?.(() => setShowSettings(true));
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onBackupProgress((progress: MailBackupProgress) => {
@@ -1374,7 +1382,7 @@ function App() {
     }
   }, [accounts, currentAccount, mailFetchHistoryRange, resolveFolderPathForAction, selectedFolder, syncMails]);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     if (isSyncing) {
       refreshPending.current = false;
       return;
@@ -1384,7 +1392,7 @@ function App() {
     setStagedHistorySync(createEmptyStagedHistorySyncState());
     refreshPending.current = false;
     await fetchMails({ manual: true });
-  };
+  }, [fetchMails, isSyncing]);
 
   useEffect(() => {
     if (autoFetchMinutes <= 0) return;
@@ -2108,6 +2116,21 @@ function App() {
     setComposeSessionId((prev) => prev + 1);
     setShowCompose(true);
   }, [selectedMailForThread]);
+
+  useEffect(() => {
+    const electronApi = window.electronAPI as typeof window.electronAPI & {
+      onComposeNewMail?: (callback: () => void) => () => void;
+      onRefreshMail?: (callback: () => void) => () => void;
+    };
+    const unsubscribeCompose = electronApi.onComposeNewMail?.(() => openCompose('new', null));
+    const unsubscribeRefresh = electronApi.onRefreshMail?.(() => {
+      void handleRefresh();
+    });
+    return () => {
+      unsubscribeCompose?.();
+      unsubscribeRefresh?.();
+    };
+  }, [handleRefresh, openCompose]);
 
   const handleReplyWithSuggestion = (content: string, mode: 'reply' | 'forward' = 'reply', source?: RendererMailSummary | RendererMailDetail | null) => {
     setReplySuggestion(content);
@@ -3168,7 +3191,7 @@ function App() {
 
   return (
     <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#050B14' }}>
-      <WindowControls className="absolute top-3 right-3 z-[10001]" />
+      {!isMacOS && <WindowControls className="absolute top-3 right-3 z-[10001]" />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div
           className="flex-shrink-0 overflow-hidden"
@@ -3200,6 +3223,7 @@ function App() {
             githubFolderCounts={githubFolderCounts}
             priorityFolderCounts={priorityFolderCounts}
             appLanguage={appLanguage}
+            isMacOS={isMacOS}
           />
         </div>
 

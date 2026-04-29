@@ -39,10 +39,16 @@ function testMainProcessAppliesBrandEverywhere() {
   assert(main.includes('app.setAppUserModelId(APP_USER_MODEL_ID)'), 'Expected Windows notifications to use stable AppUserModelId');
   assert(main.includes('title: APP_NAME'), 'Expected BrowserWindow title to use canonical app name');
   assert(main.includes("process.platform === 'win32' ? 'ico' : 'png'"), 'Expected Windows BrowserWindow icon to use the branded ICO');
-  assert(main.includes('new Tray('), 'Expected main process to create a Windows tray icon');
+  assert(main.includes('new Tray(') && main.includes('if (isMacOS) return;'), 'Expected main process to create a Windows/Linux tray icon while skipping macOS');
   assert(main.includes('appTray.setToolTip(APP_NAME)'), 'Expected tray tooltip to use canonical app name');
   assert(main.includes('function quitApplication'), 'Expected main process to centralize explicit quit behavior');
-  assert(main.includes("ipcMain.on('window:close'") && main.includes('quitApplication();'), 'Expected close button IPC to quit the process instead of only closing the window');
+  assert(
+    main.includes("ipcMain.on('window:close'") &&
+    main.includes('if (isMacOS)') &&
+    main.includes('mainWindow?.close();') &&
+    main.includes('quitApplication();'),
+    'Expected close button IPC to hide on macOS and quit on Windows/Linux',
+  );
   assert(main.includes('appTray?.destroy()'), 'Expected quit path to destroy tray so the process is not kept alive');
 }
 

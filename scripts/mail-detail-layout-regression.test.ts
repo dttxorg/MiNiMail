@@ -25,8 +25,8 @@ function testWindowControlsAreDetachedFromLegacyTopDragStrip() {
   const main = read('src/main/index.ts');
   assert(!app.includes('fixed top-0 left-0 h-8 z-40 [-webkit-app-region:drag]'), 'Expected App.tsx to remove the legacy fixed top drag strip');
   assert(app.includes('WindowControls className='), 'Expected App.tsx to keep rendering custom window controls');
-  assert(main.includes('frame: false'), 'Expected main BrowserWindow to stay frameless');
-  assert(!main.includes("titleBarStyle: 'hidden'"), 'Expected main BrowserWindow not to reserve a native hidden title bar');
+  assert(main.includes('frame: isMacOS'), 'Expected main BrowserWindow to stay frameless on Windows/Linux while using a native frame on macOS');
+  assert(main.includes("titleBarStyle: 'hiddenInset'"), 'Expected macOS to use a native hiddenInset title bar');
 }
 
 function testWindowControlsKeepClickHandlersActive() {
