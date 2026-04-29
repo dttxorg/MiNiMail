@@ -24,19 +24,37 @@ function truncate(value: string, maxLength: number): string {
 export type AIProviderDiagnosticsOperation = 'testConnection' | 'fetchModels' | 'callAI';
 
 export type SafeProviderDiagnostics = {
-  appVersion?: string;
-  platform?: string;
+  app?: {
+    name?: string;
+    version?: string;
+    platform?: string;
+    arch?: string;
+  };
   provider?: {
     id?: string;
     label?: string;
+    presetId?: string;
+    isDefault?: boolean;
+    hasApiKey?: boolean;
+    isLocal?: boolean;
   };
-  endpointHost?: string;
-  endpointPath?: string;
-  model?: string;
-  operation?: AIProviderDiagnosticsOperation;
-  status?: number;
-  errorSummary?: string;
-  responseStructureSummary?: unknown;
+  request?: {
+    operation?: AIProviderDiagnosticsOperation;
+    endpointHost?: string;
+    endpointPath?: string;
+    model?: string;
+    bodyKeys?: string[];
+  };
+  result?: {
+    ok?: boolean;
+    httpStatus?: number;
+    readiness?: string;
+    friendlyMessage?: string;
+    errorSummary?: string;
+    modelCount?: number;
+    preview?: string;
+    responseStructureSummary?: unknown;
+  };
   timestamp?: string;
 };
 
@@ -166,23 +184,63 @@ export function summarizeProviderErrorForUi(error: string | undefined): string |
   return truncate(redactDiagnosticText(error), 300);
 }
 
+function safeString(value: unknown, maxLength = 300): string | undefined {
+  return typeof value === 'string' ? truncate(redactDiagnosticText(value), maxLength) : undefined;
+}
+
+function safeBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function safeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function safeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => truncate(redactDiagnosticText(item), 80));
+}
+
 export function buildSafeProviderDiagnostics(input: SafeProviderDiagnostics & Record<string, unknown>): SafeProviderDiagnostics {
+  const app = input.app && typeof input.app === 'object' ? input.app : {};
+  const provider = input.provider && typeof input.provider === 'object' ? input.provider : {};
+  const request = input.request && typeof input.request === 'object' ? input.request : {};
+  const result = input.result && typeof input.result === 'object' ? input.result : {};
+
   return {
-    appVersion: typeof input.appVersion === 'string' ? redactDiagnosticText(input.appVersion) : undefined,
-    platform: typeof input.platform === 'string' ? redactDiagnosticText(input.platform) : undefined,
-    provider: input.provider && typeof input.provider === 'object'
-      ? {
-          id: typeof input.provider.id === 'string' ? redactDiagnosticText(input.provider.id) : undefined,
-          label: typeof input.provider.label === 'string' ? redactDiagnosticText(input.provider.label) : undefined,
-        }
-      : undefined,
-    endpointHost: typeof input.endpointHost === 'string' ? redactDiagnosticText(input.endpointHost) : undefined,
-    endpointPath: typeof input.endpointPath === 'string' ? redactDiagnosticText(input.endpointPath) : undefined,
-    model: typeof input.model === 'string' ? redactDiagnosticText(input.model) : undefined,
-    operation: input.operation,
-    status: typeof input.status === 'number' ? input.status : undefined,
-    errorSummary: typeof input.errorSummary === 'string' ? summarizeProviderErrorForUi(input.errorSummary) : undefined,
-    responseStructureSummary: input.responseStructureSummary,
+    app: {
+      name: safeString(app.name, 80),
+      version: safeString(app.version, 80),
+      platform: safeString(app.platform, 80),
+      arch: safeString(app.arch, 80),
+    },
+    provider: {
+      id: safeString(provider.id, 120),
+      label: safeString(provider.label, 120),
+      presetId: safeString(provider.presetId, 120),
+      isDefault: safeBoolean(provider.isDefault),
+      hasApiKey: safeBoolean(provider.hasApiKey),
+      isLocal: safeBoolean(provider.isLocal),
+    },
+    request: {
+      operation: request.operation,
+      endpointHost: safeString(request.endpointHost, 200),
+      endpointPath: safeString(request.endpointPath, 300),
+      model: safeString(request.model, 200),
+      bodyKeys: safeStringArray(request.bodyKeys),
+    },
+    result: {
+      ok: safeBoolean(result.ok),
+      httpStatus: safeNumber(result.httpStatus),
+      readiness: safeString(result.readiness, 80),
+      friendlyMessage: safeString(result.friendlyMessage, 300),
+      errorSummary: typeof result.errorSummary === 'string' ? summarizeProviderErrorForUi(result.errorSummary) : undefined,
+      modelCount: safeNumber(result.modelCount),
+      preview: safeString(result.preview, 160),
+      responseStructureSummary: result.responseStructureSummary,
+    },
     timestamp: typeof input.timestamp === 'string' ? redactDiagnosticText(input.timestamp) : undefined,
   };
 }

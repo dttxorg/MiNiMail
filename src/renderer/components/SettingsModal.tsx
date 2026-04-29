@@ -136,6 +136,7 @@ type AIProviderConnectionTestResult = {
   friendlyMessage?: string;
   errorSummary?: string;
   responseStructureSummary?: unknown;
+  requestBodyKeys?: string[];
   parsedPreview?: string;
   error?: string;
 };
@@ -154,6 +155,7 @@ type AIProviderModelListResult = {
   timestamp?: string;
   friendlyMessage?: string;
   errorSummary?: string;
+  requestBodyKeys?: string[];
   models?: string[];
   error?: string;
 };
@@ -263,34 +265,69 @@ function getProviderReadiness(
   };
 }
 
+function getBrowserArch(): string {
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (userAgent.includes('arm64') || userAgent.includes('aarch64')) return 'arm64';
+  if (userAgent.includes('x86_64') || userAgent.includes('x64') || userAgent.includes('wow64')) return 'x64';
+  return 'unknown';
+}
+
 function buildSafeDiagnosticsPayload(params: {
   appVersion?: string;
-  platform?: string;
+  profile: AIConfigProfileForm;
+  presetLabel: string;
+  presetIsLocal: boolean;
+  isDefault: boolean;
   result: AIProviderOperationResult;
 }) {
   const { result } = params;
+  const readiness = getProviderReadiness(params.profile, result);
   return {
-    appVersion: params.appVersion ? redactDiagnosticsText(params.appVersion) : undefined,
-    platform: params.platform ? redactDiagnosticsText(params.platform) : undefined,
-    provider: result.provider
-      ? {
-          id: result.provider.id ? redactDiagnosticsText(result.provider.id) : undefined,
-          label: result.provider.label ? redactDiagnosticsText(result.provider.label) : undefined,
-        }
-      : undefined,
-    endpointHost: result.endpointHost ? redactDiagnosticsText(result.endpointHost) : undefined,
-    endpointPath: result.endpointPath ? redactDiagnosticsText(result.endpointPath) : undefined,
-    model: result.model ? redactDiagnosticsText(result.model) : undefined,
-    operation: result.operation,
-    status: result.status,
-    errorSummary: result.errorSummary
-      ? truncateDiagnostics(redactDiagnosticsText(result.errorSummary))
-      : result.error
-        ? truncateDiagnostics(redactDiagnosticsText(result.error))
+    app: {
+      name: 'MiNiMail',
+      version: params.appVersion ? redactDiagnosticsText(params.appVersion) : undefined,
+      platform: navigator.platform ? redactDiagnosticsText(navigator.platform) : 'unknown',
+      arch: getBrowserArch(),
+    },
+    provider: {
+      id: result.provider?.id ? redactDiagnosticsText(result.provider.id) : redactDiagnosticsText(params.profile.id),
+      label: result.provider?.label ? redactDiagnosticsText(result.provider.label) : redactDiagnosticsText(params.presetLabel),
+      presetId: redactDiagnosticsText(params.profile.providerPresetId),
+      isDefault: params.isDefault,
+      hasApiKey: Boolean(params.profile.hasApiKey || params.profile.apiKey.trim()),
+      isLocal: params.presetIsLocal,
+    },
+    request: {
+      operation: result.operation,
+      endpointHost: result.endpointHost ? redactDiagnosticsText(result.endpointHost) : undefined,
+      endpointPath: result.endpointPath ? redactDiagnosticsText(result.endpointPath) : undefined,
+      model: result.model ? redactDiagnosticsText(result.model) : undefined,
+      bodyKeys: Array.isArray(result.requestBodyKeys)
+        ? result.requestBodyKeys.map((key) => redactDiagnosticsText(key))
+        : [],
+    },
+    result: {
+      ok: result.success,
+      httpStatus: result.status,
+      readiness: readiness.label,
+      friendlyMessage: result.friendlyMessage ? redactDiagnosticsText(result.friendlyMessage) : undefined,
+      errorSummary: result.errorSummary
+        ? truncateDiagnostics(redactDiagnosticsText(result.errorSummary))
+        : result.error
+          ? truncateDiagnostics(redactDiagnosticsText(result.error))
+          : undefined,
+      modelCount: 'models' in result && Array.isArray(result.models) ? result.models.length : undefined,
+      preview: 'parsedPreview' in result && result.parsedPreview
+        ? truncateDiagnostics(redactDiagnosticsText(result.parsedPreview), 160)
         : undefined,
-    responseStructureSummary: 'responseStructureSummary' in result ? result.responseStructureSummary : undefined,
+      responseStructureSummary: 'responseStructureSummary' in result ? result.responseStructureSummary : undefined,
+    },
     timestamp: result.timestamp ? redactDiagnosticsText(result.timestamp) : new Date().toISOString(),
   };
+}
+
+function formatDiagnosticsMarkdown(payload: unknown): string {
+  return ['```json', JSON.stringify(payload, null, 2), '```'].join('\n');
 }
 
 function getApiProfileText(appLanguage: AppLanguage) {
@@ -1242,6 +1279,7 @@ export function SettingsModal({
           ? 'Ollama / LM Studio / vLLM local server may not be running.'
           : 'Network error. Check your connection or provider availability.',
         errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: [],
         error: (error as Error).message,
       };
       setModelListResult(response);
@@ -1279,6 +1317,7 @@ export function SettingsModal({
           ? 'Ollama / LM Studio / vLLM local server may not be running.'
           : 'Network error. Check your connection or provider availability.',
         errorSummary: truncateDiagnostics(redactDiagnosticsText((error as Error).message)),
+        requestBodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
         error: (error as Error).message,
       };
       setConnectionTestResult(response);
@@ -1293,13 +1332,17 @@ export function SettingsModal({
       const appVersion = await window.electronAPI.getVersion().catch(() => undefined);
       const payload = buildSafeDiagnosticsPayload({
         appVersion,
-        platform: navigator.platform || 'unknown',
+        profile: selectedApiProfileForm,
+        presetLabel: selectedProviderPreset.label,
+        presetIsLocal: Boolean(selectedProviderPreset.isLocal),
+        isDefault: activeApiProfile === selectedApiProfile,
         result,
       });
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      await navigator.clipboard.writeText(formatDiagnosticsMarkdown(payload));
       setDiagnosticsCopyStatus('Diagnostics copied');
+      window.setTimeout(() => setDiagnosticsCopyStatus(null), 2400);
     } catch (error) {
-      setDiagnosticsCopyStatus((error as Error).message || 'Failed to copy diagnostics');
+      setDiagnosticsCopyStatus(`Failed to copy diagnostics: ${(error as Error).message || 'Clipboard unavailable'}`);
     }
   }
 
@@ -2111,15 +2154,26 @@ export function SettingsModal({
                 <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px]" style={{ color: '#8e8e93' }}>Models endpoint</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleFetchModels()}
-                      disabled={isFetchingModels || !selectedApiProfileForm.baseUrl.trim()}
-                      className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                      style={{ backgroundColor: '#1e1e20' }}
-                    >
-                      {isFetchingModels ? 'Fetching...' : 'Fetch models'}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => modelListResult && void handleCopyDiagnostics(modelListResult)}
+                        disabled={!modelListResult}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {modelListResult ? 'Copy diagnostics' : 'Run fetch first'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleFetchModels()}
+                        disabled={isFetchingModels || !selectedApiProfileForm.baseUrl.trim()}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {isFetchingModels ? 'Fetching...' : 'Fetch models'}
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: modelsEndpointPreview ? '#c7c7cc' : '#636366' }}>
                     {modelsEndpointPreview || 'Enter a Base URL to preview the models endpoint.'}
@@ -2131,18 +2185,8 @@ export function SettingsModal({
                   )}
                   {modelListResult && (
                     <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult.success ? '#c7c7cc' : '#ff6b6b' }}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
-                          {modelListResult.success ? 'Models fetched' : 'Fetch models failed'}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyDiagnostics(modelListResult)}
-                          className="rounded-md px-2 py-1 text-[10px] text-white cursor-pointer"
-                          style={{ backgroundColor: '#1e1e20' }}
-                        >
-                          Copy diagnostics
-                        </button>
+                      <div style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
+                        {modelListResult.success ? 'Models fetched' : 'Fetch models failed'}
                       </div>
                       {(modelListResult.endpointHost || modelListResult.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
@@ -2204,32 +2248,33 @@ export function SettingsModal({
                 <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[10px]" style={{ color: '#8e8e93' }}>Chat Completions endpoint</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleTestConnection()}
-                      disabled={isTestingConnection || !selectedApiProfileForm.baseUrl.trim() || !selectedApiProfileForm.model.trim()}
-                      className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
-                      style={{ backgroundColor: '#1e1e20' }}
-                    >
-                      {isTestingConnection ? 'Testing...' : 'Test Connection'}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => connectionTestResult && void handleCopyDiagnostics(connectionTestResult)}
+                        disabled={!connectionTestResult}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {connectionTestResult ? 'Copy diagnostics' : 'Run test first'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleTestConnection()}
+                        disabled={isTestingConnection || !selectedApiProfileForm.baseUrl.trim() || !selectedApiProfileForm.model.trim()}
+                        className="px-2 py-1 rounded-md text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-1 break-all text-[10px] leading-relaxed" style={{ color: chatEndpointPreview ? '#c7c7cc' : '#636366' }}>
                     {chatEndpointPreview || 'Enter a Base URL to preview the final endpoint.'}
                   </div>
                   {connectionTestResult && (
                     <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</span>
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyDiagnostics(connectionTestResult)}
-                          className="rounded-md px-2 py-1 text-[10px] text-white cursor-pointer"
-                          style={{ backgroundColor: '#1e1e20' }}
-                        >
-                          Copy diagnostics
-                        </button>
-                      </div>
+                      <div>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</div>
                       {(connectionTestResult.endpointHost || connectionTestResult.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
                           {connectionTestResult.endpointHost || 'unknown-host'} {connectionTestResult.endpointPath || ''}

@@ -607,6 +607,7 @@ async function testConnectionUsesMinimalPromptAndSanitizedResult() {
   assert.strictEqual(response.endpointPath, '/v1/chat/completions');
   assert.strictEqual(response.status, 200);
   assert.strictEqual(response.parsedPreview, 'OK');
+  assert.deepStrictEqual(response.requestBodyKeys, ['model', 'messages', 'temperature', 'max_tokens']);
   assert.strictEqual(calls.length, 1);
   const body = JSON.parse(calls[0].options.body);
   assert.deepStrictEqual(body.messages, [{ role: 'user', content: 'Reply with OK.' }]);
@@ -765,16 +766,37 @@ function testSafeProviderDiagnosticsWhitelist() {
   const { aiModule } = loadAiService();
   const apiKey = ['sk', 'thisShouldNeverAppearInDiagnostics1234567890'].join('-');
   const diagnostics = aiModule.buildSafeProviderDiagnostics({
-    appVersion: '1.0.0',
-    platform: 'darwin',
-    provider: { id: 'custom', label: 'Custom OpenAI Compatible' },
-    endpointHost: 'api.example.com',
-    endpointPath: '/v1/chat/completions',
-    model: 'openai/gpt-4o-mini',
-    operation: 'testConnection',
-    status: 401,
-    errorSummary: `Authorization: Bearer ${apiKey} failed`,
-    responseStructureSummary: { topLevelKeys: ['error'] },
+    app: {
+      name: 'MiNiMail',
+      version: '1.0.0',
+      platform: 'darwin',
+      arch: 'arm64',
+    },
+    provider: {
+      id: 'custom',
+      label: 'Custom OpenAI Compatible',
+      presetId: 'custom',
+      isDefault: true,
+      hasApiKey: true,
+      isLocal: false,
+    },
+    request: {
+      operation: 'testConnection',
+      endpointHost: 'api.example.com',
+      endpointPath: '/v1/chat/completions',
+      model: 'openai/gpt-4o-mini',
+      bodyKeys: ['model', 'messages', 'temperature', 'max_tokens', `Bearer ${apiKey}`],
+    },
+    result: {
+      ok: false,
+      httpStatus: 401,
+      readiness: 'Provider error',
+      friendlyMessage: 'API key or provider permission may be invalid.',
+      errorSummary: `Authorization: Bearer ${apiKey} failed`,
+      preview: `short preview ${apiKey}`,
+      modelCount: 12,
+      responseStructureSummary: { topLevelKeys: ['error'] },
+    },
     timestamp: '2026-04-29T00:00:00.000Z',
     prompt: 'Reply with OK.',
     emailBody: 'private email body',
@@ -786,6 +808,14 @@ function testSafeProviderDiagnosticsWhitelist() {
 
   assert(serialized.includes('api.example.com'), 'safe diagnostics should include endpoint host');
   assert(serialized.includes('/v1/chat/completions'), 'safe diagnostics should include endpoint path');
+  assert(serialized.includes('"app"'), 'safe diagnostics should use the issue-friendly app section');
+  assert(serialized.includes('"request"'), 'safe diagnostics should use the issue-friendly request section');
+  assert(serialized.includes('"result"'), 'safe diagnostics should use the issue-friendly result section');
+  assert.deepStrictEqual(diagnostics.request.bodyKeys.slice(0, 4), ['model', 'messages', 'temperature', 'max_tokens']);
+  assert.strictEqual(diagnostics.provider.isDefault, true);
+  assert.strictEqual(diagnostics.provider.hasApiKey, true);
+  assert.strictEqual(diagnostics.result.httpStatus, 401);
+  assert.strictEqual(diagnostics.result.modelCount, 12);
   assert(!serialized.includes(apiKey), 'safe diagnostics must not include API key');
   assert(!serialized.includes(`Authorization: Bearer ${apiKey}`), 'safe diagnostics must not include Authorization header');
   assert(!serialized.includes('Reply with OK.'), 'safe diagnostics must not include prompt');
@@ -793,6 +823,162 @@ function testSafeProviderDiagnosticsWhitelist() {
   assert(!serialized.includes('private subject'), 'safe diagnostics must not include email subject');
   assert(!serialized.includes('person@example.com'), 'safe diagnostics must not include contacts');
   assert(!serialized.includes('invoice.pdf'), 'safe diagnostics must not include attachment names');
+}
+
+function formatDiagnosticsMarkdownForTest(payload) {
+  return ['```json', JSON.stringify(payload, null, 2), '```'].join('\n');
+}
+
+function parseDiagnosticsMarkdownForTest(text) {
+  assert(text.startsWith('```json\n'), 'diagnostics should start with a json markdown fence');
+  assert(text.endsWith('\n```'), 'diagnostics should end with a markdown fence');
+  return JSON.parse(text.slice('```json\n'.length, -'\n```'.length));
+}
+
+function assertSafeDiagnosticsText(text, scenario, forbidden) {
+  const parsed = parseDiagnosticsMarkdownForTest(text);
+  assert.deepStrictEqual(
+    Object.keys(parsed).sort(),
+    ['app', 'provider', 'request', 'result', 'timestamp'].sort(),
+    `${scenario.name}: diagnostics top-level keys should be whitelisted`,
+  );
+  assert(parsed.request.endpointHost, `${scenario.name}: endpointHost should be present`);
+  assert(parsed.request.endpointPath, `${scenario.name}: endpointPath should be present`);
+  assert(parsed.request.model, `${scenario.name}: model should be present`);
+  assert.strictEqual(parsed.request.operation, scenario.operation, `${scenario.name}: operation should match`);
+  assert.strictEqual(parsed.result.httpStatus, scenario.httpStatus, `${scenario.name}: httpStatus should match`);
+  assert(parsed.result.friendlyMessage, `${scenario.name}: friendlyMessage should be present`);
+  assert(!text.includes('model-a-should-not-appear'), `${scenario.name}: full model list should not be included`);
+  assert(!text.includes('model-b-should-not-appear'), `${scenario.name}: full model list should not be included`);
+
+  for (const value of forbidden) {
+    assert(!text.includes(value), `${scenario.name}: diagnostics leaked forbidden value ${value}`);
+  }
+}
+
+function testCopyDiagnosticsMarkdownSafetyScenarios() {
+  const { aiModule } = loadAiService();
+  const injectedApiKey = ['sk', 'test-secret-should-not-appear'].join('-');
+  const injectedBearer = ['secret-token', 'should-not-appear'].join('-');
+  const injectedPrompt = ['secret prompt', 'should not appear'].join(' ');
+  const injectedEmailBody = ['private email body', 'should not appear'].join(' ');
+  const injectedEmailSubject = ['private subject', 'should not appear'].join(' ');
+  const injectedContact = ['private', 'example.com'].join('@');
+  const injectedAttachment = ['secret', 'pdf'].join('.');
+  const forbidden = [
+    injectedApiKey,
+    injectedBearer,
+    injectedPrompt,
+    injectedEmailBody,
+    injectedEmailSubject,
+    injectedContact,
+    injectedAttachment,
+  ];
+  const scenarios = [
+    {
+      name: 'test connection success',
+      operation: 'testConnection',
+      ok: true,
+      httpStatus: 200,
+      friendlyMessage: 'Connection succeeded.',
+      preview: 'OK',
+      bodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+    },
+    {
+      name: 'fetch models success',
+      operation: 'fetchModels',
+      ok: true,
+      httpStatus: 200,
+      friendlyMessage: 'Fetch models completed.',
+      modelCount: 123,
+      bodyKeys: [],
+    },
+    {
+      name: 'http 429 rate limit',
+      operation: 'testConnection',
+      ok: false,
+      httpStatus: 429,
+      friendlyMessage: 'Quota exceeded or rate limited by provider.',
+      errorSummary: 'HTTP 429',
+      bodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+    },
+    {
+      name: 'http 503 provider upstream',
+      operation: 'testConnection',
+      ok: false,
+      httpStatus: 503,
+      friendlyMessage: 'Provider upstream temporary error.',
+      errorSummary: 'HTTP 503',
+      bodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+    },
+    {
+      name: 'network error',
+      operation: 'testConnection',
+      ok: false,
+      httpStatus: 0,
+      friendlyMessage: 'Network error. Check your connection or provider availability.',
+      errorSummary: 'fetch failed',
+      bodyKeys: ['model', 'messages', 'temperature', 'max_tokens'],
+    },
+    {
+      name: 'local provider offline',
+      operation: 'fetchModels',
+      ok: false,
+      httpStatus: 0,
+      friendlyMessage: 'Ollama / LM Studio / vLLM local server may not be running.',
+      errorSummary: 'ECONNREFUSED',
+      bodyKeys: [],
+      isLocal: true,
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const payload = aiModule.buildSafeProviderDiagnostics({
+      app: {
+        name: 'MiNiMail',
+        version: '1.0.0',
+        platform: 'darwin',
+        arch: 'arm64',
+      },
+      provider: {
+        id: scenario.isLocal ? 'lm-studio' : 'gemini',
+        label: scenario.isLocal ? 'LM Studio' : 'Gemini',
+        presetId: scenario.isLocal ? 'lm-studio' : 'gemini',
+        isDefault: true,
+        hasApiKey: !scenario.isLocal,
+        isLocal: Boolean(scenario.isLocal),
+      },
+      request: {
+        operation: scenario.operation,
+        endpointHost: scenario.isLocal ? 'localhost:1234' : 'generativelanguage.googleapis.com',
+        endpointPath: scenario.isLocal ? '/v1/models' : '/v1beta/openai/chat/completions',
+        model: scenario.isLocal ? 'local-model' : 'gemini-2.5-flash',
+        bodyKeys: scenario.bodyKeys,
+        prompt: injectedPrompt,
+        emailBody: injectedEmailBody,
+      },
+      result: {
+        ok: scenario.ok,
+        httpStatus: scenario.httpStatus,
+        readiness: scenario.ok ? 'Ready' : scenario.httpStatus === 429 ? 'Rate limited' : 'Provider error',
+        friendlyMessage: scenario.friendlyMessage,
+        errorSummary: scenario.errorSummary,
+        modelCount: scenario.modelCount,
+        preview: scenario.preview,
+        models: ['model-a-should-not-appear', 'model-b-should-not-appear'],
+      },
+      timestamp: '2026-04-29T00:00:00.000Z',
+      apiKey: injectedApiKey,
+      authorization: `Authorization: Bearer ${injectedBearer}`,
+      prompt: injectedPrompt,
+      emailBody: injectedEmailBody,
+      emailSubject: injectedEmailSubject,
+      contacts: [injectedContact],
+      attachmentNames: [injectedAttachment],
+    });
+    const text = formatDiagnosticsMarkdownForTest(payload);
+    assertSafeDiagnosticsText(text, scenario, forbidden);
+  }
 }
 
 async function testConnectionReasoningOnlyResponseFailsCleanly() {
@@ -1378,6 +1564,7 @@ async function run() {
   await testConnectionPlainTextErrorBodyIsRedactedAndTruncated();
   testFriendlyProviderErrorMessages();
   testSafeProviderDiagnosticsWhitelist();
+  testCopyDiagnosticsMarkdownSafetyScenarios();
   await testConnectionReasoningOnlyResponseFailsCleanly();
   testModelListParserVariants();
   await testFetchModelsUsesNormalizedEndpointAndBearerAuth();

@@ -196,13 +196,14 @@ export async function testOpenAICompatibleConnection(
       temperature: 0,
       maxTokens: 512,
     });
+    const requestBodyKeys = Object.keys(body);
     log.info('OpenAI-compatible test connection request', {
       providerType: 'openai-compatible',
       providerId: request.providerId,
       providerLabel: request.providerLabel,
       ...endpointLogFields,
       model: config.model,
-      requestBodyKeys: Object.keys(body),
+      requestBodyKeys,
     });
 
     const response = await fetch(endpoint, {
@@ -222,7 +223,10 @@ export async function testOpenAICompatibleConnection(
       status: response.status,
     });
 
-    const resultBase = buildTestConnectionResultBase(request, endpoint, config.model);
+    const resultBase = {
+      ...buildTestConnectionResultBase(request, endpoint, config.model),
+      requestBodyKeys,
+    };
 
     if (!response.ok) {
       const error = appendProviderErrorHint(

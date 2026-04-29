@@ -122,6 +122,7 @@ export interface AIProviderTestConnectionResult {
   friendlyMessage?: string;
   errorSummary?: string;
   responseStructureSummary?: unknown;
+  requestBodyKeys?: string[];
   parsedPreview?: string;
   error?: string;
 }
@@ -150,6 +151,7 @@ export interface AIProviderModelListResult {
   timestamp?: string;
   friendlyMessage?: string;
   errorSummary?: string;
+  requestBodyKeys?: string[];
   models?: string[];
   error?: string;
 }

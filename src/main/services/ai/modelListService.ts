@@ -47,7 +47,7 @@ function buildModelListResultBase(
   request: AIProviderModelListRequest,
   endpoint: string,
   model?: string,
-): Pick<AIProviderModelListResult, 'provider' | 'endpointHost' | 'endpointPath' | 'model'> {
+): Pick<AIProviderModelListResult, 'provider' | 'endpointHost' | 'endpointPath' | 'model' | 'requestBodyKeys'> {
   return {
     provider: {
       id: request.providerId,
@@ -55,6 +55,7 @@ function buildModelListResultBase(
     },
     ...getEndpointLogFields(endpoint),
     model,
+    requestBodyKeys: [],
   };
 }
 
