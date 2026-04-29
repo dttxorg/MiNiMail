@@ -1205,9 +1205,14 @@ function App() {
 
   useEffect(() => {
     if (!appLanguageHydratedRef.current) return;
-    void window.electronAPI.invoke('settings:set', APP_LANGUAGE_SETTING_KEY, appLanguage).catch((err) => {
-      console.error(`[settings:set ${APP_LANGUAGE_SETTING_KEY}]`, err);
-    });
+    void (async () => {
+      try {
+        await window.electronAPI.invoke('settings:set', APP_LANGUAGE_SETTING_KEY, appLanguage);
+        await window.electronAPI.invoke('app:set-language', appLanguage);
+      } catch (err) {
+        console.error(`[settings:set ${APP_LANGUAGE_SETTING_KEY}]`, err);
+      }
+    })();
   }, [appLanguage]);
 
   useEffect(() => {

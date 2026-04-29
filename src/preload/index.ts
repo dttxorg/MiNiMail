@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   invoke: (channel: string, ...args: unknown[]) => {
     const validChannels = [
       'app:openExternal',
+      'app:set-language',
       'accounts:getAll',
       'accounts:get',
       'accounts:create',
