@@ -26,6 +26,7 @@ import {
 import { normalizeAppLanguage, type AppLanguage } from '../utils/aiLanguages';
 import { GITHUB_SMART_FOLDER_IDS } from '../utils/mailRoutingAdapter';
 import type { GitHubSmartFolder } from '../../shared/email-ai';
+import { getGitHubFolderPriorityHint, getGitHubPriorityBadgeInfo } from '../utils/githubPriorityUi';
 import type { GenericPriorityFolderId } from '../utils/mailRoutingAdapter';
 import { buildIconButtonStyle, buildPanelStyle, buildSidebarItemStyle, uiColor, uiRadius } from '../utils/uiDesignTokens';
 import minimailLogo from '../assets/minimail-logo.png';
@@ -521,10 +522,26 @@ export function Sidebar({
                   {visibleGitHubFolders.map((folderId) => {
                     const selected = selectedFolder === folderId;
                     const count = githubFolderCounts?.[folderId] || 0;
+                    const priorityHint = getGitHubFolderPriorityHint(folderId);
+                    const priorityBadge = priorityHint ? getGitHubPriorityBadgeInfo(priorityHint, appLanguage) : null;
                     return (
                       <button key={folderId} onClick={() => onSelectFolder(folderId)} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selected, true)}>
                         <NavIcon active={selected}>{navIcons.github}</NavIcon>
                         <span className="flex-1 text-left leading-none">{getGitHubFolderLabel(folderId, appLanguage)}</span>
+                        {priorityBadge && (
+                          <span
+                            className="text-[9px] px-1.5 py-0.5 rounded"
+                            title={priorityBadge.tooltip}
+                            style={{
+                              color: priorityBadge.color,
+                              backgroundColor: priorityBadge.backgroundColor,
+                              border: `1px solid ${priorityBadge.borderColor}`,
+                              lineHeight: 1,
+                            }}
+                          >
+                            {priorityBadge.shortLabel}
+                          </span>
+                        )}
                         {count > 0 && <span style={{ fontSize: 11, color: uiColor.textSubtle, lineHeight: 1 }}>{count}</span>}
                       </button>
                     );

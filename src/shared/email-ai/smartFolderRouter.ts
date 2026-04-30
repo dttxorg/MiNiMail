@@ -96,7 +96,7 @@ export function routeGitHubSmartFolder(result: GithubDedicatedParseResult): Smar
   return {
     folder,
     family: 'github',
-    reasons: result.reasons,
+    reasons: [...result.reasons, `github-priority:${result.priority_level || 'P3_LOW'}`],
   };
 }
 

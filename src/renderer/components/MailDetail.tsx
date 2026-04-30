@@ -35,6 +35,7 @@ import { folderMatches } from '../../shared/mailFolders';
 import { translateHtmlPreservingMarkup } from '../../shared/email-ai/translateHtmlPreservingMarkup';
 import { sanitizeMailHtml } from '../utils/mailHtmlSanitizer';
 import { SenderAvatar } from './SenderAvatar';
+import { getGitHubPriorityBadgeInfo } from '../utils/githubPriorityUi';
 
 type MailLoadingState = 'idle' | 'loading' | 'success' | 'error' | 'timeout';
 type AIFunction = 'translate' | 'summarize' | 'reply';
@@ -624,6 +625,14 @@ function ConversationMessageCard({
   const normalizedLanguage = normalizeAppLanguage(locale);
   const matchedFolderLabel = localizeMatchedFolder(routingDiagnostics?.matched_folder, normalizedLanguage);
   const routingTooltip = buildRoutingTooltip(routingDiagnostics, normalizedLanguage);
+  const githubPriorityBadge = routingDiagnostics?.github_priority_level
+    ? getGitHubPriorityBadgeInfo(
+        routingDiagnostics.github_priority_level,
+        normalizedLanguage,
+        routingDiagnostics.github_friendly_text,
+        routingDiagnostics.github_safe_summary,
+      )
+    : null;
   const assistantLabelsByLanguage = {
     zh: {
       title: 'AI 智能助手',
@@ -1128,6 +1137,19 @@ function ConversationMessageCard({
                     {statusLabel}
                   </span>
                 )}
+                {githubPriorityBadge && (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full"
+                    style={{
+                      backgroundColor: githubPriorityBadge.backgroundColor,
+                      color: githubPriorityBadge.color,
+                      border: `1px solid ${githubPriorityBadge.borderColor}`,
+                    }}
+                    title={githubPriorityBadge.tooltip}
+                  >
+                    {githubPriorityBadge.shortLabel}
+                  </span>
+                )}
                 <span className="text-[11px]" style={{ color: '#636366' }}>
                   {formatRelativeTime(email.date, t, locale)}
                 </span>
@@ -1157,6 +1179,19 @@ function ConversationMessageCard({
                 >
                   {matchedFolderLabel}
                 </span>
+                {githubPriorityBadge && (
+                  <span
+                    className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px]"
+                    title={githubPriorityBadge.tooltip}
+                    style={{
+                      backgroundColor: githubPriorityBadge.backgroundColor,
+                      color: githubPriorityBadge.color,
+                      border: `1px solid ${githubPriorityBadge.borderColor}`,
+                    }}
+                  >
+                    {githubPriorityBadge.shortLabel} {githubPriorityBadge.label}
+                  </span>
+                )}
                 {routingTooltip && (
                   <div
                     className="relative"
@@ -1659,8 +1694,6 @@ export function MailDetail({
     </div>
   );
 }
-
-
 
 
 

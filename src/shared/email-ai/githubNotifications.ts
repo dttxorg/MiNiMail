@@ -13,6 +13,8 @@ import type {
 import { splitEmailBlocks } from './splitEmailBlocks';
 import { truncateText } from './utils';
 import { routeGitHubSmartFolder } from './smartFolderRouter';
+import { classifyGitHubPriority } from './githubPriorityClassifier';
+import { maskGitHubSensitive } from './redactSensitiveEntities';
 
 const PR_REPLY_CAUTION = 'Email replies on pull request notifications only go to Conversation and do not count as an official GitHub review.';
 
@@ -325,7 +327,7 @@ function buildCommentFeedback(
   const cleaned = cleanCommentFeedbackText(newestContent);
   const excerpt = truncateText(cleaned, 160);
   if (!excerpt) return [];
-  return [`评论反馈：${excerpt}`];
+  return ['comment detected; body redacted'];
 }
 
 function buildReviewReminders(
@@ -377,22 +379,35 @@ export function analyzeGitHubNotification(parsed: ParsedEmailMessage): GitHubNot
   const repository = urlInfo.repository || subjectInfo.repository || extractRepoFromListId(listId) || normalizeRepo('unknown', 'unknown');
   const kind = detectKind(reason, subjectInfo.kind, urlInfo.kind, parsed.plainText);
   const entityNumber = urlInfo.entityNumber ?? subjectInfo.entityNumber;
-  const newestContent = buildNewestContent(parsed);
-  const actor = extractActor(newestContent);
-  const eventType = detectEventType(reason, kind, parsed.subject, newestContent);
+  const rawNewestContent = buildNewestContent(parsed);
+  const actor = extractActor(rawNewestContent);
+  const eventType = detectEventType(reason, kind, parsed.subject, rawNewestContent);
   const needsUserAction = computeNeedsUserAction(reason, kind, eventType);
   const priorityScore = computePriority(kind, eventType, needsUserAction);
+  const priority = classifyGitHubPriority({
+    kind,
+    eventType,
+    reason,
+    subject: parsed.subject,
+    newestContent: rawNewestContent,
+    needsUserAction,
+    repositoryFullName: repository.fullName,
+    entityNumber,
+  });
+  const safeNewestContent = eventType === 'comment' && ['pull_request', 'issue'].includes(kind)
+    ? 'comment detected; body redacted'
+    : maskGitHubSensitive(rawNewestContent);
   const todoItems = buildTodoItems(kind, repository, entityNumber, eventType);
-  const mergeSuggestion = buildMergeSuggestion(kind, eventType, newestContent);
+  const mergeSuggestion = buildMergeSuggestion(kind, eventType, rawNewestContent);
   const taskReminders = buildTaskReminders(kind, repository, entityNumber, eventType);
-  const commentFeedback = buildCommentFeedback(eventType, newestContent);
+  const commentFeedback = buildCommentFeedback(eventType, rawNewestContent);
   const reviewReminders = buildReviewReminders(repository, entityNumber, eventType);
   const suggestedActions = buildSuggestedActions(
     mergeSuggestion,
     taskReminders,
     commentFeedback,
     reviewReminders,
-    newestContent,
+    rawNewestContent,
   );
   const shortSummary = buildShortSummary(repository, entityNumber, eventType, actor);
   const threadKey = entityNumber ? `${repository.fullName}#${entityNumber}` : `${repository.fullName}:${kind}:${subjectInfo.title || parsed.subject}`;
@@ -409,9 +424,13 @@ export function analyzeGitHubNotification(parsed: ParsedEmailMessage): GitHubNot
     entityTitle: subjectInfo.title || parsed.subject,
     url,
     actor,
-    newestContent,
+    newestContent: safeNewestContent,
     needsUserAction,
     priorityScore,
+    priorityLevel: priority.priorityLevel,
+    priority_level: priority.priorityLevel,
+    priority,
+    safeSummary: priority.safeSummary,
     shortSummary,
     threadKey,
     todoItems,
@@ -487,6 +506,7 @@ function toDedicatedEventType(analysis: GitHubNotificationAnalysis): GithubDedic
 function buildDedicatedReasons(analysis: GitHubNotificationAnalysis): string[] {
   const reasons: string[] = [];
   if (analysis.reason) reasons.push(`github-reason:${analysis.reason}`);
+  reasons.push(`github-priority:${analysis.priorityLevel}`);
   if (analysis.needsUserAction) reasons.push('github:needs-user-action');
   if (analysis.priorityScore >= 80) reasons.push('github:high-priority');
   if (analysis.kind === 'security') reasons.push('github:security');
@@ -512,6 +532,9 @@ export function parseGitHubDedicatedResult(parsed: ParsedEmailMessage): GithubDe
     url: analysis.url,
     short_summary: analysis.shortSummary,
     newest_content: analysis.newestContent,
+    priority_level: analysis.priorityLevel,
+    priority: analysis.priority,
+    safe_summary: analysis.safeSummary,
     needs_user_action: analysis.needsUserAction,
     priority_score: analysis.priorityScore,
     todo_items: analysis.todoItems,
@@ -540,6 +563,9 @@ export function parseGitHubDedicatedResult(parsed: ParsedEmailMessage): GithubDe
     url: analysis.url,
     short_summary: analysis.shortSummary,
     newest_content: analysis.newestContent,
+    priority_level: analysis.priorityLevel,
+    priority: analysis.priority,
+    safe_summary: analysis.safeSummary,
     needs_user_action: analysis.needsUserAction,
     priority_score: analysis.priorityScore,
     todo_items: analysis.todoItems,

@@ -601,6 +601,17 @@ export function restoreSensitiveEntities(text: string, redactionMap: RedactionMa
     .reduce((acc, entry) => acc.replace(new RegExp(escapeRegExp(entry.placeholder), 'g'), entry.original), text);
 }
 
+export function maskGitHubSensitive(text: string): string {
+  return text
+    .replace(/^\s*[A-Z][A-Z0-9_]*(?:SECRET|TOKEN|KEY|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*=\s*.*$/gim, '[CI_SECRET_LINE_REDACTED]')
+    .replace(/\bAuthorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Authorization: Bearer [SECRET]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [SECRET]')
+    .replace(/\b(?:gh[pousr]_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}\b/g, '[GITHUB_TOKEN]')
+    .replace(/\b(?:sk-|AIza)[A-Za-z0-9_-]{16,}\b/g, '[API_KEY]')
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[EMAIL]')
+    .replace(/([?&](?:token|signature|sig|access_token|refresh_token|api_key|apikey|code|auth|password|secret|email)=)[^&\s)>\]]+/gi, '$1[REDACTED]');
+}
+
 function extractGitHubUsernames(text: string): string[] {
   const candidates = new Set<string>();
 

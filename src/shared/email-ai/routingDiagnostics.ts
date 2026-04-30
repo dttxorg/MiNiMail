@@ -1,4 +1,5 @@
 import type { RecommendedDepth, ScanPipelineResult } from './scanTypes';
+import type { GitHubPriorityLevel } from './scanTypes';
 import { deriveGenericPriorityFolders } from './smartFolderRouter';
 
 export interface RoutingDiagnosticsKeyScores {
@@ -22,6 +23,9 @@ export interface RoutingDiagnosticsRecord {
   force_upgrade_reason?: string;
   recommended_depth: RecommendedDepth;
   github_event_type?: string;
+  github_priority_level?: GitHubPriorityLevel;
+  github_safe_summary?: string;
+  github_friendly_text?: string;
   short_explanation_text: string;
   subject?: string;
   from?: string;
@@ -130,6 +134,10 @@ function humanizeReason(reason: string, appLanguage: string): string {
     'github-reason:mention': localize(appLanguage, 'GitHub 提及你', 'GitHub mention'),
     'github-reason:assign': localize(appLanguage, 'GitHub 分配给你', 'GitHub assigned to you'),
     'github-reason:security_alert': localize(appLanguage, 'GitHub 安全警报', 'GitHub security alert'),
+    'github-priority:P0_URGENT': localize(appLanguage, 'GitHub P0 紧急', 'GitHub P0 urgent'),
+    'github-priority:P1_IMPORTANT': localize(appLanguage, 'GitHub P1 重要', 'GitHub P1 important'),
+    'github-priority:P2_NORMAL': localize(appLanguage, 'GitHub P2 普通', 'GitHub P2 normal'),
+    'github-priority:P3_LOW': localize(appLanguage, 'GitHub P3 低优先级', 'GitHub P3 low priority'),
   };
 
   if (reason.startsWith('force-upgrade:')) {
@@ -176,10 +184,11 @@ function buildFolderReason(
   }
   if (source.routing.kind === 'github') {
     const eventType = source.routing.github.event_type.replace(/_/g, ' ');
+    const priority = (source.routing.github.priority_level || 'P3_LOW').replace(/_/g, ' ');
     return localize(
       appLanguage,
-      `命中 ${folder}，GitHub 事件类型为 ${eventType}${reasonSnippet ? `，并包含 ${reasonSnippet}` : ''}`,
-      `Matched ${folder} because the GitHub event type is ${eventType}${reasonSnippet ? ` and includes ${reasonSnippet}` : ''}`,
+      `命中 ${folder}，GitHub 事件类型为 ${eventType}，优先级为 ${priority}${reasonSnippet ? `，并包含 ${reasonSnippet}` : ''}`,
+      `Matched ${folder} because the GitHub event type is ${eventType} with ${priority} priority${reasonSnippet ? ` and includes ${reasonSnippet}` : ''}`,
     );
   }
   return localize(
@@ -250,6 +259,9 @@ export function buildRoutingDiagnosticsEntries({
       force_upgrade_reason: extractForceUpgradeReason(lightScan.reasons, language),
       recommended_depth: lightScan.recommended_depth,
       github_event_type: source.routing.kind === 'github' ? source.routing.github.event_type : undefined,
+      github_priority_level: source.routing.kind === 'github' ? source.routing.github.priority_level || 'P3_LOW' : undefined,
+      github_safe_summary: source.routing.kind === 'github' ? source.routing.github.safe_summary : undefined,
+      github_friendly_text: source.routing.kind === 'github' ? source.routing.github.priority?.friendlyText : undefined,
       short_explanation_text: buildShortExplanation(primaryFolder, topReasons, language),
       subject: metadata.subject,
       from: metadata.from,

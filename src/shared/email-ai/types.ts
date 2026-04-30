@@ -138,6 +138,10 @@ export interface GitHubNotificationAnalysis {
   newestContent: string;
   needsUserAction: boolean;
   priorityScore: number;
+  priorityLevel: import('./scanTypes').GitHubPriorityLevel;
+  priority_level: import('./scanTypes').GitHubPriorityLevel;
+  priority: import('./scanTypes').GitHubPriorityClassification;
+  safeSummary: string;
   shortSummary: string;
   threadKey: string;
   todoItems: string[];

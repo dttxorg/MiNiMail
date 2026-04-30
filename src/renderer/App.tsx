@@ -76,6 +76,7 @@ import {
   type MailRoutingResultEntry,
 } from './utils/mailRoutingAdapter';
 import { buildMailRoutingDiagnosticsMap } from './utils/mailRoutingExplanationAdapter';
+import { getGitHubPriorityBadgeInfo } from './utils/githubPriorityUi';
 import { resolveNextDraftSelectionAfterDelete } from './utils/draftSelection';
 import {
   collectRemovedMailIdsForDeletedTarget,
@@ -1275,6 +1276,20 @@ function App() {
     const visibleIds = new Set(conversationMessages.map((mail) => mail.id));
     return mailRoutingResults.filter((entry) => visibleIds.has(entry.id));
   }, [conversationMessages, mailRoutingResults]);
+
+  const githubPriorityById = useMemo(() => Object.fromEntries(
+    mailRoutingResults
+      .filter((entry) => entry.routing.kind === 'github')
+      .map((entry) => [
+        entry.id,
+        getGitHubPriorityBadgeInfo(
+          entry.routing.github.priority_level,
+          appLanguage,
+          entry.routing.github.priority.friendlyText,
+          entry.routing.github.safe_summary,
+        ),
+      ])
+  ), [appLanguage, mailRoutingResults]);
 
   const routingDiagnostics = useMemo(
     () => buildMailRoutingDiagnosticsMap({
@@ -3253,6 +3268,7 @@ function App() {
             accountEmails={conversationAccountEmails}
             emptyMessage={!hasConnectedAccounts ? 'No account connected / 请添加邮箱账号' : undefined}
             stagedHistoryLabel={stagedHistoryLabel}
+            githubPriorityById={githubPriorityById}
           />
         </div>
 

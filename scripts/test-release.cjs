@@ -72,6 +72,11 @@ const checks = [
     args: ['scripts/openai-compatible-provider.test.cjs'],
   },
   {
+    name: 'GitHub priority classifier and redaction regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/github-priority-classifier.test.ts'],
+  },
+  {
     name: 'OAuth account upsert and SMTP auth regression',
     command: process.execPath,
     args: ['scripts/oauth-account-upsert-smtp.test.cjs'],

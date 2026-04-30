@@ -10,6 +10,7 @@ import { formatMailListDate } from '../utils/mailDateDisplay';
 import { buildMailRowStyle, uiColor, uiRadius } from '../utils/uiDesignTokens';
 import { SenderAvatar } from './SenderAvatar';
 import type { AppLanguage } from '../../shared/mailFolders';
+import type { GitHubPriorityBadgeInfo } from '../utils/githubPriorityUi';
 
 const CATEGORY_BADGES: Record<string, { label: string; emoji: string; bg: string }> = {
   '工作/业务类': { label: '工作', emoji: '💼', bg: 'rgba(0,113,227,0.18)' },
@@ -36,6 +37,7 @@ interface MailListProps {
   accountEmails?: string[];
   stagedHistoryLabel?: string | null;
   emptyMessage?: string;
+  githubPriorityById?: Record<string, GitHubPriorityBadgeInfo | undefined>;
 }
 
 type TimeGroup = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older';
@@ -206,6 +208,7 @@ export function MailList({
   accountEmails = [],
   stagedHistoryLabel = null,
   emptyMessage,
+  githubPriorityById = {},
 }: MailListProps) {
   const { i18n } = useTranslation();
   const locale = i18n.language || undefined;
@@ -385,6 +388,7 @@ export function MailList({
             const avatarEmail = isOutgoingRepresentative ? counterparty : email.from;
             const avatarName = isOutgoingRepresentative ? displayName : (email.fromName || email.from);
             const resolvedCategory = resolveConversationCategory(email, categoryMails, accountEmails);
+            const githubPriority = githubPriorityById[email.id];
             const searchMatch = searchQuery.trim() ? getMailSearchMatchPreview(email, searchQuery) : null;
             const previewText = searchMatch?.text || email.snippet;
 
@@ -464,6 +468,21 @@ export function MailList({
                     </span>
                     {email.hasAttachments && (
                       <Paperclip className="w-3 h-3 flex-shrink-0" style={{ color: uiColor.textSubtle }} />
+                    )}
+                    {githubPriority && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{
+                          backgroundColor: githubPriority.backgroundColor,
+                          color: githubPriority.color,
+                          border: `1px solid ${githubPriority.borderColor}`,
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                          lineHeight: 1,
+                        }}
+                        title={githubPriority.tooltip}
+                      >
+                        {githubPriority.shortLabel}
+                      </span>
                     )}
                     {resolvedCategory && CATEGORY_BADGES[resolvedCategory] && (
                       <span

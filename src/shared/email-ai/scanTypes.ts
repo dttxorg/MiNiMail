@@ -47,6 +47,16 @@ export type GithubDedicatedEventType =
   | 'release_update_notification'
   | 'unknown';
 
+export type GitHubPriorityLevel = 'P0_URGENT' | 'P1_IMPORTANT' | 'P2_NORMAL' | 'P3_LOW';
+
+export interface GitHubPriorityClassification {
+  priorityLevel: GitHubPriorityLevel;
+  eventCode: string;
+  friendlyText: string;
+  safeSummary: string;
+  reasons: string[];
+}
+
 export type GithubDedicatedEntityType =
   | 'pull_request'
   | 'issue'
@@ -83,6 +93,9 @@ export interface GithubDedicatedParseResult {
   url?: string;
   short_summary: string;
   newest_content: string;
+  priority_level: GitHubPriorityLevel;
+  priority: GitHubPriorityClassification;
+  safe_summary: string;
   needs_user_action: boolean;
   priority_score: number;
   todo_items: string[];
