@@ -20,10 +20,12 @@ function testSendStartsAsScheduledAndDoesNotCallSmtpImmediately() {
   const timerIndex = source.indexOf('timer = setTimeout');
   const scheduledTaskIndex = source.indexOf('const runScheduledSend = async');
   const sendIndex = source.indexOf("window.electronAPI.invoke('mail:send'");
-
   assert(source.includes("deliveryState: 'scheduled'"), 'send flow should create scheduled local record first');
   assert(source.includes("getResolvedFolderPath(options.accountId, 'sent')"), 'initial scheduling should use sync folder resolution');
-  assert(!source.includes("await resolveFolderPathForAction(options.accountId, 'sent')"), 'initial scheduling must not await folder lookup before closing compose');
+  assert(
+    !source.slice(0, scheduledTaskIndex).includes("await resolveFolderPathForAction(options.accountId, 'sent')"),
+    'initial scheduling must not await folder lookup before closing compose',
+  );
   assert(source.includes('SEND_UNDO_DELAY_MS'), 'send flow should use a named undo delay constant');
   assert(source.includes('response?.success === false'), 'local cache failure should be explicit before closing compose');
   assert(source.includes('draftPayload: scheduledDraftPayload'), 'scheduled record should persist restore payload for crash/restart recovery');
@@ -118,7 +120,8 @@ function testFailedSendKeepsDraftAndRecoverablePayload() {
 function testComposePassesEditableBodyForUndoRestore() {
   const compose = read('src/renderer/components/ComposeDialog.tsx');
   assert(compose.includes('editableBody: string'), 'ComposeDialog onSend payload should include editableBody');
-  assert(compose.includes('editableBody: body'), 'ComposeDialog should pass editable editableBody before quoted original');
+  assert(compose.includes('const editableBodyForSend = stripSignatureMarkerBeforeSend(body);'), 'ComposeDialog should strip internal signature markers before sending');
+  assert(compose.includes('editableBody: editableBodyForSend'), 'ComposeDialog should pass cleaned editable body before quoted original');
   assert(compose.includes('activeDraftSource'), 'ComposeDialog should track selected draft source identity');
   assert(compose.includes('sourceDraft: activeDraftSource'), 'ComposeDialog should pass selected draft source identity to send flow');
 }

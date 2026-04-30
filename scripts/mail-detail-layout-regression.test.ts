@@ -48,6 +48,13 @@ function testAssistantWaitsForDetailBodyBeforeAiActions() {
   assert(!detail.includes('if (detail || loading) return detail ?? email;'), 'Expected MailDetail to stop returning summary mail data while detail is still loading');
 }
 
+function testDefaultExpandedConversationLoadsDetailBody() {
+  const detail = read('src/renderer/components/MailDetail.tsx');
+
+  assert(detail.includes('if (expanded && !detail && !loading)'), 'Expected expanded conversation cards without detail to auto-load their body');
+  assert(detail.includes('void ensureDetailLoaded();'), 'Expected expanded conversation cards to invoke detail loading without waiting for a click');
+}
+
 function testCollapseIndicatorUsesChevronInsteadOfQuestionMark() {
   const detail = read('src/renderer/components/MailDetail.tsx');
 
@@ -166,6 +173,7 @@ function run() {
   testWindowControlsAreDetachedFromLegacyTopDragStrip();
   testWindowControlsKeepClickHandlersActive();
   testAssistantWaitsForDetailBodyBeforeAiActions();
+  testDefaultExpandedConversationLoadsDetailBody();
   testCollapseIndicatorUsesChevronInsteadOfQuestionMark();
   testUnifiedMailDetailAndAssistantWrapping();
   testSelfSentMailDoesNotAutoShowAssistant();

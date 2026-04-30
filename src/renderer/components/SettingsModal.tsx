@@ -43,6 +43,12 @@ import {
   type BackupExportScope,
   type BackupUiState,
 } from '../utils/mailBackupUi';
+import {
+  COMPOSE_SIGNATURES_SETTING_KEY,
+  serializeComposeSignatureSettings,
+  updateComposeSignatureForAccount,
+  type ComposeSignatureSettings,
+} from '../../shared/compose/signatures';
 
 interface SettingsModalProps {
   t: (key: string) => string;
@@ -77,6 +83,8 @@ interface SettingsModalProps {
   onAutoFetchIntervalChange: (minutes: number) => void;
   githubNotificationsViewEnabled: boolean;
   onGithubNotificationsViewEnabledChange: (enabled: boolean) => void;
+  composeSignatureSettings: ComposeSignatureSettings;
+  onComposeSignatureSettingsChange: (settings: ComposeSignatureSettings) => void;
   backupState: BackupUiState;
   backupAccounts: Array<{
     id: number;
@@ -1528,6 +1536,16 @@ function getSettingsText(appLanguage: AppLanguage) {
       : appLanguage === 'de' ? 'Wenn aktiviert, zeigt die Seitenleiste einen GitHub-Bereich mit gebündelten Benachrichtigungs-Konversationen.'
       : appLanguage === 'ru' ? 'После включения в боковой панели появится раздел GitHub с объединёнными цепочками уведомлений.'
       : 'When enabled, the sidebar shows a GitHub section with grouped repository notification conversations.',
+    signatureTitle: appLanguage === 'zh' ? '默认签名' : 'Default signature',
+    signatureHint: appLanguage === 'zh'
+      ? '用于新邮件、回复和转发。签名会插入正文区域，不会进入引用原文。'
+      : 'Used for new mail, replies, and forwards. It is inserted into your editable body, before quoted content.',
+    signatureEnabled: appLanguage === 'zh' ? '启用签名' : 'Enable signature',
+    signaturePlaceholder: appLanguage === 'zh' ? '输入此账号的默认签名' : 'Enter the default signature for this account',
+    signatureSave: appLanguage === 'zh' ? '保存签名' : 'Save signature',
+    signatureSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
+    signatureSaved: appLanguage === 'zh' ? '签名已保存' : 'Signature saved',
+    signatureSaveFailed: appLanguage === 'zh' ? '签名保存失败' : 'Failed to save signature',
     aiPrivacyMode:
       appLanguage === 'zh' ? '云端隐私模式'
       : appLanguage === 'ja' ? 'クラウドプライバシーモード'
@@ -1611,6 +1629,14 @@ function getSettingsText(appLanguage: AppLanguage) {
     mailCacheHint: string;
     githubNotificationsView: string;
     githubNotificationsHint: string;
+    signatureTitle: string;
+    signatureHint: string;
+    signatureEnabled: string;
+    signaturePlaceholder: string;
+    signatureSave: string;
+    signatureSaving: string;
+    signatureSaved: string;
+    signatureSaveFailed: string;
     autoFetchHint: string;
     aiTitle: string;
     aiDescription: string;
@@ -1668,6 +1694,8 @@ export function SettingsModal({
   onAutoFetchIntervalChange,
   githubNotificationsViewEnabled,
   onGithubNotificationsViewEnabledChange,
+  composeSignatureSettings,
+  onComposeSignatureSettingsChange,
   backupState,
   backupAccounts,
   backupFolders,
@@ -1712,6 +1740,9 @@ export function SettingsModal({
   const [isSavingModelProfile, setIsSavingModelProfile] = useState(false);
   const [isDeletingModelProfile, setIsDeletingModelProfile] = useState<string | null>(null);
   const [isSettingDefaultModelProfile, setIsSettingDefaultModelProfile] = useState<string | null>(null);
+  const [signatureDrafts, setSignatureDrafts] = useState<Record<string, { enabled: boolean; text: string }>>({});
+  const [savingSignatureAccountId, setSavingSignatureAccountId] = useState<number | null>(null);
+  const [signatureSaveStatus, setSignatureSaveStatus] = useState<{ accountId: number; success: boolean } | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -1736,6 +1767,43 @@ export function SettingsModal({
   const selectedProviderAccountModels = selectedProviderAccount?.modelProfiles ?? [];
   const selectedProviderAccountDefaultModel = selectedProviderAccountModels.find((modelProfile) => modelProfile.isDefault)
     ?? selectedProviderAccountModels[0];
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const drafts: Record<string, { enabled: boolean; text: string }> = {};
+    for (const account of accounts) {
+      const savedSignature = composeSignatureSettings.byAccountId[String(account.id)];
+      drafts[String(account.id)] = {
+        enabled: Boolean(savedSignature?.enabled),
+        text: savedSignature?.text || '',
+      };
+    }
+    setSignatureDrafts(drafts);
+    setSignatureSaveStatus(null);
+  }, [accounts, composeSignatureSettings, isOpen]);
+
+  async function handleSaveComposeSignature(accountId: number) {
+    const draft = signatureDrafts[String(accountId)] || { enabled: false, text: '' };
+    const nextSettings = updateComposeSignatureForAccount(composeSignatureSettings, accountId, draft);
+    setSavingSignatureAccountId(accountId);
+    setSignatureSaveStatus(null);
+    try {
+      const response = await window.electronAPI.invoke(
+        'settings:set',
+        COMPOSE_SIGNATURES_SETTING_KEY,
+        serializeComposeSignatureSettings(nextSettings),
+      ) as { success?: boolean; error?: string } | undefined;
+      if (response?.success === false) {
+        throw new Error(response.error || ui.signatureSaveFailed);
+      }
+      onComposeSignatureSettingsChange(nextSettings);
+      setSignatureSaveStatus({ accountId, success: true });
+    } catch {
+      setSignatureSaveStatus({ accountId, success: false });
+    } finally {
+      setSavingSignatureAccountId(null);
+    }
+  }
   const chatEndpointPreview = useMemo(() => {
     try {
       return selectedApiProfileForm.baseUrl.trim()
@@ -3042,40 +3110,102 @@ export function SettingsModal({
                     No account connected / 请添加邮箱账号
                   </div>
                 )}
-                {accounts.map((account) => (
-                  <div
-                    key={account.id}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors group"
-                    style={{ backgroundColor: '#161618' }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#1e1e20'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#161618'; }}
-                  >
-                    {account.avatar ? (
-                      <img src={account.avatar} alt={account.name} className="w-8 h-8 rounded-full flex-shrink-0" />
-                    ) : (
-                      <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold text-[11px] flex-shrink-0"
-                        style={{ backgroundColor: getAvatarColor(account.name) }}
-                      >
-                        {account.name.charAt(0).toUpperCase()}
+                {accounts.map((account) => {
+                  const signatureDraft = signatureDrafts[String(account.id)] || { enabled: false, text: '' };
+                  const isSavingSignature = savingSignatureAccountId === account.id;
+                  const signatureStatus = signatureSaveStatus?.accountId === account.id ? signatureSaveStatus : null;
+                  return (
+                    <div
+                      key={account.id}
+                      className="rounded-lg transition-colors group"
+                      style={{ backgroundColor: '#161618' }}
+                    >
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        {account.avatar ? (
+                          <img src={account.avatar} alt={account.name} className="w-8 h-8 rounded-full flex-shrink-0" />
+                        ) : (
+                          <div
+                            className="w-8 h-8 rounded-full flex items-center justify-center text-white font-semibold text-[11px] flex-shrink-0"
+                            style={{ backgroundColor: getAvatarColor(account.name) }}
+                          >
+                            {account.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[12px] font-medium text-white truncate" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{account.name}</p>
+                          <p className="text-[11px] truncate" style={{ color: '#48484a' }}>{account.email}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {account.id === currentAccountId && (
+                            <span className="px-1.5 py-0.5 text-[10px] rounded-md" style={{ backgroundColor: 'rgba(0,113,227,0.15)', color: '#0071e3' }}>
+                              {ui.current}
+                            </span>
+                          )}
+                          <button onClick={() => onDeleteAccount(account.id)} className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 transition-colors cursor-pointer">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-white truncate" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{account.name}</p>
-                      <p className="text-[11px] truncate" style={{ color: '#48484a' }}>{account.email}</p>
+
+                      <div className="mx-3 mb-3 rounded-lg px-3 py-3" style={{ backgroundColor: '#0d0d0f', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="mb-2 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-medium text-white">{ui.signatureTitle}</div>
+                            <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>{ui.signatureHint}</div>
+                          </div>
+                          <label className="flex shrink-0 items-center gap-1.5 text-[10px] cursor-pointer" style={{ color: '#c7c7cc' }}>
+                            <input
+                              type="checkbox"
+                              checked={signatureDraft.enabled}
+                              onChange={(event) => {
+                                setSignatureDrafts((current) => ({
+                                  ...current,
+                                  [String(account.id)]: {
+                                    ...signatureDraft,
+                                    enabled: event.target.checked,
+                                  },
+                                }));
+                                setSignatureSaveStatus(null);
+                              }}
+                            />
+                            {ui.signatureEnabled}
+                          </label>
+                        </div>
+                        <textarea
+                          value={signatureDraft.text}
+                          onChange={(event) => {
+                            setSignatureDrafts((current) => ({
+                              ...current,
+                              [String(account.id)]: {
+                                ...signatureDraft,
+                                text: event.target.value,
+                              },
+                            }));
+                            setSignatureSaveStatus(null);
+                          }}
+                          rows={3}
+                          className="w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                          style={{ backgroundColor: '#161618' }}
+                          placeholder={ui.signaturePlaceholder}
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <div className="text-[10px]" style={{ color: signatureStatus?.success === false ? '#ff6b6b' : '#30d158' }}>
+                            {signatureStatus ? (signatureStatus.success ? ui.signatureSaved : ui.signatureSaveFailed) : ''}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveComposeSignature(account.id)}
+                            disabled={isSavingSignature}
+                            className="rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50"
+                            style={{ backgroundColor: '#1e1e20' }}
+                          >
+                            {isSavingSignature ? ui.signatureSaving : ui.signatureSave}
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {account.id === currentAccountId && (
-                        <span className="px-1.5 py-0.5 text-[10px] rounded-md" style={{ backgroundColor: 'rgba(0,113,227,0.15)', color: '#0071e3' }}>
-                          {ui.current}
-                        </span>
-                      )}
-                      <button onClick={() => onDeleteAccount(account.id)} className="p-1.5 rounded-md text-zinc-500 hover:text-red-400 transition-colors cursor-pointer">
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <button

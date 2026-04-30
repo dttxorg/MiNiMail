@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:pruneCache',
       'mail:cacheLocal',
       'mail:deleteCachedById',
+      'mail:deleteCachedDraft',
       'mail:exportEml',
       'mail:importEml',
       'mail:cancelBackup',

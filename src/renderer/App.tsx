@@ -30,6 +30,12 @@ import {
   normalizeOutgoingAttachments,
   type OutgoingAttachmentReference,
 } from '../shared/outgoingAttachments';
+import {
+  COMPOSE_SIGNATURES_SETTING_KEY,
+  createEmptyComposeSignatureSettings,
+  parseComposeSignatureSettings,
+  type ComposeSignatureSettings,
+} from '../shared/compose/signatures';
 import { applyMailReadState, resolveArchiveOrSpamRemovalAction, resolveDeleteMailAction, shouldMarkMailReadOnOpen } from './utils/mailFolderActions';
 import { resolveDisplayedMail } from './utils/mailSelection';
 import { resolveComposeSelectedAccount } from './utils/composeAccount';
@@ -591,6 +597,9 @@ function App() {
   const [deletedComposeDraftTokens, setDeletedComposeDraftTokens] = useState<string[]>([]);
   const [backupState, setBackupState] = useState<BackupUiState>(() => createInitialBackupState());
   const [mailRoutingResults, setMailRoutingResults] = useState<MailRoutingResultEntry[]>([]);
+  const [composeSignatureSettings, setComposeSignatureSettings] = useState<ComposeSignatureSettings>(() =>
+    createEmptyComposeSignatureSettings()
+  );
 
   const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
   const refreshPending = useRef(false);
@@ -735,6 +744,10 @@ function App() {
           success: boolean;
           data?: string | null;
         };
+        const signatureRes = await window.electronAPI.invoke('settings:get', COMPOSE_SIGNATURES_SETTING_KEY) as {
+          success: boolean;
+          data?: string | null;
+        };
         if (intervalRes.success || historyRes.success || cacheRangeRes.success || githubViewRes.success) {
           const snapshot = normalizeMailSettingsSnapshot({
             mailAutoFetchIntervalMinutes: intervalRes.success ? intervalRes.data ?? null : null,
@@ -746,6 +759,9 @@ function App() {
           setMailFetchHistoryRange(snapshot.mailFetchHistoryRange);
           setMailCacheRange(snapshot.mailCacheRange);
           setGithubNotificationsViewEnabled(snapshot.githubNotificationsViewEnabled);
+        }
+        if (signatureRes.success) {
+          setComposeSignatureSettings(parseComposeSignatureSettings(signatureRes.data));
         }
       } catch (err) {
         console.error('[ai:getSettings]', err);
@@ -951,12 +967,6 @@ function App() {
   }, [currentAccount, selectedFolder]);
 
   useEffect(() => {
-    if (selectedFolder === 'sent') {
-      setSelectedFolder('inbox');
-    }
-  }, [selectedFolder]);
-
-  useEffect(() => {
     if (!githubNotificationsViewEnabled && (selectedFolder === 'github' || isGitHubSmartFolderId(selectedFolder))) {
       setSelectedFolder('inbox');
     }
@@ -976,6 +986,23 @@ function App() {
     return resolveFolderPath(accountFoldersById[accountId], folder);
   }, [accountFoldersById]);
 
+  const resolveFolderPathForAction = useCallback(async (accountId: number, folder: StandardFolderId) => {
+    const currentFolders = accountFoldersById[accountId];
+    const initialPath = resolveFolderPath(currentFolders, folder);
+    if ((currentFolders?.length ?? 0) > 0 || folder === 'inbox' || initialPath !== folder) {
+      return initialPath;
+    }
+
+    try {
+      const folders = await loadAccountFolders(accountId);
+      if (folders.length > 0) return resolveFolderPath(folders, folder);
+    } catch (err) {
+      console.error('[mail:getFolders resolveFolderPathForAction]', accountId, folder, err);
+    }
+
+    return initialPath;
+  }, [accountFoldersById, loadAccountFolders]);
+
   const loadCachedForCurrentView = useCallback(async () => {
     const foldersToLoad = getSyncFoldersForView(selectedFolder);
     if (foldersToLoad.length === 0 || scopedAccounts.length === 0) {
@@ -993,7 +1020,7 @@ function App() {
     for (const account of scopedAccounts) {
       for (const folder of foldersToLoad) {
         try {
-          const folderPath = getResolvedFolderPath(account.id, folder);
+          const folderPath = await resolveFolderPathForAction(account.id, folder);
           const res = await window.electronAPI.invoke('mail:loadCached', account.id, folderPath, mailFetchHistoryRange) as {
             success: boolean;
             data?: RendererMailSummary[];
@@ -1016,14 +1043,14 @@ function App() {
     }
 
     return loadedCount;
-  }, [getResolvedFolderPath, mailFetchHistoryRange, replaceFolderEntries, scopedAccounts, selectedFolder, setMailList]);
+  }, [mailFetchHistoryRange, replaceFolderEntries, resolveFolderPathForAction, scopedAccounts, selectedFolder, setMailList]);
 
   const reloadCurrentViewForHistoryRange = useCallback(async (range: MailHistoryRange) => {
     const foldersToLoad = getSyncFoldersForView(selectedFolder);
     for (const account of scopedAccounts) {
       for (const folder of foldersToLoad) {
         try {
-          const folderPath = getResolvedFolderPath(account.id, folder);
+          const folderPath = await resolveFolderPathForAction(account.id, folder);
           const cachedResp = await window.electronAPI.invoke('mail:loadCached', account.id, folderPath, range) as {
             success: boolean;
             data?: RendererMailSummary[];
@@ -1039,7 +1066,7 @@ function App() {
         }
       }
     }
-  }, [getResolvedFolderPath, replaceFolderEntries, scopedAccounts, selectedFolder, setMailList]);
+  }, [replaceFolderEntries, resolveFolderPathForAction, scopedAccounts, selectedFolder, setMailList]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onMailStagedSyncProgress((progress) => {
@@ -1063,23 +1090,6 @@ function App() {
 
     return unsubscribe;
   }, [currentAccount, mailFetchHistoryRange, reloadCurrentViewForHistoryRange, selectedFolder]);
-
-  const resolveFolderPathForAction = useCallback(async (accountId: number, folder: StandardFolderId) => {
-    const currentFolders = accountFoldersById[accountId];
-    const initialPath = resolveFolderPath(currentFolders, folder);
-    if ((currentFolders?.length ?? 0) > 0 || folder === 'inbox' || initialPath !== folder) {
-      return initialPath;
-    }
-
-    try {
-      const folders = await loadAccountFolders(accountId);
-      if (folders.length > 0) return resolveFolderPath(folders, folder);
-    } catch (err) {
-      console.error('[mail:getFolders resolveFolderPathForAction]', accountId, folder, err);
-    }
-
-    return initialPath;
-  }, [accountFoldersById, loadAccountFolders]);
 
   useEffect(() => {
     let active = true;
@@ -2599,8 +2609,9 @@ function App() {
       }
 
       try {
+        const sentSyncFolderPath = await resolveFolderPathForAction(options.accountId, 'sent');
         for (const folder of getSyncFoldersForView('sent')) {
-          await syncMails(options.accountId, sentFolderPath, {
+          await syncMails(options.accountId, sentSyncFolderPath, {
             notify: false,
             folderKind: folder === 'inbox' ? 'inbox' : 'other',
             historyRange: mailFetchHistoryRange,
@@ -3372,6 +3383,7 @@ function App() {
           initialHydrateKey={composeInitialHydrateKey}
           draftOptions={composeDraftOptions}
           recipientSuggestions={composeRecipientSuggestions}
+          composeSignatureSettings={composeSignatureSettings}
           appLanguage={appLanguage}
           aiTargetLanguage={effectiveAiTargetLanguage}
           sourceLanguageSample={composeSourceLanguageSample}
@@ -3408,6 +3420,8 @@ function App() {
           onAutoFetchIntervalChange={handleAutoFetchIntervalChange}
           githubNotificationsViewEnabled={githubNotificationsViewEnabled}
           onGithubNotificationsViewEnabledChange={handleGithubNotificationsViewEnabledChange}
+          composeSignatureSettings={composeSignatureSettings}
+          onComposeSignatureSettingsChange={setComposeSignatureSettings}
           backupState={backupState}
           backupAccounts={accountList}
           backupFolders={backupFolders}

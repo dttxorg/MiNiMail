@@ -29,6 +29,13 @@ import {
   normalizeOutgoingAttachments,
   type OutgoingAttachmentReference,
 } from '../../shared/outgoingAttachments';
+import {
+  applySignatureToBody,
+  collectSignatureTexts,
+  getSignatureForAccount,
+  stripSignatureMarkerBeforeSend,
+  type ComposeSignatureSettings,
+} from '../../shared/compose/signatures';
 
 type ComposeUiLabels = {
   composeTitle: string;
@@ -200,6 +207,7 @@ interface ComposeDialogProps {
   initialHydrateKey?: string;
   draftOptions?: ComposeDraftOption[];
   recipientSuggestions?: ComposeRecipientOption[];
+  composeSignatureSettings?: ComposeSignatureSettings;
   appLanguage: AppLanguage;
   aiTargetLanguage: string;
   sourceLanguageSample?: string;
@@ -264,6 +272,7 @@ export function ComposeDialog({
   initialHydrateKey,
   draftOptions = [],
   recipientSuggestions = [],
+  composeSignatureSettings,
   appLanguage,
   aiTargetLanguage,
   sourceLanguageSample,
@@ -289,6 +298,7 @@ export function ComposeDialog({
   const [outgoingAttachments, setOutgoingAttachments] = useState<OutgoingAttachmentReference[]>([]);
   const recipientInputRef = useRef<HTMLInputElement | null>(null);
   const lastInitialHydrateKeyRef = useRef<string | null>(null);
+  const signatureApplyKeyRef = useRef<string | null>(null);
 
   const composeUi = useMemo(() => buildComposeUiLabels(t), [t, appLanguage]);
   const aiLanguages = useMemo(() => getAiLanguageOptions(appLanguage), [appLanguage]);
@@ -308,6 +318,10 @@ export function ComposeDialog({
   const quickTranslateLabel = quickTranslateToggled
     ? composeUi.quickTranslateBack(appTargetLanguageLabel)
     : composeUi.quickTranslateTo(sourceLanguageLabel || appTargetLanguageLabel);
+  const knownSignatureTexts = useMemo(
+    () => collectSignatureTexts(composeSignatureSettings),
+    [composeSignatureSettings],
+  );
 
   const createLocalDraftKey = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -320,6 +334,7 @@ export function ComposeDialog({
     setCurrentQuotedOriginal(null);
     setActiveDraftSource(null);
     setOutgoingAttachments([]);
+    signatureApplyKeyRef.current = null;
     setShowQuotedOriginal(false);
     setShowDraftMenu(false);
     setError(null);
@@ -337,6 +352,7 @@ export function ComposeDialog({
     setRecipientInput('');
     setSubject(initialSubject || '');
     setBody(initialEditableBody || '');
+    signatureApplyKeyRef.current = null;
     setError(null);
     setStatusMessage(null);
     setShowLangMenu(false);
@@ -358,8 +374,22 @@ export function ComposeDialog({
   useEffect(() => {
     if (!isOpen) {
       lastInitialHydrateKeyRef.current = null;
+      signatureApplyKeyRef.current = null;
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const account = accounts.find((item) => item.email === from);
+    const signature = getSignatureForAccount(composeSignatureSettings, account?.id);
+    const signatureKey = `${account?.id || 'none'}:${signature?.updatedAt || 'none'}:${signature?.text || ''}`;
+    if (signatureApplyKeyRef.current === signatureKey) return;
+    signatureApplyKeyRef.current = signatureKey;
+
+    setBody((currentBody) => applySignatureToBody(currentBody, signature, {
+      knownSignatures: knownSignatureTexts,
+    }));
+  }, [accounts, composeSignatureSettings, from, isOpen, knownSignatureTexts]);
 
   const filteredSuggestions = useMemo(
     () => filterRecipientSuggestions(
@@ -582,7 +612,7 @@ export function ComposeDialog({
         accountId: account.id,
         to: resolvedRecipients.map((item) => item.email),
         subject: subject.trim(),
-        body,
+        body: stripSignatureMarkerBeforeSend(body),
         draftKey,
         quotedOriginal: currentQuotedOriginal,
         outgoingAttachments,
@@ -629,13 +659,14 @@ export function ComposeDialog({
     setError(null);
 
     try {
+      const editableBodyForSend = stripSignatureMarkerBeforeSend(body);
       const result = await onSend({
         accountId: account.id,
         to: resolvedRecipients.map((item) => item.email),
         subject: subject.trim(),
-        bodyText: buildComposeTextBody(body, currentQuotedOriginal),
-        bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(body, currentQuotedOriginal) : undefined,
-        editableBody: body,
+        bodyText: buildComposeTextBody(editableBodyForSend, currentQuotedOriginal),
+        bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(editableBodyForSend, currentQuotedOriginal) : undefined,
+        editableBody: editableBodyForSend,
         draftKey,
         outgoingAttachments,
         sourceDraft: activeDraftSource

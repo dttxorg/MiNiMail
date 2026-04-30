@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Settings2,
+  Send,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
@@ -70,6 +71,7 @@ interface SidebarProps {
 
 const FOLDERS = [
   { id: 'inbox', labelKey: 'inbox' },
+  { id: 'sent', labelKey: 'sent' },
   { id: 'trash', labelKey: 'trash' },
   { id: 'spam', labelKey: 'spam' },
 ] as const;
@@ -358,6 +360,7 @@ export function Sidebar({
 
   const navIcons: Record<string, React.ReactNode> = useMemo(() => ({
     inbox: <Inbox className="w-4 h-4" strokeWidth={1.8} />,
+    sent: <Send className="w-4 h-4" strokeWidth={1.8} />,
     unread: <Mail className="w-4 h-4" strokeWidth={1.8} />,
     trash: <Trash2 className="w-4 h-4" strokeWidth={1.8} />,
     spam: <ShieldAlert className="w-4 h-4" strokeWidth={1.8} />,
@@ -554,7 +557,7 @@ export function Sidebar({
           <div className="space-y-1">
             {FOLDERS.filter((folder) => folder.id !== 'inbox').map((folder) => {
               const selected = selectedFolder === folder.id;
-              const iconNode = folder.id === 'trash' ? navIcons.trash : navIcons.spam;
+              const iconNode = folder.id === 'sent' ? navIcons.sent : folder.id === 'trash' ? navIcons.trash : navIcons.spam;
               return (
                 <button key={folder.id} onClick={() => onSelectFolder(folder.id)} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selected)}>
                   <NavIcon active={selected}>{iconNode}</NavIcon>

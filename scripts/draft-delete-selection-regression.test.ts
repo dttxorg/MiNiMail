@@ -44,12 +44,18 @@ function testAppDoesNotRedirectDraftFolderToInbox() {
   assert(app.includes('resolveNextDraftSelectionAfterDelete'), 'App should use adjacent draft selection when deleting drafts');
 }
 
+function testAppDoesNotRedirectSentFolderToInbox() {
+  const app = read('src/renderer/App.tsx');
+  assert(!app.includes("if (selectedFolder === 'sent') {\n      setSelectedFolder('inbox');"), 'Sent view must remain selected after opening Sent');
+}
+
 function run() {
   testSelectedDraftMovesToNextDraft();
   testSelectedLastDraftMovesToPreviousDraft();
   testDeletingOnlyDraftReturnsEmptySelection();
   testDeletingUnselectedDraftPreservesSelection();
   testAppDoesNotRedirectDraftFolderToInbox();
+  testAppDoesNotRedirectSentFolderToInbox();
   console.log('draft delete selection regression tests passed');
 }
 

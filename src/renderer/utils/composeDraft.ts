@@ -98,6 +98,24 @@ function toParagraphHtml(value: string): string {
     .join('');
 }
 
+export function extractQuotedOriginalHtmlFragment(value: string): string {
+  const raw = value.trim();
+  if (!raw) return '';
+
+  const bodyMatch = raw.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  let fragment = bodyMatch?.[1] ?? raw;
+
+  fragment = fragment
+    .replace(/<!doctype[\s\S]*?>/gi, '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<head\b[\s\S]*?<\/head>/gi, '')
+    .replace(/<\/?(?:html|head|body)\b[^>]*>/gi, '')
+    .trim();
+
+  return fragment;
+}
+
 function quoteLines(text: string): string {
   return text
     .split('\n')
@@ -136,7 +154,7 @@ export function buildComposeQuotedOriginal({
   const meta = `${senderLabel} · ${formatComposeDate(email.date)}`;
   const previewText = (email.snippet || extractReadableEmailText(email, { stripUrls: false })).trim().slice(0, 140);
   const text = formatQuotedOriginalBody({ mode, email });
-  const htmlBody = email.bodyHtml?.trim();
+  const htmlBody = email.bodyHtml ? extractQuotedOriginalHtmlFragment(email.bodyHtml) : '';
   const fallbackBody = toParagraphHtml(extractReadableEmailText(email, { stripUrls: false }) || email.subject);
   const attachments = mode === 'forward'
     ? (email.attachments || [])

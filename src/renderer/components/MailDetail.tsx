@@ -34,6 +34,7 @@ import { parseKeyInfoItems, resolveKeyInfoFieldLabel, type KeyInfoItem } from '.
 import { folderMatches } from '../../shared/mailFolders';
 import { translateHtmlPreservingMarkup } from '../../shared/email-ai/translateHtmlPreservingMarkup';
 import { sanitizeMailHtml } from '../utils/mailHtmlSanitizer';
+import { shouldRenderPlainTextBodyFallback } from '../utils/mailBodyFallback';
 import { SenderAvatar } from './SenderAvatar';
 import { getGitHubPriorityBadgeInfo } from '../utils/githubPriorityUi';
 
@@ -401,6 +402,10 @@ function MailBody({
       remoteImagePlaceholderText: ui.showRemoteImages,
     });
   }, [allowRemoteImages, bodyHtml, ui.showRemoteImages]);
+  const usePlainTextFallback = shouldRenderPlainTextBodyFallback({
+    bodyHtml: sanitizedBody?.html || bodyHtml,
+    bodyText,
+  });
 
   const handleExternalLinkClick = async (event: React.MouseEvent<HTMLElement>) => {
     const link = (event.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
@@ -422,6 +427,14 @@ function MailBody({
         <LoaderCircle className="w-4 h-4 animate-spin" style={{ color: 'currentColor', display: 'flex' }} strokeWidth={1.8} />
         <span className="text-[12px]">{ui.loadingContent}</span>
       </div>
+    );
+  }
+
+  if (bodyText && usePlainTextFallback) {
+    return (
+      <pre className="mail-body-content mail-body-text" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
+        {bodyText}
+      </pre>
     );
   }
 
@@ -811,6 +824,13 @@ function ConversationMessageCard({
     detailRequestRef.current = request;
     return request;
   }, [detail, email, loadMailBody]);
+
+  useEffect(() => {
+    if (expanded && !detail && !loading) {
+      void ensureDetailLoaded();
+    }
+  }, [detail, email.id, ensureDetailLoaded, expanded, loading]);
+
   const handleToggle = async () => {
     const nextExpanded = !expanded;
     setExpanded(nextExpanded);
@@ -1694,11 +1714,6 @@ export function MailDetail({
     </div>
   );
 }
-
-
-
-
-
 
 
 

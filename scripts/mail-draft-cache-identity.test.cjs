@@ -53,8 +53,10 @@ function testRendererDeletesByStableDraftKey() {
   const app = fs.readFileSync(path.join(process.cwd(), 'src/renderer/App.tsx'), 'utf8');
   const compose = fs.readFileSync(path.join(process.cwd(), 'src/renderer/components/ComposeDialog.tsx'), 'utf8');
   const ipc = fs.readFileSync(path.join(process.cwd(), 'src/main/ipc/mail.ts'), 'utf8');
+  const preload = fs.readFileSync(path.join(process.cwd(), 'src/preload/index.ts'), 'utf8');
 
   assert(ipc.includes("ipcMain.handle('mail:deleteCachedDraft'"), 'Expected IPC to expose structured draft deletion');
+  assert(preload.includes("'mail:deleteCachedDraft'"), 'Expected preload to allow structured cached draft deletion IPC');
   assert(app.includes("window.electronAPI.invoke('mail:deleteCachedDraft'"), 'Expected renderer to use structured draft deletion');
   assert(compose.includes('sourceDraft:'), 'Expected ComposeDialog to pass selected draft identity when sending');
   assert(!app.includes("window.electronAPI.invoke('mail:deleteCachedById', draftId),"), 'Expected compose draft deletion not to use UI composite id as the primary deletion key');

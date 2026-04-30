@@ -496,6 +496,25 @@ function testSendUsesResolvedSentFolderBeforeLocalCache() {
   );
 }
 
+function testSendRefreshesSentWithAsyncResolvedFolderPath() {
+  const source = extractHandleSendMailSource();
+  const successIndex = source.indexOf('if (!result.success)');
+  const asyncResolveIndex = source.indexOf("const sentSyncFolderPath = await resolveFolderPathForAction(options.accountId, 'sent');", successIndex);
+  const syncIndex = source.indexOf('await syncMails(options.accountId, sentSyncFolderPath,', successIndex);
+  assert(
+    asyncResolveIndex >= 0,
+    'send success flow must asynchronously resolve the actual Sent folder path before refreshing Sent',
+  );
+  assert(
+    syncIndex > asyncResolveIndex,
+    'Sent refresh after send must use the async resolved folder path, not the optimistic literal sent fallback',
+  );
+  assert(
+    !source.slice(successIndex).includes('await syncMails(options.accountId, sentFolderPath,'),
+    'Sent refresh after send must not reuse the initial synchronous sentFolderPath',
+  );
+}
+
 function testSendDeletesDraftIdentitySeparatelyFromSentIdentity() {
   const app = fs.readFileSync(path.join(process.cwd(), 'src', 'renderer', 'App.tsx'), 'utf8');
   assert(app.includes('const draftIdentity = options.draftKey;'));
@@ -564,6 +583,7 @@ testOptimisticSentDeliveryStatePersistsThroughCache();
 testSentRecordWithDraftPayloadDoesNotReloadAsDraft();
 testDeletedServerDraftDoesNotReturnFromDraftsSync();
 testSendUsesResolvedSentFolderBeforeLocalCache();
+testSendRefreshesSentWithAsyncResolvedFolderPath();
 testSendDeletesDraftIdentitySeparatelyFromSentIdentity();
 testSendQueuesLocalSentBeforeSmtp();
 testSmtpSendRunsInBackgroundAfterLocalCache();

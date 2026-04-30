@@ -157,6 +157,11 @@ const checks = [
     args: ['scripts/compose-i18n-regression.test.cjs'],
   },
   {
+    name: 'compose signature regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/compose-signatures.test.ts'],
+  },
+  {
     name: 'email provider auto config regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/email-provider-auto-config.test.ts'],
@@ -197,9 +202,19 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/mail-detail-layout-regression.test.ts'],
   },
   {
+    name: 'mail body fallback regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-body-fallback.test.ts'],
+  },
+  {
     name: 'sent forward cache regression',
     command: process.execPath,
     args: ['scripts/mail-sent-forward-cache.test.cjs'],
+  },
+  {
+    name: 'mail folder resolution regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-folder-resolution.test.ts'],
   },
   {
     name: 'send undo regression',

@@ -19,6 +19,12 @@ function testTrashAndSpamRenderNearSettings() {
   assert(settingsIndex > lowFrequencyIndex, 'Expected settings to render after trash/spam');
 }
 
+function testSidebarIncludesSentFolderEntry() {
+  const sidebar = read('src/renderer/components/Sidebar.tsx');
+  assert(sidebar.includes("{ id: 'sent', labelKey: 'sent' }"), 'Expected Sidebar folder config to include Sent');
+  assert(sidebar.includes("folder.id === 'sent' ? navIcons.sent"), 'Expected Sidebar to render a Sent icon for the Sent folder');
+}
+
 function testSidebarDoesNotDuplicateUnreadEntry() {
   const sidebar = read('src/renderer/components/Sidebar.tsx');
   assert(!sidebar.includes("onClick={() => onSelectFolder('unread')}"), 'Expected Sidebar to remove the duplicate unread entry and leave unread filtering to the center tabs');
@@ -26,6 +32,7 @@ function testSidebarDoesNotDuplicateUnreadEntry() {
 
 function run() {
   testTrashAndSpamRenderNearSettings();
+  testSidebarIncludesSentFolderEntry();
   testSidebarDoesNotDuplicateUnreadEntry();
   console.log('sidebar low-frequency folders tests passed');
 }

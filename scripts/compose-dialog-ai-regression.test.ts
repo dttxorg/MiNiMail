@@ -39,8 +39,9 @@ function testComposeDialogKeepsQuotedOriginalOutsideAiEdits() {
   assert(compose.includes('setCurrentQuotedOriginal(initialQuotedOriginal || null);'), 'Expected ComposeDialog to initialize quote state when opened');
   assert(compose.includes('setCurrentQuotedOriginal(draft.quotedOriginal || null);'), 'Expected applying a draft to switch the quoted original too');
   assert(compose.includes('quotedOriginal: currentQuotedOriginal,'), 'Expected saved drafts to keep their matching quoted original');
-  assert(compose.includes('bodyText: buildComposeTextBody(body, currentQuotedOriginal)'), 'Expected sending to merge editable body with the current quoted original at send time');
-  assert(compose.includes('bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(body, currentQuotedOriginal) : undefined'), 'Expected HTML send payload to include the current quoted original only at send time');
+  assert(compose.includes('const editableBodyForSend = stripSignatureMarkerBeforeSend(body);'), 'Expected sending to strip internal signature markers before send');
+  assert(compose.includes('bodyText: buildComposeTextBody(editableBodyForSend, currentQuotedOriginal)'), 'Expected sending to merge cleaned editable body with the current quoted original at send time');
+  assert(compose.includes('bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(editableBodyForSend, currentQuotedOriginal) : undefined'), 'Expected HTML send payload to include the current quoted original only at send time');
   assert(compose.includes('ai:polish'), 'Expected polish action to remain wired');
   assert(compose.includes("window.electronAPI.invoke('ai:translate', body"), 'Expected translate to operate only on editable body');
 }

@@ -127,6 +127,23 @@ function testSentViewIncludesOptimisticSentMail() {
   assert(visible[0].id === optimisticReply.id, 'Expected sent view to contain the optimistic reply');
 }
 
+function testSentViewIncludesLocalizedGmailSentPath() {
+  const localizedSent = {
+    ...optimisticReply,
+    id: '1:<localized-sent@local>',
+    folder: '[Gmail]/寄件備份',
+  };
+  const visible = getVisibleFolderEmails({
+    selectedFolder: 'sent',
+    currentAccount: { id: 1 },
+    baseMails: [localizedSent],
+    localThreadMails: [],
+  });
+
+  assert(visible.length === 1, `Expected sent view to show localized Gmail Sent mail, got ${visible.length}`);
+  assert(visible[0].id === localizedSent.id, 'Expected sent view to include the localized Gmail Sent row');
+}
+
 function testStarredViewShowsOnlyStarredPrimaryMails() {
   const starredInbound = { ...inboxMail, id: 'starred-1', isStarred: true };
   const starredSent = { ...optimisticReply, id: 'starred-2', isStarred: true };
@@ -154,6 +171,7 @@ function testThreadViewIncludesOptimisticReply() {
 function run() {
   testPrimaryConversationViewIncludesInboxSentAndDrafts();
   testSentViewIncludesOptimisticSentMail();
+  testSentViewIncludesLocalizedGmailSentPath();
   testStarredViewShowsOnlyStarredPrimaryMails();
   testThreadViewIncludesOptimisticReply();
   console.log('mail-threading tests passed');
