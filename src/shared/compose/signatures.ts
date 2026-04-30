@@ -143,12 +143,23 @@ export function applySignatureToBody(
   ]);
 
   if (!normalizedSignature) return cleanedBody;
-  const spacer = cleanedBody.trim() ? '\n\n' : '';
+  const spacer = '\n\n';
   return `${cleanedBody}${spacer}${buildSignatureBlock(normalizedSignature)}`;
 }
 
 export function stripSignatureMarkerBeforeSend(body: string): string {
   return removeMarkedSignatureBlock(body || '').trim();
+}
+
+export function findMinimailSignatureStart(body: string): number {
+  const normalizedBody = String(body || '').replace(/\r\n/g, '\n');
+  const signaturePattern = /(?:\n{1,3}|^)-- \n[\s\S]*$/;
+  const match = normalizedBody.match(signaturePattern);
+  return match?.index ?? normalizedBody.length;
+}
+
+export function getDefaultComposeCursorPosition(body: string): number {
+  return findMinimailSignatureStart(body);
 }
 
 export function collectEnabledSignatureTexts(settings: ComposeSignatureSettings | null | undefined): string[] {

@@ -32,10 +32,15 @@ import {
 import {
   applySignatureToBody,
   collectSignatureTexts,
+  getDefaultComposeCursorPosition,
   getSignatureForAccount,
   stripSignatureMarkerBeforeSend,
   type ComposeSignatureSettings,
 } from '../../shared/compose/signatures';
+import {
+  insertTextAtSelection,
+  type ComposeQuickPhraseSettings,
+} from '../../shared/compose/quickPhrases';
 
 type ComposeUiLabels = {
   composeTitle: string;
@@ -75,6 +80,8 @@ type ComposeUiLabels = {
   quickTranslateUnavailable: string;
   quickTranslateTo: (language: string) => string;
   quickTranslateBack: (language: string) => string;
+  quickPhrasesLabel: string;
+  quickPhrasesEmpty: string;
   polishFailed: string;
   translateFailed: string;
 };
@@ -157,6 +164,8 @@ function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
     quickTranslateUnavailable: t('composeDialog.quickTranslateUnavailable'),
     quickTranslateTo: (language) => t('composeDialog.quickTranslateTo', { language }),
     quickTranslateBack: (language) => t('composeDialog.quickTranslateBack', { language }),
+    quickPhrasesLabel: t('composeDialog.quickPhrasesLabel'),
+    quickPhrasesEmpty: t('composeDialog.quickPhrasesEmpty'),
     polishFailed: t('composeDialog.polishFailed'),
     translateFailed: t('composeDialog.translateFailed'),
   };
@@ -208,6 +217,7 @@ interface ComposeDialogProps {
   draftOptions?: ComposeDraftOption[];
   recipientSuggestions?: ComposeRecipientOption[];
   composeSignatureSettings?: ComposeSignatureSettings;
+  composeQuickPhraseSettings?: ComposeQuickPhraseSettings;
   appLanguage: AppLanguage;
   aiTargetLanguage: string;
   sourceLanguageSample?: string;
@@ -273,6 +283,7 @@ export function ComposeDialog({
   draftOptions = [],
   recipientSuggestions = [],
   composeSignatureSettings,
+  composeQuickPhraseSettings,
   appLanguage,
   aiTargetLanguage,
   sourceLanguageSample,
@@ -288,6 +299,7 @@ export function ComposeDialog({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showDraftMenu, setShowDraftMenu] = useState(false);
+  const [showQuickPhraseMenu, setShowQuickPhraseMenu] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [draftKey, setDraftKey] = useState('');
   const [quickTranslateToggled, setQuickTranslateToggled] = useState(false);
@@ -297,6 +309,8 @@ export function ComposeDialog({
   const [activeDraftSource, setActiveDraftSource] = useState<ComposeDraftOption | null>(null);
   const [outgoingAttachments, setOutgoingAttachments] = useState<OutgoingAttachmentReference[]>([]);
   const recipientInputRef = useRef<HTMLInputElement | null>(null);
+  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodySelectionRef = useRef<{ start: number; end: number; userSet: boolean }>({ start: 0, end: 0, userSet: false });
   const lastInitialHydrateKeyRef = useRef<string | null>(null);
   const signatureApplyKeyRef = useRef<string | null>(null);
 
@@ -322,6 +336,10 @@ export function ComposeDialog({
     () => collectSignatureTexts(composeSignatureSettings),
     [composeSignatureSettings],
   );
+  const quickPhrases = useMemo(
+    () => (composeQuickPhraseSettings?.phrases || []).slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [composeQuickPhraseSettings],
+  );
 
   const createLocalDraftKey = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -335,8 +353,10 @@ export function ComposeDialog({
     setActiveDraftSource(null);
     setOutgoingAttachments([]);
     signatureApplyKeyRef.current = null;
+    bodySelectionRef.current = { start: 0, end: 0, userSet: false };
     setShowQuotedOriginal(false);
     setShowDraftMenu(false);
+    setShowQuickPhraseMenu(false);
     setError(null);
     setStatusMessage(null);
     setQuickTranslateToggled(false);
@@ -353,10 +373,16 @@ export function ComposeDialog({
     setSubject(initialSubject || '');
     setBody(initialEditableBody || '');
     signatureApplyKeyRef.current = null;
+    bodySelectionRef.current = {
+      start: getDefaultComposeCursorPosition(initialEditableBody || ''),
+      end: getDefaultComposeCursorPosition(initialEditableBody || ''),
+      userSet: false,
+    };
     setError(null);
     setStatusMessage(null);
     setShowLangMenu(false);
     setShowDraftMenu(false);
+    setShowQuickPhraseMenu(false);
     setQuickTranslateToggled(false);
     setShowRecipientSuggestions(false);
     setShowQuotedOriginal(false);
@@ -386,9 +412,20 @@ export function ComposeDialog({
     if (signatureApplyKeyRef.current === signatureKey) return;
     signatureApplyKeyRef.current = signatureKey;
 
-    setBody((currentBody) => applySignatureToBody(currentBody, signature, {
-      knownSignatures: knownSignatureTexts,
-    }));
+    setBody((currentBody) => {
+      const nextBody = applySignatureToBody(currentBody, signature, {
+        knownSignatures: knownSignatureTexts,
+      });
+      if (!bodySelectionRef.current.userSet) {
+        const cursor = getDefaultComposeCursorPosition(nextBody);
+        bodySelectionRef.current = { start: cursor, end: cursor, userSet: false };
+        requestAnimationFrame(() => {
+          bodyTextareaRef.current?.focus();
+          bodyTextareaRef.current?.setSelectionRange(cursor, cursor);
+        });
+      }
+      return nextBody;
+    });
   }, [accounts, composeSignatureSettings, from, isOpen, knownSignatureTexts]);
 
   const filteredSuggestions = useMemo(
@@ -417,6 +454,37 @@ export function ComposeDialog({
         .map((attachment) => String(attachment.cacheId))
     );
   }, [currentQuotedOriginal, outgoingAttachments]);
+
+  const rememberBodySelection = (userSet = true) => {
+    const textarea = bodyTextareaRef.current;
+    if (!textarea) return;
+    bodySelectionRef.current = {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      userSet,
+    };
+  };
+
+  const handleInsertQuickPhrase = (phraseText: string) => {
+    setBody((currentBody) => {
+      const textarea = bodyTextareaRef.current;
+      const storedSelection = bodySelectionRef.current;
+      const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
+      const selection = textarea && storedSelection.userSet
+        ? { start: textarea.selectionStart, end: textarea.selectionEnd }
+        : storedSelection.userSet
+          ? storedSelection
+          : { start: fallbackCursor, end: fallbackCursor };
+      const result = insertTextAtSelection(currentBody, phraseText, selection.start, selection.end);
+      bodySelectionRef.current = { start: result.cursor, end: result.cursor, userSet: true };
+      requestAnimationFrame(() => {
+        bodyTextareaRef.current?.focus();
+        bodyTextareaRef.current?.setSelectionRange(result.cursor, result.cursor);
+      });
+      return result.body;
+    });
+    setShowQuickPhraseMenu(false);
+  };
 
   const addRecipient = (option: ComposeRecipientOption) => {
     setRecipients((prev) => {
@@ -1006,13 +1074,54 @@ export function ComposeDialog({
             </div>
             <div className="p-5">
               <textarea
+                ref={bodyTextareaRef}
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
+                onSelect={() => rememberBodySelection(true)}
+                onKeyUp={() => rememberBodySelection(true)}
+                onMouseUp={() => rememberBodySelection(true)}
+                onFocus={() => rememberBodySelection(false)}
                 className="h-72 w-full resize-none bg-transparent px-3 py-2 text-sm leading-6 text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
                 placeholder={composeUi.bodyPlaceholder}
                 style={{ borderRadius: uiRadius.lg }}
               />
               <div className="mt-4 flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => setShowQuickPhraseMenu((prev) => !prev)}
+                    disabled={sending || savingDraft || quickPhrases.length === 0}
+                    className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                    title={quickPhrases.length === 0 ? composeUi.quickPhrasesEmpty : composeUi.quickPhrasesLabel}
+                  >
+                    {composeUi.quickPhrasesLabel}
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                  {showQuickPhraseMenu && (
+                    <div
+                      className="absolute bottom-full left-0 z-20 mb-2 w-72 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 shadow-xl"
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      <div className="max-h-72 overflow-y-auto overscroll-contain py-1">
+                        {quickPhrases.slice(0, 8).map((phrase) => (
+                          <button
+                            type="button"
+                            key={phrase.id}
+                            onClick={() => handleInsertQuickPhrase(phrase.text)}
+                            className="block w-full px-4 py-2.5 text-left transition-colors hover:bg-zinc-700 cursor-pointer"
+                          >
+                            <div className="truncate text-xs font-semibold text-zinc-100">{phrase.title}</div>
+                            <div className="mt-1 line-clamp-2 text-[11px] leading-4" style={{ color: uiColor.textSubtle }}>
+                              {phrase.text.replace(/\s+/g, ' ').slice(0, 96)}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => void handleAddAttachments()}

@@ -224,6 +224,7 @@ interface MailDetailProps {
   onShare?: (blob: Blob, filename: string) => void;
   aiTargetLanguage: string;
   onReplyWithSuggestion: (content: string, mode?: 'reply' | 'forward', source?: MailEmail | null) => void;
+  onSaveQuickPhrase?: (content: string) => Promise<void> | void;
   loadMailBody: LoadMailBodyFn;
   mailLoadingState?: MailLoadingState;
   mailError?: string | null;
@@ -521,6 +522,7 @@ function ConversationMessageCard({
   onToggleStar,
   onRescan,
   onReplyWithSuggestion,
+  onSaveQuickPhrase,
   loadMailBody,
   onError,
   routingDiagnostics,
@@ -544,6 +546,7 @@ function ConversationMessageCard({
   onToggleStar: (mail: RendererMailSummary) => void;
   onRescan?: (mail: RendererMailSummary) => void;
   onReplyWithSuggestion: (content: string, mode?: 'reply' | 'forward', source?: MailEmail | null) => void;
+  onSaveQuickPhrase?: (content: string) => Promise<void> | void;
   loadMailBody: LoadMailBodyFn;
   onError?: (message: string) => void;
   routingDiagnostics?: MailRoutingDiagnostics;
@@ -659,6 +662,7 @@ function ConversationMessageCard({
       noActions: '暂无明确行动建议',
       noKeyInfo: '暂无可提取的关键信息',
       useReply: '使用这条回复',
+      saveQuickPhrase: '保存为快捷短语',
       customReplyPlaceholder: '告诉 AI 如何回复...',
       original: '原文',
       forwardIntro: 'AI 转发说明',
@@ -675,6 +679,7 @@ function ConversationMessageCard({
       noActions: 'No clear action suggestions',
       noKeyInfo: 'No key information extracted',
       useReply: 'Use this reply',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Tell AI how to reply...',
       original: 'Original',
       forwardIntro: 'AI forward note',
@@ -691,6 +696,7 @@ function ConversationMessageCard({
       noActions: '明確なアクション提案はありません',
       noKeyInfo: '抽出できる重要情報はありません',
       useReply: 'この返信を使用',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'AI に返信内容を伝える...',
       original: '原文',
       forwardIntro: 'AI 転送メモ',
@@ -707,6 +713,7 @@ function ConversationMessageCard({
       noActions: '명확한 작업 제안이 없습니다',
       noKeyInfo: '추출할 핵심 정보가 없습니다',
       useReply: '이 답장 사용',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'AI에게 답장 방향을 알려주세요...',
       original: '원문',
       forwardIntro: 'AI 전달 메모',
@@ -723,6 +730,7 @@ function ConversationMessageCard({
       noActions: 'No hay acciones claras sugeridas',
       noKeyInfo: 'No hay información clave para extraer',
       useReply: 'Usar esta respuesta',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Indica a la IA cómo responder...',
       original: 'Original',
       forwardIntro: 'Nota de reenvío de IA',
@@ -739,6 +747,7 @@ function ConversationMessageCard({
       noActions: 'Aucune action claire suggérée',
       noKeyInfo: 'Aucune information clé à extraire',
       useReply: 'Utiliser cette réponse',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Indiquez à l’IA comment répondre...',
       original: 'Original',
       forwardIntro: 'Note de transfert IA',
@@ -755,6 +764,7 @@ function ConversationMessageCard({
       noActions: 'Keine klaren Handlungsvorschläge',
       noKeyInfo: 'Keine wichtigen Informationen extrahierbar',
       useReply: 'Diese Antwort verwenden',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Sag der KI, wie sie antworten soll...',
       original: 'Original',
       forwardIntro: 'KI-Weiterleitungsnotiz',
@@ -771,6 +781,7 @@ function ConversationMessageCard({
       noActions: 'Нет явных рекомендаций',
       noKeyInfo: 'Нет ключевой информации для извлечения',
       useReply: 'Использовать этот ответ',
+      saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Подскажите ИИ, как ответить...',
       original: 'Оригинал',
       forwardIntro: 'Заметка ИИ для пересылки',
@@ -1508,16 +1519,32 @@ function ConversationMessageCard({
                   <div className="mb-2 text-[12px] font-semibold" style={{ color: '#C4B5FD' }}>{assistantLabels.quickReplies}</div>
                   <div className="flex flex-wrap gap-2">
                     {assistantState.quickReplies.map((reply, index) => (
-                      <button
+                      <div
                         key={`${reply}-${index}`}
-                        type="button"
-                        onClick={() => onReplyWithSuggestion(reply)}
-                        className="px-3 py-1.5 rounded-lg text-[12px] cursor-pointer"
-                        title={assistantLabels.useReply}
-                        style={{ color: '#EDE9FE', backgroundColor: 'rgba(255,255,255,0.06)' }}
+                        className="inline-flex max-w-full overflow-hidden rounded-lg"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
                       >
-                        {reply}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => onReplyWithSuggestion(reply)}
+                          className="min-w-0 px-3 py-1.5 text-left text-[12px] cursor-pointer"
+                          title={assistantLabels.useReply}
+                          style={{ color: '#EDE9FE' }}
+                        >
+                          <span className="block truncate">{reply}</span>
+                        </button>
+                        {onSaveQuickPhrase && (
+                          <button
+                            type="button"
+                            onClick={() => void onSaveQuickPhrase(reply)}
+                            className="border-l border-white/10 px-2 py-1.5 text-[11px] cursor-pointer"
+                            title={assistantLabels.saveQuickPhrase}
+                            style={{ color: '#C4B5FD' }}
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                   <div className="mt-3 flex items-center gap-2 rounded-[18px] px-3 py-2" style={{ backgroundColor: 'rgba(15,23,42,0.46)' }}>
@@ -1585,6 +1612,7 @@ export function MailDetail({
   onBack,
   aiTargetLanguage,
   onReplyWithSuggestion,
+  onSaveQuickPhrase,
   loadMailBody,
   mailLoadingState = 'idle',
   mailError = null,
@@ -1705,6 +1733,7 @@ export function MailDetail({
             onToggleStar={(mail) => (onToggleStarMail ? onToggleStarMail(mail) : onToggleStar?.())}
             onRescan={(mail) => onRescanMail?.(mail)}
             onReplyWithSuggestion={onReplyWithSuggestion}
+            onSaveQuickPhrase={onSaveQuickPhrase}
             loadMailBody={loadMailBody}
             onError={onError}
             routingDiagnostics={routingDiagnostics[message.id]}
@@ -1714,8 +1743,6 @@ export function MailDetail({
     </div>
   );
 }
-
-
 
 
 

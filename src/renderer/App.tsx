@@ -36,6 +36,14 @@ import {
   parseComposeSignatureSettings,
   type ComposeSignatureSettings,
 } from '../shared/compose/signatures';
+import {
+  COMPOSE_QUICK_PHRASES_SETTING_KEY,
+  createEmptyComposeQuickPhraseSettings,
+  parseComposeQuickPhraseSettings,
+  serializeComposeQuickPhraseSettings,
+  upsertComposeQuickPhrase,
+  type ComposeQuickPhraseSettings,
+} from '../shared/compose/quickPhrases';
 import { applyMailReadState, resolveArchiveOrSpamRemovalAction, resolveDeleteMailAction, shouldMarkMailReadOnOpen } from './utils/mailFolderActions';
 import { resolveDisplayedMail } from './utils/mailSelection';
 import { resolveComposeSelectedAccount } from './utils/composeAccount';
@@ -600,6 +608,9 @@ function App() {
   const [composeSignatureSettings, setComposeSignatureSettings] = useState<ComposeSignatureSettings>(() =>
     createEmptyComposeSignatureSettings()
   );
+  const [composeQuickPhraseSettings, setComposeQuickPhraseSettings] = useState<ComposeQuickPhraseSettings>(() =>
+    createEmptyComposeQuickPhraseSettings()
+  );
 
   const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
   const refreshPending = useRef(false);
@@ -748,6 +759,10 @@ function App() {
           success: boolean;
           data?: string | null;
         };
+        const quickPhraseRes = await window.electronAPI.invoke('settings:get', COMPOSE_QUICK_PHRASES_SETTING_KEY) as {
+          success: boolean;
+          data?: string | null;
+        };
         if (intervalRes.success || historyRes.success || cacheRangeRes.success || githubViewRes.success) {
           const snapshot = normalizeMailSettingsSnapshot({
             mailAutoFetchIntervalMinutes: intervalRes.success ? intervalRes.data ?? null : null,
@@ -762,6 +777,9 @@ function App() {
         }
         if (signatureRes.success) {
           setComposeSignatureSettings(parseComposeSignatureSettings(signatureRes.data));
+        }
+        if (quickPhraseRes.success) {
+          setComposeQuickPhraseSettings(parseComposeQuickPhraseSettings(quickPhraseRes.data));
         }
       } catch (err) {
         console.error('[ai:getSettings]', err);
@@ -2167,6 +2185,36 @@ function App() {
     openCompose(mode, source ?? selectedMailForThread);
   };
 
+  const handleComposeQuickPhraseSettingsChange = useCallback(async (settings: ComposeQuickPhraseSettings) => {
+    const response = await window.electronAPI.invoke(
+      'settings:set',
+      COMPOSE_QUICK_PHRASES_SETTING_KEY,
+      serializeComposeQuickPhraseSettings(settings),
+    ) as { success?: boolean; error?: string } | undefined;
+    if (response?.success === false) {
+      throw new Error(response.error || 'Failed to save quick phrases');
+    }
+    setComposeQuickPhraseSettings(settings);
+  }, []);
+
+  const handleSaveQuickPhraseFromSuggestion = useCallback(async (content: string) => {
+    try {
+      const nextSettings = upsertComposeQuickPhrase(composeQuickPhraseSettings, { text: content });
+      await handleComposeQuickPhraseSettingsChange(nextSettings);
+      setToasts((prev) => [...prev, {
+        id: Date.now().toString(),
+        type: 'success',
+        message: appLanguage === 'zh' ? '已保存为快捷短语' : 'Saved as quick phrase',
+      }]);
+    } catch {
+      setToasts((prev) => [...prev, {
+        id: Date.now().toString(),
+        type: 'error',
+        message: appLanguage === 'zh' ? '快捷短语保存失败' : 'Failed to save quick phrase',
+      }]);
+    }
+  }, [appLanguage, composeQuickPhraseSettings, handleComposeQuickPhraseSettingsChange]);
+
   const handleRescanMail = useCallback(async (targetMail: RendererMailSummary | RendererMailDetail) => {
     const target = targetMail as RendererMailSummary;
     if (isAiClassifyingRef.current) return;
@@ -3320,6 +3368,7 @@ function App() {
             onShare={handleShare}
             aiTargetLanguage={effectiveAiTargetLanguage}
             onReplyWithSuggestion={handleReplyWithSuggestion}
+            onSaveQuickPhrase={handleSaveQuickPhraseFromSuggestion}
             loadMailBody={loadMailBody}
             mailLoadingState={mailLoadingState}
             mailError={mailError}
@@ -3384,6 +3433,7 @@ function App() {
           draftOptions={composeDraftOptions}
           recipientSuggestions={composeRecipientSuggestions}
           composeSignatureSettings={composeSignatureSettings}
+          composeQuickPhraseSettings={composeQuickPhraseSettings}
           appLanguage={appLanguage}
           aiTargetLanguage={effectiveAiTargetLanguage}
           sourceLanguageSample={composeSourceLanguageSample}
@@ -3422,6 +3472,8 @@ function App() {
           onGithubNotificationsViewEnabledChange={handleGithubNotificationsViewEnabledChange}
           composeSignatureSettings={composeSignatureSettings}
           onComposeSignatureSettingsChange={setComposeSignatureSettings}
+          composeQuickPhraseSettings={composeQuickPhraseSettings}
+          onComposeQuickPhraseSettingsChange={handleComposeQuickPhraseSettingsChange}
           backupState={backupState}
           backupAccounts={accountList}
           backupFolders={backupFolders}

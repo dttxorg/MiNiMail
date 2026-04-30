@@ -162,6 +162,11 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/compose-signatures.test.ts'],
   },
   {
+    name: 'compose quick phrases regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/compose-quick-phrases.test.ts'],
+  },
+  {
     name: 'email provider auto config regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/email-provider-auto-config.test.ts'],

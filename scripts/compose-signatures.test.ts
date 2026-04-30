@@ -3,6 +3,8 @@ import {
   applySignatureToBody,
   collectEnabledSignatureTexts,
   collectSignatureTexts,
+  findMinimailSignatureStart,
+  getDefaultComposeCursorPosition,
   getSignatureForAccount,
   parseComposeSignatureSettings,
   removeExistingMinimailSignature,
@@ -21,11 +23,18 @@ assert.equal(getSignatureForAccount(settings, 2), null);
 assert.deepEqual(parseComposeSignatureSettings(serializeComposeSignatureSettings(settings)), settings);
 
 const newMailBody = applySignatureToBody('', getSignatureForAccount(settings, 1));
-assert.equal(newMailBody, '-- \nBest,\nMiniMail User');
+assert.equal(newMailBody, '\n\n-- \nBest,\nMiniMail User');
+assert.equal(findMinimailSignatureStart(newMailBody), 0);
+assert.equal(getDefaultComposeCursorPosition(newMailBody), 0);
+assert.equal(
+  `Hello from user${newMailBody.slice(getDefaultComposeCursorPosition(newMailBody))}`,
+  'Hello from user\n\n-- \nBest,\nMiniMail User',
+);
 
 const replyBody = applySignatureToBody('Thanks for the update.', getSignatureForAccount(settings, 1));
 const quotedBody = `${replyBody}\n\nOn Thu, someone wrote:\n> Original`;
 assert(quotedBody.indexOf('-- \nBest,\nMiniMail User') < quotedBody.indexOf('On Thu'));
+assert.equal(getDefaultComposeCursorPosition(replyBody), 'Thanks for the update.'.length);
 
 const switchedSettings = updateComposeSignatureForAccount(settings, 2, {
   enabled: true,
@@ -37,6 +46,7 @@ const switched = applySignatureToBody(replyBody, getSignatureForAccount(switched
 assert(!switched.includes('Best,\nMiniMail User'));
 assert(switched.includes('Regards,\nSecond Account'));
 assert.equal((switched.match(/-- /g) || []).length, 1);
+assert.equal(getDefaultComposeCursorPosition(switched), 'Thanks for the update.'.length);
 
 const draftWithSignature = applySignatureToBody('Already drafted.', getSignatureForAccount(settings, 1), {
   knownSignatures: collectEnabledSignatureTexts(settings),

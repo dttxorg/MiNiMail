@@ -9,6 +9,7 @@ import {
   Globe,
   Info,
   Key,
+  Mail,
   Plus,
   Radar,
   Sparkles,
@@ -49,6 +50,11 @@ import {
   updateComposeSignatureForAccount,
   type ComposeSignatureSettings,
 } from '../../shared/compose/signatures';
+import {
+  deleteComposeQuickPhrase,
+  upsertComposeQuickPhrase,
+  type ComposeQuickPhraseSettings,
+} from '../../shared/compose/quickPhrases';
 
 interface SettingsModalProps {
   t: (key: string) => string;
@@ -85,6 +91,8 @@ interface SettingsModalProps {
   onGithubNotificationsViewEnabledChange: (enabled: boolean) => void;
   composeSignatureSettings: ComposeSignatureSettings;
   onComposeSignatureSettingsChange: (settings: ComposeSignatureSettings) => void;
+  composeQuickPhraseSettings: ComposeQuickPhraseSettings;
+  onComposeQuickPhraseSettingsChange: (settings: ComposeQuickPhraseSettings) => Promise<void> | void;
   backupState: BackupUiState;
   backupAccounts: Array<{
     id: number;
@@ -112,7 +120,7 @@ interface SettingsModalProps {
   onOpenBackupFolder: () => void;
 }
 
-type NavId = 'accounts' | 'backup' | 'ai' | 'aiProvider' | 'about';
+type NavId = 'accounts' | 'backup' | 'writing' | 'ai' | 'aiProvider' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
 
 type AIConfigProfileForm = {
@@ -960,7 +968,7 @@ function getSettingsText(appLanguage: AppLanguage) {
   const texts = {
     zh: {
       groups: { personal: '个人', app: '应用', system: '系统' },
-      nav: { accounts: '账号', ai: 'AI 智能', about: '关于' },
+      nav: { accounts: '账号', writing: '写信', ai: 'AI 智能', about: '关于' },
       systemLanguage: '界面语言',
       connectedAccounts: '已连接账号',
       current: '当前',
@@ -990,7 +998,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     en: {
       groups: { personal: 'Personal', app: 'App', system: 'System' },
-      nav: { accounts: 'Accounts', ai: 'AI', about: 'About' },
+      nav: { accounts: 'Accounts', writing: 'Writing', ai: 'AI', about: 'About' },
       systemLanguage: 'Interface Language',
       connectedAccounts: 'Connected Accounts',
       current: 'Current',
@@ -1020,7 +1028,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     ja: {
       groups: { personal: '個人', app: 'アプリ', system: 'システム' },
-      nav: { accounts: 'アカウント', ai: 'AI', about: 'このアプリについて' },
+      nav: { accounts: 'アカウント', writing: 'Writing', ai: 'AI', about: 'このアプリについて' },
       systemLanguage: '表示言語',
       connectedAccounts: '接続済みアカウント',
       current: '現在',
@@ -1050,7 +1058,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     ko: {
       groups: { personal: '개인', app: '앱', system: '시스템' },
-      nav: { accounts: '계정', ai: 'AI', about: '정보' },
+      nav: { accounts: '계정', writing: 'Writing', ai: 'AI', about: '정보' },
       systemLanguage: '인터페이스 언어',
       connectedAccounts: '연결된 계정',
       current: '현재',
@@ -1080,7 +1088,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     es: {
       groups: { personal: 'Personal', app: 'Aplicación', system: 'Sistema' },
-      nav: { accounts: 'Cuentas', ai: 'IA', about: 'Acerca de' },
+      nav: { accounts: 'Cuentas', writing: 'Writing', ai: 'IA', about: 'Acerca de' },
       systemLanguage: 'Idioma de la interfaz',
       connectedAccounts: 'Cuentas conectadas',
       current: 'Actual',
@@ -1110,7 +1118,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     fr: {
       groups: { personal: 'Personnel', app: 'Application', system: 'Système' },
-      nav: { accounts: 'Comptes', ai: 'IA', about: 'À propos' },
+      nav: { accounts: 'Comptes', writing: 'Writing', ai: 'IA', about: 'À propos' },
       systemLanguage: 'Langue de l’interface',
       connectedAccounts: 'Comptes connectés',
       current: 'Actuel',
@@ -1140,7 +1148,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     de: {
       groups: { personal: 'Persönlich', app: 'App', system: 'System' },
-      nav: { accounts: 'Konten', ai: 'KI', about: 'Über' },
+      nav: { accounts: 'Konten', writing: 'Writing', ai: 'KI', about: 'Über' },
       systemLanguage: 'Oberflächensprache',
       connectedAccounts: 'Verbundene Konten',
       current: 'Aktuell',
@@ -1170,7 +1178,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
     ru: {
       groups: { personal: 'Личное', app: 'Приложение', system: 'Система' },
-      nav: { accounts: 'Аккаунты', ai: 'ИИ', about: 'О программе' },
+      nav: { accounts: 'Аккаунты', writing: 'Writing', ai: 'ИИ', about: 'О программе' },
       systemLanguage: 'Язык интерфейса',
       connectedAccounts: 'Подключённые аккаунты',
       current: 'Текущий',
@@ -1546,6 +1554,22 @@ function getSettingsText(appLanguage: AppLanguage) {
     signatureSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
     signatureSaved: appLanguage === 'zh' ? '签名已保存' : 'Signature saved',
     signatureSaveFailed: appLanguage === 'zh' ? '签名保存失败' : 'Failed to save signature',
+    quickPhraseTitle: appLanguage === 'zh' ? '快捷短语' : 'Quick phrases',
+    quickPhraseHint: appLanguage === 'zh'
+      ? '保存常用话术，在写邮件、回复或转发时快速插入到正文光标位置。'
+      : 'Save reusable snippets and insert them into the compose body when writing, replying, or forwarding.',
+    quickPhraseAdd: appLanguage === 'zh' ? '新增短语' : 'Add phrase',
+    quickPhraseTitleLabel: appLanguage === 'zh' ? '标题' : 'Title',
+    quickPhraseTextLabel: appLanguage === 'zh' ? '正文' : 'Text',
+    quickPhraseTagsLabel: appLanguage === 'zh' ? '标签' : 'Tags',
+    quickPhraseTitlePlaceholder: appLanguage === 'zh' ? '例如：跟进客户' : 'Example: Follow up',
+    quickPhraseTextPlaceholder: appLanguage === 'zh' ? '输入常用话术' : 'Enter reusable text',
+    quickPhraseTagsPlaceholder: appLanguage === 'zh' ? '逗号分隔，可选' : 'Comma-separated, optional',
+    quickPhraseSave: appLanguage === 'zh' ? '保存快捷短语' : 'Save quick phrases',
+    quickPhraseSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
+    quickPhraseSaved: appLanguage === 'zh' ? '快捷短语已保存' : 'Quick phrases saved',
+    quickPhraseSaveFailed: appLanguage === 'zh' ? '快捷短语保存失败' : 'Failed to save quick phrases',
+    quickPhraseDelete: appLanguage === 'zh' ? '删除' : 'Delete',
     aiPrivacyMode:
       appLanguage === 'zh' ? '云端隐私模式'
       : appLanguage === 'ja' ? 'クラウドプライバシーモード'
@@ -1595,7 +1619,7 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
   } as {
     groups: Record<'personal' | 'app' | 'system', string>;
-    nav: Record<'accounts' | 'ai' | 'about', string>;
+    nav: Record<'accounts' | 'writing' | 'ai' | 'about', string>;
     backupNav: string;
     backupTitle: string;
     backupDescription: string;
@@ -1637,6 +1661,20 @@ function getSettingsText(appLanguage: AppLanguage) {
     signatureSaving: string;
     signatureSaved: string;
     signatureSaveFailed: string;
+    quickPhraseTitle: string;
+    quickPhraseHint: string;
+    quickPhraseAdd: string;
+    quickPhraseTitleLabel: string;
+    quickPhraseTextLabel: string;
+    quickPhraseTagsLabel: string;
+    quickPhraseTitlePlaceholder: string;
+    quickPhraseTextPlaceholder: string;
+    quickPhraseTagsPlaceholder: string;
+    quickPhraseSave: string;
+    quickPhraseSaving: string;
+    quickPhraseSaved: string;
+    quickPhraseSaveFailed: string;
+    quickPhraseDelete: string;
     autoFetchHint: string;
     aiTitle: string;
     aiDescription: string;
@@ -1696,6 +1734,8 @@ export function SettingsModal({
   onGithubNotificationsViewEnabledChange,
   composeSignatureSettings,
   onComposeSignatureSettingsChange,
+  composeQuickPhraseSettings,
+  onComposeQuickPhraseSettingsChange,
   backupState,
   backupAccounts,
   backupFolders,
@@ -1743,6 +1783,9 @@ export function SettingsModal({
   const [signatureDrafts, setSignatureDrafts] = useState<Record<string, { enabled: boolean; text: string }>>({});
   const [savingSignatureAccountId, setSavingSignatureAccountId] = useState<number | null>(null);
   const [signatureSaveStatus, setSignatureSaveStatus] = useState<{ accountId: number; success: boolean } | null>(null);
+  const [quickPhraseDrafts, setQuickPhraseDrafts] = useState<Array<{ id: string; title: string; text: string; tags: string }>>([]);
+  const [savingQuickPhrases, setSavingQuickPhrases] = useState(false);
+  const [quickPhraseSaveStatus, setQuickPhraseSaveStatus] = useState<'success' | 'error' | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -1782,6 +1825,17 @@ export function SettingsModal({
     setSignatureSaveStatus(null);
   }, [accounts, composeSignatureSettings, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setQuickPhraseDrafts(composeQuickPhraseSettings.phrases.map((phrase) => ({
+      id: phrase.id,
+      title: phrase.title,
+      text: phrase.text,
+      tags: phrase.tags.join(', '),
+    })));
+    setQuickPhraseSaveStatus(null);
+  }, [composeQuickPhraseSettings, isOpen]);
+
   async function handleSaveComposeSignature(accountId: number) {
     const draft = signatureDrafts[String(accountId)] || { enabled: false, text: '' };
     const nextSettings = updateComposeSignatureForAccount(composeSignatureSettings, accountId, draft);
@@ -1802,6 +1856,49 @@ export function SettingsModal({
       setSignatureSaveStatus({ accountId, success: false });
     } finally {
       setSavingSignatureAccountId(null);
+    }
+  }
+
+  function handleAddQuickPhraseDraft() {
+    setQuickPhraseDrafts((current) => [
+      ...current,
+      { id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title: '', text: '', tags: '' },
+    ]);
+    setQuickPhraseSaveStatus(null);
+  }
+
+  async function handleSaveQuickPhrases() {
+    setSavingQuickPhrases(true);
+    setQuickPhraseSaveStatus(null);
+    try {
+      let nextSettings: ComposeQuickPhraseSettings = { version: 1, phrases: [] };
+      for (const draft of quickPhraseDrafts) {
+        if (!draft.text.trim()) continue;
+        const persistedId = draft.id.startsWith('draft-') ? undefined : draft.id;
+        nextSettings = upsertComposeQuickPhrase(nextSettings, {
+          id: persistedId,
+          title: draft.title,
+          text: draft.text,
+          tags: draft.tags,
+        });
+      }
+      await onComposeQuickPhraseSettingsChange(nextSettings);
+      setQuickPhraseSaveStatus('success');
+    } catch {
+      setQuickPhraseSaveStatus('error');
+    } finally {
+      setSavingQuickPhrases(false);
+    }
+  }
+
+  function handleDeleteQuickPhraseDraft(id: string) {
+    setQuickPhraseDrafts((current) => current.filter((phrase) => phrase.id !== id));
+    if (!id.startsWith('draft-')) {
+      void Promise.resolve(onComposeQuickPhraseSettingsChange(deleteComposeQuickPhrase(composeQuickPhraseSettings, id)))
+        .then(() => setQuickPhraseSaveStatus('success'))
+        .catch(() => setQuickPhraseSaveStatus('error'));
+    } else {
+      setQuickPhraseSaveStatus(null);
     }
   }
   const chatEndpointPreview = useMemo(() => {
@@ -2936,6 +3033,7 @@ export function SettingsModal({
   const navItems: Array<{ id: NavId; label: string; group: 'personal' | 'app' | 'system'; icon: React.ReactNode }> = [
     { id: 'accounts', label: ui.nav.accounts, group: 'personal', icon: <User className="w-3.5 h-3.5" /> },
     { id: 'backup', label: ui.backupNav, group: 'personal', icon: <Download className="w-3.5 h-3.5" /> },
+    { id: 'writing', label: ui.nav.writing, group: 'app', icon: <Mail className="w-3.5 h-3.5" /> },
     { id: 'ai', label: ui.nav.ai, group: 'app', icon: <Sparkles className="w-3.5 h-3.5" /> },
     { id: 'aiProvider', label: modelsApiLabel, group: 'app', icon: <Key className="w-3.5 h-3.5" /> },
     { id: 'about', label: ui.nav.about, group: 'system', icon: <Info className="w-3.5 h-3.5" /> },
@@ -3218,6 +3316,111 @@ export function SettingsModal({
                 <Plus className="w-3 h-3" />
                 {t('addAccount')}
               </button>
+              </div>
+            </div>
+          )}
+          {activeNav === 'writing' && (
+            <div className="px-6 py-5">
+              <div className="mx-auto w-full max-w-[560px]">
+                <div className="mb-3 rounded-lg px-3 py-3" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-semibold text-white">{ui.quickPhraseTitle}</div>
+                      <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>{ui.quickPhraseHint}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddQuickPhraseDraft}
+                      className="shrink-0 rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {ui.quickPhraseAdd}
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {quickPhraseDrafts.map((phrase) => (
+                      <div key={phrase.id} className="rounded-lg p-2.5" style={{ backgroundColor: '#0d0d0f' }}>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                            {ui.quickPhraseTitleLabel}
+                            <input
+                              value={phrase.title}
+                              onChange={(event) => {
+                                setQuickPhraseDrafts((current) => current.map((item) =>
+                                  item.id === phrase.id ? { ...item, title: event.target.value } : item
+                                ));
+                                setQuickPhraseSaveStatus(null);
+                              }}
+                              placeholder={ui.quickPhraseTitlePlaceholder}
+                              className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                              style={{ backgroundColor: '#161618' }}
+                            />
+                          </label>
+                          <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                            {ui.quickPhraseTagsLabel}
+                            <input
+                              value={phrase.tags}
+                              onChange={(event) => {
+                                setQuickPhraseDrafts((current) => current.map((item) =>
+                                  item.id === phrase.id ? { ...item, tags: event.target.value } : item
+                                ));
+                                setQuickPhraseSaveStatus(null);
+                              }}
+                              placeholder={ui.quickPhraseTagsPlaceholder}
+                              className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                              style={{ backgroundColor: '#161618' }}
+                            />
+                          </label>
+                        </div>
+                        <label className="mt-2 block text-[10px]" style={{ color: '#8e8e93' }}>
+                          {ui.quickPhraseTextLabel}
+                          <textarea
+                            value={phrase.text}
+                            onChange={(event) => {
+                              setQuickPhraseDrafts((current) => current.map((item) =>
+                                item.id === phrase.id ? { ...item, text: event.target.value } : item
+                              ));
+                              setQuickPhraseSaveStatus(null);
+                            }}
+                            rows={3}
+                            placeholder={ui.quickPhraseTextPlaceholder}
+                            className="mt-1 w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                            style={{ backgroundColor: '#161618' }}
+                          />
+                        </label>
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteQuickPhraseDraft(phrase.id)}
+                            className="rounded-md px-2 py-1 text-[10px] text-zinc-400 transition-colors hover:text-red-300 cursor-pointer"
+                          >
+                            {ui.quickPhraseDelete}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <div className="text-[10px]" style={{ color: quickPhraseSaveStatus === 'error' ? '#ff6b6b' : '#30d158' }}>
+                      {quickPhraseSaveStatus === 'success'
+                        ? ui.quickPhraseSaved
+                        : quickPhraseSaveStatus === 'error'
+                          ? ui.quickPhraseSaveFailed
+                          : ''}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveQuickPhrases()}
+                      disabled={savingQuickPhrases}
+                      className="rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50"
+                      style={{ backgroundColor: '#1e1e20' }}
+                    >
+                      {savingQuickPhrases ? ui.quickPhraseSaving : ui.quickPhraseSave}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
