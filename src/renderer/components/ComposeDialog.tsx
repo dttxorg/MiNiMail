@@ -41,6 +41,11 @@ import {
   insertTextAtSelection,
   type ComposeQuickPhraseSettings,
 } from '../../shared/compose/quickPhrases';
+import {
+  applyComposeTemplateToDraft,
+  type ComposeTemplate,
+  type ComposeTemplateSettings,
+} from '../../shared/compose/templates';
 
 type ComposeUiLabels = {
   composeTitle: string;
@@ -82,6 +87,11 @@ type ComposeUiLabels = {
   quickTranslateBack: (language: string) => string;
   quickPhrasesLabel: string;
   quickPhrasesEmpty: string;
+  templatesLabel: string;
+  templatesEmpty: string;
+  replaceBodyLabel: string;
+  insertAtCursorLabel: string;
+  cancelTemplateLabel: string;
   polishFailed: string;
   translateFailed: string;
 };
@@ -166,6 +176,11 @@ function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
     quickTranslateBack: (language) => t('composeDialog.quickTranslateBack', { language }),
     quickPhrasesLabel: t('composeDialog.quickPhrasesLabel'),
     quickPhrasesEmpty: t('composeDialog.quickPhrasesEmpty'),
+    templatesLabel: t('composeDialog.templatesLabel'),
+    templatesEmpty: t('composeDialog.templatesEmpty'),
+    replaceBodyLabel: t('composeDialog.replaceBodyLabel'),
+    insertAtCursorLabel: t('composeDialog.insertAtCursorLabel'),
+    cancelTemplateLabel: t('composeDialog.cancelTemplateLabel'),
     polishFailed: t('composeDialog.polishFailed'),
     translateFailed: t('composeDialog.translateFailed'),
   };
@@ -218,6 +233,7 @@ interface ComposeDialogProps {
   recipientSuggestions?: ComposeRecipientOption[];
   composeSignatureSettings?: ComposeSignatureSettings;
   composeQuickPhraseSettings?: ComposeQuickPhraseSettings;
+  composeTemplateSettings?: ComposeTemplateSettings;
   appLanguage: AppLanguage;
   aiTargetLanguage: string;
   sourceLanguageSample?: string;
@@ -284,6 +300,7 @@ export function ComposeDialog({
   recipientSuggestions = [],
   composeSignatureSettings,
   composeQuickPhraseSettings,
+  composeTemplateSettings,
   appLanguage,
   aiTargetLanguage,
   sourceLanguageSample,
@@ -300,6 +317,8 @@ export function ComposeDialog({
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showDraftMenu, setShowDraftMenu] = useState(false);
   const [showQuickPhraseMenu, setShowQuickPhraseMenu] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [pendingTemplate, setPendingTemplate] = useState<ComposeTemplate | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [draftKey, setDraftKey] = useState('');
   const [quickTranslateToggled, setQuickTranslateToggled] = useState(false);
@@ -340,6 +359,10 @@ export function ComposeDialog({
     () => (composeQuickPhraseSettings?.phrases || []).slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [composeQuickPhraseSettings],
   );
+  const templates = useMemo(
+    () => (composeTemplateSettings?.templates || []).slice().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [composeTemplateSettings],
+  );
 
   const createLocalDraftKey = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -357,6 +380,8 @@ export function ComposeDialog({
     setShowQuotedOriginal(false);
     setShowDraftMenu(false);
     setShowQuickPhraseMenu(false);
+    setShowTemplateMenu(false);
+    setPendingTemplate(null);
     setError(null);
     setStatusMessage(null);
     setQuickTranslateToggled(false);
@@ -383,6 +408,8 @@ export function ComposeDialog({
     setShowLangMenu(false);
     setShowDraftMenu(false);
     setShowQuickPhraseMenu(false);
+    setShowTemplateMenu(false);
+    setPendingTemplate(null);
     setQuickTranslateToggled(false);
     setShowRecipientSuggestions(false);
     setShowQuotedOriginal(false);
@@ -484,6 +511,47 @@ export function ComposeDialog({
       return result.body;
     });
     setShowQuickPhraseMenu(false);
+  };
+
+  const applyTemplate = (template: ComposeTemplate, mode: 'replace' | 'insert') => {
+    setBody((currentBody) => {
+      const textarea = bodyTextareaRef.current;
+      const storedSelection = bodySelectionRef.current;
+      const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
+      const selection = mode === 'insert'
+        ? textarea && storedSelection.userSet
+          ? { start: textarea.selectionStart, end: textarea.selectionEnd }
+          : storedSelection.userSet
+            ? storedSelection
+            : { start: fallbackCursor, end: fallbackCursor }
+        : { start: 0, end: fallbackCursor };
+      const result = applyComposeTemplateToDraft({
+        currentSubject: subject,
+        currentBody,
+        template,
+        mode,
+        selectionStart: selection.start,
+        selectionEnd: selection.end,
+      });
+      setSubject(result.subject);
+      bodySelectionRef.current = { start: result.cursor, end: result.cursor, userSet: true };
+      requestAnimationFrame(() => {
+        bodyTextareaRef.current?.focus();
+        bodyTextareaRef.current?.setSelectionRange(result.cursor, result.cursor);
+      });
+      return result.body;
+    });
+    setPendingTemplate(null);
+    setShowTemplateMenu(false);
+  };
+
+  const handleSelectTemplate = (template: ComposeTemplate) => {
+    const editablePrefix = body.slice(0, getDefaultComposeCursorPosition(body)).trim();
+    if (editablePrefix) {
+      setPendingTemplate(template);
+      return;
+    }
+    applyTemplate(template, 'insert');
   };
 
   const addRecipient = (option: ComposeRecipientOption) => {
@@ -1090,7 +1158,11 @@ export function ComposeDialog({
                   <button
                     type="button"
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => setShowQuickPhraseMenu((prev) => !prev)}
+                    onClick={() => {
+                      setShowQuickPhraseMenu((prev) => !prev);
+                      setShowTemplateMenu(false);
+                      setPendingTemplate(null);
+                    }}
                     disabled={sending || savingDraft || quickPhrases.length === 0}
                     className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
                     style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
@@ -1119,6 +1191,78 @@ export function ComposeDialog({
                           </button>
                         ))}
                       </div>
+                    </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setShowTemplateMenu((prev) => !prev);
+                      setShowQuickPhraseMenu(false);
+                      setPendingTemplate(null);
+                    }}
+                    disabled={sending || savingDraft || templates.length === 0}
+                    className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
+                    title={templates.length === 0 ? composeUi.templatesEmpty : composeUi.templatesLabel}
+                  >
+                    {composeUi.templatesLabel}
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                  {showTemplateMenu && (
+                    <div
+                      className="absolute bottom-full left-0 z-20 mb-2 w-80 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-800 shadow-xl"
+                      onMouseDown={(event) => event.preventDefault()}
+                    >
+                      {pendingTemplate ? (
+                        <div className="p-2">
+                          <div className="px-2 py-1.5 text-xs font-semibold text-zinc-100">{pendingTemplate.name}</div>
+                          <div className="grid gap-1">
+                            <button
+                              type="button"
+                              onClick={() => applyTemplate(pendingTemplate, 'replace')}
+                              className="rounded-lg px-3 py-2 text-left text-xs text-zinc-100 transition-colors hover:bg-zinc-700 cursor-pointer"
+                            >
+                              {composeUi.replaceBodyLabel}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => applyTemplate(pendingTemplate, 'insert')}
+                              className="rounded-lg px-3 py-2 text-left text-xs text-zinc-100 transition-colors hover:bg-zinc-700 cursor-pointer"
+                            >
+                              {composeUi.insertAtCursorLabel}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingTemplate(null)}
+                              className="rounded-lg px-3 py-2 text-left text-xs text-zinc-400 transition-colors hover:bg-zinc-700 cursor-pointer"
+                            >
+                              {composeUi.cancelTemplateLabel}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="max-h-72 overflow-y-auto overscroll-contain py-1">
+                          {templates.slice(0, 8).map((template) => (
+                            <button
+                              type="button"
+                              key={template.id}
+                              onClick={() => handleSelectTemplate(template)}
+                              className="block w-full px-4 py-2.5 text-left transition-colors hover:bg-zinc-700 cursor-pointer"
+                            >
+                              <div className="truncate text-xs font-semibold text-zinc-100">{template.name}</div>
+                              <div className="mt-1 truncate text-[11px]" style={{ color: uiColor.textSubtle }}>
+                                {template.subject || composeUi.subjectLabel}
+                              </div>
+                              <div className="mt-1 line-clamp-2 text-[11px] leading-4" style={{ color: uiColor.textSubtle }}>
+                                {template.bodyText.replace(/\s+/g, ' ').slice(0, 96)}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

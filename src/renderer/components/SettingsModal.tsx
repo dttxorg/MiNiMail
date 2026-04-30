@@ -55,6 +55,11 @@ import {
   upsertComposeQuickPhrase,
   type ComposeQuickPhraseSettings,
 } from '../../shared/compose/quickPhrases';
+import {
+  deleteComposeTemplate,
+  upsertComposeTemplate,
+  type ComposeTemplateSettings,
+} from '../../shared/compose/templates';
 
 interface SettingsModalProps {
   t: (key: string) => string;
@@ -93,6 +98,8 @@ interface SettingsModalProps {
   onComposeSignatureSettingsChange: (settings: ComposeSignatureSettings) => void;
   composeQuickPhraseSettings: ComposeQuickPhraseSettings;
   onComposeQuickPhraseSettingsChange: (settings: ComposeQuickPhraseSettings) => Promise<void> | void;
+  composeTemplateSettings: ComposeTemplateSettings;
+  onComposeTemplateSettingsChange: (settings: ComposeTemplateSettings) => Promise<void> | void;
   backupState: BackupUiState;
   backupAccounts: Array<{
     id: number;
@@ -122,6 +129,7 @@ interface SettingsModalProps {
 
 type NavId = 'accounts' | 'backup' | 'writing' | 'ai' | 'aiProvider' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
+type WritingSection = 'phrases' | 'templates';
 
 type AIConfigProfileForm = {
   id: string;
@@ -1570,6 +1578,30 @@ function getSettingsText(appLanguage: AppLanguage) {
     quickPhraseSaved: appLanguage === 'zh' ? '快捷短语已保存' : 'Quick phrases saved',
     quickPhraseSaveFailed: appLanguage === 'zh' ? '快捷短语保存失败' : 'Failed to save quick phrases',
     quickPhraseDelete: appLanguage === 'zh' ? '删除' : 'Delete',
+    writingTitle: appLanguage === 'zh' ? '写信效率' : 'Writing tools',
+    writingHint: appLanguage === 'zh'
+      ? '管理写邮件时可复用的短语和完整邮件结构。'
+      : 'Manage reusable snippets and full email structures for compose.',
+    writingEmpty: appLanguage === 'zh' ? '暂无条目' : 'No items yet',
+    writingSelectItem: appLanguage === 'zh' ? '从左侧选择一项进行编辑' : 'Select an item on the left to edit',
+    templateTitle: appLanguage === 'zh' ? '邮件模板' : 'Templates',
+    templateHint: appLanguage === 'zh'
+      ? '保存完整的主题和正文结构，用于重复邮件、回复或转发。模板不会包含签名。'
+      : 'Save reusable subject and body structures for new mail, replies, or forwards. Templates do not include signatures.',
+    templateAdd: appLanguage === 'zh' ? '新增模板' : 'Add template',
+    templateNameLabel: appLanguage === 'zh' ? '模板名称' : 'Template name',
+    templateSubjectLabel: appLanguage === 'zh' ? '模板主题' : 'Subject',
+    templateBodyLabel: appLanguage === 'zh' ? '模板正文' : 'Body',
+    templateTagsLabel: appLanguage === 'zh' ? '标签' : 'Tags',
+    templateNamePlaceholder: appLanguage === 'zh' ? '例如：客户跟进邮件' : 'Example: Customer follow-up',
+    templateSubjectPlaceholder: appLanguage === 'zh' ? '输入模板主题' : 'Enter template subject',
+    templateBodyPlaceholder: appLanguage === 'zh' ? '输入模板正文' : 'Enter template body',
+    templateTagsPlaceholder: appLanguage === 'zh' ? '逗号分隔，可选' : 'Comma-separated, optional',
+    templateSave: appLanguage === 'zh' ? '保存模板' : 'Save templates',
+    templateSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
+    templateSaved: appLanguage === 'zh' ? '模板已保存' : 'Templates saved',
+    templateSaveFailed: appLanguage === 'zh' ? '模板保存失败' : 'Failed to save templates',
+    templateDelete: appLanguage === 'zh' ? '删除' : 'Delete',
     aiPrivacyMode:
       appLanguage === 'zh' ? '云端隐私模式'
       : appLanguage === 'ja' ? 'クラウドプライバシーモード'
@@ -1675,6 +1707,26 @@ function getSettingsText(appLanguage: AppLanguage) {
     quickPhraseSaved: string;
     quickPhraseSaveFailed: string;
     quickPhraseDelete: string;
+    writingTitle: string;
+    writingHint: string;
+    writingEmpty: string;
+    writingSelectItem: string;
+    templateTitle: string;
+    templateHint: string;
+    templateAdd: string;
+    templateNameLabel: string;
+    templateSubjectLabel: string;
+    templateBodyLabel: string;
+    templateTagsLabel: string;
+    templateNamePlaceholder: string;
+    templateSubjectPlaceholder: string;
+    templateBodyPlaceholder: string;
+    templateTagsPlaceholder: string;
+    templateSave: string;
+    templateSaving: string;
+    templateSaved: string;
+    templateSaveFailed: string;
+    templateDelete: string;
     autoFetchHint: string;
     aiTitle: string;
     aiDescription: string;
@@ -1736,6 +1788,8 @@ export function SettingsModal({
   onComposeSignatureSettingsChange,
   composeQuickPhraseSettings,
   onComposeQuickPhraseSettingsChange,
+  composeTemplateSettings,
+  onComposeTemplateSettingsChange,
   backupState,
   backupAccounts,
   backupFolders,
@@ -1786,6 +1840,12 @@ export function SettingsModal({
   const [quickPhraseDrafts, setQuickPhraseDrafts] = useState<Array<{ id: string; title: string; text: string; tags: string }>>([]);
   const [savingQuickPhrases, setSavingQuickPhrases] = useState(false);
   const [quickPhraseSaveStatus, setQuickPhraseSaveStatus] = useState<'success' | 'error' | null>(null);
+  const [templateDrafts, setTemplateDrafts] = useState<Array<{ id: string; name: string; subject: string; bodyText: string; tags: string }>>([]);
+  const [savingTemplates, setSavingTemplates] = useState(false);
+  const [templateSaveStatus, setTemplateSaveStatus] = useState<'success' | 'error' | null>(null);
+  const [writingSection, setWritingSection] = useState<WritingSection>('phrases');
+  const [selectedQuickPhraseDraftId, setSelectedQuickPhraseDraftId] = useState<string | null>(null);
+  const [selectedTemplateDraftId, setSelectedTemplateDraftId] = useState<string | null>(null);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -1827,14 +1887,61 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setQuickPhraseDrafts(composeQuickPhraseSettings.phrases.map((phrase) => ({
+    const drafts = composeQuickPhraseSettings.phrases.map((phrase) => ({
       id: phrase.id,
       title: phrase.title,
       text: phrase.text,
       tags: phrase.tags.join(', '),
-    })));
+    }));
+    setQuickPhraseDrafts(drafts);
+    setSelectedQuickPhraseDraftId((current) =>
+      current && drafts.some((draft) => draft.id === current) ? current : drafts[0]?.id ?? null
+    );
     setQuickPhraseSaveStatus(null);
   }, [composeQuickPhraseSettings, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const drafts = composeTemplateSettings.templates.map((template) => ({
+      id: template.id,
+      name: template.name,
+      subject: template.subject,
+      bodyText: template.bodyText,
+      tags: template.tags.join(', '),
+    }));
+    setTemplateDrafts(drafts);
+    setSelectedTemplateDraftId((current) =>
+      current && drafts.some((draft) => draft.id === current) ? current : drafts[0]?.id ?? null
+    );
+    setTemplateSaveStatus(null);
+  }, [composeTemplateSettings, isOpen]);
+
+  const selectedQuickPhraseDraft = quickPhraseDrafts.find((phrase) => phrase.id === selectedQuickPhraseDraftId) ?? null;
+  const selectedTemplateDraft = templateDrafts.find((template) => template.id === selectedTemplateDraftId) ?? null;
+
+  function handleSelectWritingSection(section: WritingSection) {
+    setWritingSection(section);
+    if (section === 'phrases' && !selectedQuickPhraseDraftId && quickPhraseDrafts[0]) {
+      setSelectedQuickPhraseDraftId(quickPhraseDrafts[0].id);
+    }
+    if (section === 'templates' && !selectedTemplateDraftId && templateDrafts[0]) {
+      setSelectedTemplateDraftId(templateDrafts[0].id);
+    }
+  }
+
+  function updateQuickPhraseDraft(id: string, patch: Partial<{ title: string; text: string; tags: string }>) {
+    setQuickPhraseDrafts((current) => current.map((item) =>
+      item.id === id ? { ...item, ...patch } : item
+    ));
+    setQuickPhraseSaveStatus(null);
+  }
+
+  function updateTemplateDraft(id: string, patch: Partial<{ name: string; subject: string; bodyText: string; tags: string }>) {
+    setTemplateDrafts((current) => current.map((item) =>
+      item.id === id ? { ...item, ...patch } : item
+    ));
+    setTemplateSaveStatus(null);
+  }
 
   async function handleSaveComposeSignature(accountId: number) {
     const draft = signatureDrafts[String(accountId)] || { enabled: false, text: '' };
@@ -1860,10 +1967,10 @@ export function SettingsModal({
   }
 
   function handleAddQuickPhraseDraft() {
-    setQuickPhraseDrafts((current) => [
-      ...current,
-      { id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title: '', text: '', tags: '' },
-    ]);
+    const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setQuickPhraseDrafts((current) => [...current, { id, title: '', text: '', tags: '' }]);
+    setSelectedQuickPhraseDraftId(id);
+    setWritingSection('phrases');
     setQuickPhraseSaveStatus(null);
   }
 
@@ -1892,13 +1999,82 @@ export function SettingsModal({
   }
 
   function handleDeleteQuickPhraseDraft(id: string) {
-    setQuickPhraseDrafts((current) => current.filter((phrase) => phrase.id !== id));
+    if (!window.confirm(ui.quickPhraseDelete)) return;
+    setQuickPhraseDrafts((current) => {
+      const targetIndex = current.findIndex((phrase) => phrase.id === id);
+      const next = current.filter((phrase) => phrase.id !== id);
+      setSelectedQuickPhraseDraftId((currentSelected) => {
+        if (currentSelected !== id) return currentSelected && next.some((phrase) => phrase.id === currentSelected)
+          ? currentSelected
+          : next[0]?.id ?? null;
+        return next[targetIndex]?.id ?? next[targetIndex - 1]?.id ?? next[0]?.id ?? null;
+      });
+      return next;
+    });
     if (!id.startsWith('draft-')) {
       void Promise.resolve(onComposeQuickPhraseSettingsChange(deleteComposeQuickPhrase(composeQuickPhraseSettings, id)))
         .then(() => setQuickPhraseSaveStatus('success'))
         .catch(() => setQuickPhraseSaveStatus('error'));
     } else {
       setQuickPhraseSaveStatus(null);
+    }
+  }
+
+  function handleAddTemplateDraft() {
+    const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setTemplateDrafts((current) => [
+      ...current,
+      { id, name: '', subject: '', bodyText: '', tags: '' },
+    ]);
+    setSelectedTemplateDraftId(id);
+    setWritingSection('templates');
+    setTemplateSaveStatus(null);
+  }
+
+  async function handleSaveTemplates() {
+    setSavingTemplates(true);
+    setTemplateSaveStatus(null);
+    try {
+      let nextSettings: ComposeTemplateSettings = { version: 1, templates: [] };
+      for (const draft of templateDrafts) {
+        if (!draft.subject.trim() && !draft.bodyText.trim()) continue;
+        const persistedId = draft.id.startsWith('draft-') ? undefined : draft.id;
+        nextSettings = upsertComposeTemplate(nextSettings, {
+          id: persistedId,
+          name: draft.name,
+          subject: draft.subject,
+          bodyText: draft.bodyText,
+          tags: draft.tags,
+        });
+      }
+      await onComposeTemplateSettingsChange(nextSettings);
+      setTemplateSaveStatus('success');
+    } catch {
+      setTemplateSaveStatus('error');
+    } finally {
+      setSavingTemplates(false);
+    }
+  }
+
+  function handleDeleteTemplateDraft(id: string) {
+    if (!window.confirm(ui.templateDelete)) return;
+    setTemplateDrafts((current) => {
+      const targetIndex = current.findIndex((template) => template.id === id);
+      const next = current.filter((template) => template.id !== id);
+      setSelectedTemplateDraftId((currentSelected) => {
+        if (currentSelected !== id) return currentSelected && next.some((template) => template.id === currentSelected)
+          ? currentSelected
+          : next[0]?.id ?? null;
+        return next[targetIndex]?.id ?? next[targetIndex - 1]?.id ?? next[0]?.id ?? null;
+      });
+      return next;
+    });
+    if (!id.startsWith('draft-')) {
+      void Promise.resolve(onComposeTemplateSettingsChange(deleteComposeTemplate(composeTemplateSettings, id)))
+        .then(() => setTemplateSaveStatus('success'))
+        .catch(() => setTemplateSaveStatus('error'));
+    } else {
+      setTemplateSaveStatus(null);
     }
   }
   const chatEndpointPreview = useMemo(() => {
@@ -3321,106 +3497,289 @@ export function SettingsModal({
           )}
           {activeNav === 'writing' && (
             <div className="px-6 py-5">
-              <div className="mx-auto w-full max-w-[560px]">
-                <div className="mb-3 rounded-lg px-3 py-3" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="mb-3 flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[12px] font-semibold text-white">{ui.quickPhraseTitle}</div>
-                      <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>{ui.quickPhraseHint}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAddQuickPhraseDraft}
-                      className="shrink-0 rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer"
-                      style={{ backgroundColor: '#1e1e20' }}
-                    >
-                      {ui.quickPhraseAdd}
-                    </button>
-                  </div>
-
-                  <div className="space-y-2">
-                    {quickPhraseDrafts.map((phrase) => (
-                      <div key={phrase.id} className="rounded-lg p-2.5" style={{ backgroundColor: '#0d0d0f' }}>
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
-                            {ui.quickPhraseTitleLabel}
-                            <input
-                              value={phrase.title}
-                              onChange={(event) => {
-                                setQuickPhraseDrafts((current) => current.map((item) =>
-                                  item.id === phrase.id ? { ...item, title: event.target.value } : item
-                                ));
-                                setQuickPhraseSaveStatus(null);
-                              }}
-                              placeholder={ui.quickPhraseTitlePlaceholder}
-                              className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
-                              style={{ backgroundColor: '#161618' }}
-                            />
-                          </label>
-                          <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
-                            {ui.quickPhraseTagsLabel}
-                            <input
-                              value={phrase.tags}
-                              onChange={(event) => {
-                                setQuickPhraseDrafts((current) => current.map((item) =>
-                                  item.id === phrase.id ? { ...item, tags: event.target.value } : item
-                                ));
-                                setQuickPhraseSaveStatus(null);
-                              }}
-                              placeholder={ui.quickPhraseTagsPlaceholder}
-                              className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
-                              style={{ backgroundColor: '#161618' }}
-                            />
-                          </label>
-                        </div>
-                        <label className="mt-2 block text-[10px]" style={{ color: '#8e8e93' }}>
-                          {ui.quickPhraseTextLabel}
-                          <textarea
-                            value={phrase.text}
-                            onChange={(event) => {
-                              setQuickPhraseDrafts((current) => current.map((item) =>
-                                item.id === phrase.id ? { ...item, text: event.target.value } : item
-                              ));
-                              setQuickPhraseSaveStatus(null);
-                            }}
-                            rows={3}
-                            placeholder={ui.quickPhraseTextPlaceholder}
-                            className="mt-1 w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
-                            style={{ backgroundColor: '#161618' }}
-                          />
-                        </label>
-                        <div className="mt-2 flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteQuickPhraseDraft(phrase.id)}
-                            className="rounded-md px-2 py-1 text-[10px] text-zinc-400 transition-colors hover:text-red-300 cursor-pointer"
-                          >
-                            {ui.quickPhraseDelete}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="text-[10px]" style={{ color: quickPhraseSaveStatus === 'error' ? '#ff6b6b' : '#30d158' }}>
-                      {quickPhraseSaveStatus === 'success'
-                        ? ui.quickPhraseSaved
-                        : quickPhraseSaveStatus === 'error'
-                          ? ui.quickPhraseSaveFailed
-                          : ''}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveQuickPhrases()}
-                      disabled={savingQuickPhrases}
-                      className="rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50"
-                      style={{ backgroundColor: '#1e1e20' }}
-                    >
-                      {savingQuickPhrases ? ui.quickPhraseSaving : ui.quickPhraseSave}
-                    </button>
-                  </div>
+              <div className="mx-auto w-full max-w-[760px]">
+                <div className="mb-3">
+                  <div className="text-[13px] font-semibold text-white">{ui.writingTitle}</div>
+                  <div className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>{ui.writingHint}</div>
                 </div>
+
+                <div className="writing-section-tabs mb-3 inline-flex rounded-lg p-1" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  {([
+                    ['phrases', ui.quickPhraseTitle],
+                    ['templates', ui.templateTitle],
+                  ] as Array<[WritingSection, string]>).map(([section, label]) => (
+                    <button
+                      key={section}
+                      type="button"
+                      onClick={() => handleSelectWritingSection(section)}
+                      className="rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: writingSection === section ? '#2c2c2e' : 'transparent',
+                        color: writingSection === section ? '#ffffff' : '#8e8e93',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {writingSection === 'phrases' && (
+                  <div className="writing-management-grid grid min-h-[360px] gap-3 md:grid-cols-[240px_minmax(0,1fr)]">
+                    <div className="writing-item-list rounded-lg p-2" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold text-white">{ui.quickPhraseTitle}</div>
+                        <button
+                          type="button"
+                          onClick={handleAddQuickPhraseDraft}
+                          className="rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                          style={{ backgroundColor: '#1e1e20' }}
+                        >
+                          {ui.quickPhraseAdd}
+                        </button>
+                      </div>
+                      {quickPhraseDrafts.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={handleAddQuickPhraseDraft}
+                          className="w-full rounded-lg px-3 py-8 text-center text-[11px] cursor-pointer"
+                          style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}
+                        >
+                          {ui.writingEmpty}
+                        </button>
+                      ) : (
+                        <div className="max-h-[440px] space-y-1 overflow-y-auto pr-1">
+                          {quickPhraseDrafts.map((phrase) => {
+                            const selected = phrase.id === selectedQuickPhraseDraftId;
+                            return (
+                              <button
+                                type="button"
+                                key={phrase.id}
+                                onClick={() => setSelectedQuickPhraseDraftId(phrase.id)}
+                                className="w-full rounded-lg px-2.5 py-2 text-left transition-colors cursor-pointer"
+                                style={{ backgroundColor: selected ? '#242426' : '#0d0d0f' }}
+                              >
+                                <div className="truncate text-[11px] font-medium text-white">
+                                  {phrase.title || ui.quickPhraseTitlePlaceholder}
+                                </div>
+                                {phrase.tags.trim() && (
+                                  <div className="mt-1 truncate text-[10px]" style={{ color: '#64d2ff' }}>{phrase.tags}</div>
+                                )}
+                                <div className="mt-1 line-clamp-2 text-[10px] leading-4" style={{ color: '#8e8e93' }}>
+                                  {phrase.text.replace(/\s+/g, ' ').slice(0, 96) || ui.quickPhraseTextPlaceholder}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="writing-editor-panel rounded-lg p-3" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      {selectedQuickPhraseDraft ? (
+                        <>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                              {ui.quickPhraseTitleLabel}
+                              <input
+                                value={selectedQuickPhraseDraft.title}
+                                onChange={(event) => updateQuickPhraseDraft(selectedQuickPhraseDraft.id, { title: event.target.value })}
+                                placeholder={ui.quickPhraseTitlePlaceholder}
+                                className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#0d0d0f' }}
+                              />
+                            </label>
+                            <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                              {ui.quickPhraseTagsLabel}
+                              <input
+                                value={selectedQuickPhraseDraft.tags}
+                                onChange={(event) => updateQuickPhraseDraft(selectedQuickPhraseDraft.id, { tags: event.target.value })}
+                                placeholder={ui.quickPhraseTagsPlaceholder}
+                                className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#0d0d0f' }}
+                              />
+                            </label>
+                          </div>
+                          <label className="mt-3 block text-[10px]" style={{ color: '#8e8e93' }}>
+                            {ui.quickPhraseTextLabel}
+                            <textarea
+                              value={selectedQuickPhraseDraft.text}
+                              onChange={(event) => updateQuickPhraseDraft(selectedQuickPhraseDraft.id, { text: event.target.value })}
+                              rows={10}
+                              placeholder={ui.quickPhraseTextPlaceholder}
+                              className="mt-1 w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                              style={{ backgroundColor: '#0d0d0f' }}
+                            />
+                          </label>
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <div className="text-[10px]" style={{ color: quickPhraseSaveStatus === 'error' ? '#ff6b6b' : '#30d158' }}>
+                              {quickPhraseSaveStatus === 'success'
+                                ? ui.quickPhraseSaved
+                                : quickPhraseSaveStatus === 'error'
+                                  ? ui.quickPhraseSaveFailed
+                                  : ''}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteQuickPhraseDraft(selectedQuickPhraseDraft.id)}
+                                className="rounded-md px-2.5 py-1.5 text-[10px] text-zinc-400 transition-colors hover:text-red-300 cursor-pointer"
+                              >
+                                {ui.quickPhraseDelete}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveQuickPhrases()}
+                                disabled={savingQuickPhrases}
+                                className="rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50"
+                                style={{ backgroundColor: '#1e1e20' }}
+                              >
+                                {savingQuickPhrases ? ui.quickPhraseSaving : ui.quickPhraseSave}
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex h-full min-h-[260px] items-center justify-center rounded-lg text-[11px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                          {ui.writingSelectItem}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {writingSection === 'templates' && (
+                  <div className="writing-management-grid grid min-h-[360px] gap-3 md:grid-cols-[240px_minmax(0,1fr)]">
+                    <div className="writing-item-list rounded-lg p-2" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold text-white">{ui.templateTitle}</div>
+                        <button
+                          type="button"
+                          onClick={handleAddTemplateDraft}
+                          className="rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                          style={{ backgroundColor: '#1e1e20' }}
+                        >
+                          {ui.templateAdd}
+                        </button>
+                      </div>
+                      {templateDrafts.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={handleAddTemplateDraft}
+                          className="w-full rounded-lg px-3 py-8 text-center text-[11px] cursor-pointer"
+                          style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}
+                        >
+                          {ui.writingEmpty}
+                        </button>
+                      ) : (
+                        <div className="max-h-[440px] space-y-1 overflow-y-auto pr-1">
+                          {templateDrafts.map((template) => {
+                            const selected = template.id === selectedTemplateDraftId;
+                            return (
+                              <button
+                                type="button"
+                                key={template.id}
+                                onClick={() => setSelectedTemplateDraftId(template.id)}
+                                className="w-full rounded-lg px-2.5 py-2 text-left transition-colors cursor-pointer"
+                                style={{ backgroundColor: selected ? '#242426' : '#0d0d0f' }}
+                              >
+                                <div className="truncate text-[11px] font-medium text-white">
+                                  {template.name || ui.templateNamePlaceholder}
+                                </div>
+                                {template.tags.trim() && (
+                                  <div className="mt-1 truncate text-[10px]" style={{ color: '#64d2ff' }}>{template.tags}</div>
+                                )}
+                                <div className="mt-1 truncate text-[10px]" style={{ color: '#8e8e93' }}>
+                                  {template.subject || ui.templateSubjectPlaceholder}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="writing-editor-panel rounded-lg p-3" style={{ backgroundColor: '#161618', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      {selectedTemplateDraft ? (
+                        <>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                              {ui.templateNameLabel}
+                              <input
+                                value={selectedTemplateDraft.name}
+                                onChange={(event) => updateTemplateDraft(selectedTemplateDraft.id, { name: event.target.value })}
+                                placeholder={ui.templateNamePlaceholder}
+                                className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#0d0d0f' }}
+                              />
+                            </label>
+                            <label className="min-w-0 text-[10px]" style={{ color: '#8e8e93' }}>
+                              {ui.templateTagsLabel}
+                              <input
+                                value={selectedTemplateDraft.tags}
+                                onChange={(event) => updateTemplateDraft(selectedTemplateDraft.id, { tags: event.target.value })}
+                                placeholder={ui.templateTagsPlaceholder}
+                                className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                                style={{ backgroundColor: '#0d0d0f' }}
+                              />
+                            </label>
+                          </div>
+                          <label className="mt-3 block text-[10px]" style={{ color: '#8e8e93' }}>
+                            {ui.templateSubjectLabel}
+                            <input
+                              value={selectedTemplateDraft.subject}
+                              onChange={(event) => updateTemplateDraft(selectedTemplateDraft.id, { subject: event.target.value })}
+                              placeholder={ui.templateSubjectPlaceholder}
+                              className="mt-1 w-full rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                              style={{ backgroundColor: '#0d0d0f' }}
+                            />
+                          </label>
+                          <label className="mt-3 block text-[10px]" style={{ color: '#8e8e93' }}>
+                            {ui.templateBodyLabel}
+                            <textarea
+                              value={selectedTemplateDraft.bodyText}
+                              onChange={(event) => updateTemplateDraft(selectedTemplateDraft.id, { bodyText: event.target.value })}
+                              rows={10}
+                              placeholder={ui.templateBodyPlaceholder}
+                              className="mt-1 w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
+                              style={{ backgroundColor: '#0d0d0f' }}
+                            />
+                          </label>
+                          <div className="mt-3 flex items-center justify-between gap-2">
+                            <div className="text-[10px]" style={{ color: templateSaveStatus === 'error' ? '#ff6b6b' : '#30d158' }}>
+                              {templateSaveStatus === 'success'
+                                ? ui.templateSaved
+                                : templateSaveStatus === 'error'
+                                  ? ui.templateSaveFailed
+                                  : ''}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTemplateDraft(selectedTemplateDraft.id)}
+                                className="rounded-md px-2.5 py-1.5 text-[10px] text-zinc-400 transition-colors hover:text-red-300 cursor-pointer"
+                              >
+                                {ui.templateDelete}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveTemplates()}
+                                disabled={savingTemplates}
+                                className="rounded-md px-2.5 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50"
+                                style={{ backgroundColor: '#1e1e20' }}
+                              >
+                                {savingTemplates ? ui.templateSaving : ui.templateSave}
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex h-full min-h-[260px] items-center justify-center rounded-lg text-[11px]" style={{ backgroundColor: '#0d0d0f', color: '#8e8e93' }}>
+                          {ui.writingSelectItem}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

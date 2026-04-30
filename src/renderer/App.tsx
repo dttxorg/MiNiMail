@@ -44,6 +44,13 @@ import {
   upsertComposeQuickPhrase,
   type ComposeQuickPhraseSettings,
 } from '../shared/compose/quickPhrases';
+import {
+  COMPOSE_TEMPLATES_SETTING_KEY,
+  createEmptyComposeTemplateSettings,
+  parseComposeTemplateSettings,
+  serializeComposeTemplateSettings,
+  type ComposeTemplateSettings,
+} from '../shared/compose/templates';
 import { applyMailReadState, resolveArchiveOrSpamRemovalAction, resolveDeleteMailAction, shouldMarkMailReadOnOpen } from './utils/mailFolderActions';
 import { resolveDisplayedMail } from './utils/mailSelection';
 import { resolveComposeSelectedAccount } from './utils/composeAccount';
@@ -611,6 +618,9 @@ function App() {
   const [composeQuickPhraseSettings, setComposeQuickPhraseSettings] = useState<ComposeQuickPhraseSettings>(() =>
     createEmptyComposeQuickPhraseSettings()
   );
+  const [composeTemplateSettings, setComposeTemplateSettings] = useState<ComposeTemplateSettings>(() =>
+    createEmptyComposeTemplateSettings()
+  );
 
   const addAccountDialogRef = useRef<AddAccountDialogHandle>(null);
   const refreshPending = useRef(false);
@@ -763,6 +773,10 @@ function App() {
           success: boolean;
           data?: string | null;
         };
+        const templateRes = await window.electronAPI.invoke('settings:get', COMPOSE_TEMPLATES_SETTING_KEY) as {
+          success: boolean;
+          data?: string | null;
+        };
         if (intervalRes.success || historyRes.success || cacheRangeRes.success || githubViewRes.success) {
           const snapshot = normalizeMailSettingsSnapshot({
             mailAutoFetchIntervalMinutes: intervalRes.success ? intervalRes.data ?? null : null,
@@ -780,6 +794,9 @@ function App() {
         }
         if (quickPhraseRes.success) {
           setComposeQuickPhraseSettings(parseComposeQuickPhraseSettings(quickPhraseRes.data));
+        }
+        if (templateRes.success) {
+          setComposeTemplateSettings(parseComposeTemplateSettings(templateRes.data));
         }
       } catch (err) {
         console.error('[ai:getSettings]', err);
@@ -2197,6 +2214,18 @@ function App() {
     setComposeQuickPhraseSettings(settings);
   }, []);
 
+  const handleComposeTemplateSettingsChange = useCallback(async (settings: ComposeTemplateSettings) => {
+    const response = await window.electronAPI.invoke(
+      'settings:set',
+      COMPOSE_TEMPLATES_SETTING_KEY,
+      serializeComposeTemplateSettings(settings),
+    ) as { success?: boolean; error?: string } | undefined;
+    if (response?.success === false) {
+      throw new Error(response.error || 'Failed to save templates');
+    }
+    setComposeTemplateSettings(settings);
+  }, []);
+
   const handleSaveQuickPhraseFromSuggestion = useCallback(async (content: string) => {
     try {
       const nextSettings = upsertComposeQuickPhrase(composeQuickPhraseSettings, { text: content });
@@ -3434,6 +3463,7 @@ function App() {
           recipientSuggestions={composeRecipientSuggestions}
           composeSignatureSettings={composeSignatureSettings}
           composeQuickPhraseSettings={composeQuickPhraseSettings}
+          composeTemplateSettings={composeTemplateSettings}
           appLanguage={appLanguage}
           aiTargetLanguage={effectiveAiTargetLanguage}
           sourceLanguageSample={composeSourceLanguageSample}
@@ -3474,6 +3504,8 @@ function App() {
           onComposeSignatureSettingsChange={setComposeSignatureSettings}
           composeQuickPhraseSettings={composeQuickPhraseSettings}
           onComposeQuickPhraseSettingsChange={handleComposeQuickPhraseSettingsChange}
+          composeTemplateSettings={composeTemplateSettings}
+          onComposeTemplateSettingsChange={handleComposeTemplateSettingsChange}
           backupState={backupState}
           backupAccounts={accountList}
           backupFolders={backupFolders}

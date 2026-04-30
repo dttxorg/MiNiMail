@@ -115,6 +115,14 @@ const writingPage = settingsModal.slice(
 );
 assert(!accountsPage.includes('ui.quickPhraseTitle'), 'Accounts page should not render quick phrase management');
 assert(writingPage.includes('ui.quickPhraseTitle'), 'Writing page should render quick phrase management');
+assert(writingPage.includes('writing-section-tabs'), 'Writing page should use tabs for compose tools');
+assert(writingPage.includes('writing-item-list'), 'Writing page should render a quick phrase list');
+assert(writingPage.includes('writing-editor-panel'), 'Writing page should render a selected quick phrase editor');
+assert(settingsModal.includes('selectedQuickPhraseDraftId'), 'Settings should track the selected quick phrase');
+assert(settingsModal.includes('setSelectedQuickPhraseDraftId(id)'), 'Adding a quick phrase should select the new draft');
+assert(settingsModal.includes('window.confirm(ui.quickPhraseDelete)'), 'Deleting a quick phrase should confirm first');
+const quickPhraseHelper = readFileSync('src/shared/compose/quickPhrases.ts', 'utf8');
+assert(quickPhraseHelper.includes("compose_quick_phrases_v1"), 'Quick phrases should keep the original settings key');
 
 const mailDetail = readFileSync('src/renderer/components/MailDetail.tsx', 'utf8');
 assert(mailDetail.includes('onSaveQuickPhrase'), 'MailDetail should accept a save quick phrase handler');
