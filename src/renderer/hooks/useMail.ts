@@ -24,9 +24,11 @@ export interface RendererMailSummary {
   inReplyTo?: string;
   references?: string;
   localSendId?: string;
-  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'missed';
   deliveryError?: string;
   localDraftKey?: string;
+  scheduledJobId?: string;
+  scheduledAt?: string;
   draftPayload?: string;
   bodyText?: string;
   bodyHtml?: string;

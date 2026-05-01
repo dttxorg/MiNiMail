@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Sidebar } from './components/Sidebar';
 import { MailList } from './components/MailList';
 import { MailDetail } from './components/MailDetail';
+import { ScheduledSendDetail } from './components/ScheduledSendDetail';
 import { ComposeDialog } from './components/ComposeDialog';
 import { SettingsModal } from './components/SettingsModal';
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
@@ -104,6 +105,7 @@ import {
   shouldRemoveMailForDeletedTarget,
   type MailRemovalIdentity,
 } from './utils/mailRemoval';
+import { formatScheduledSendCountdown } from '../shared/compose/scheduleSend';
 import './i18n';
 
 type ScanMode = 'smart' | 'light' | 'deep';
@@ -145,6 +147,7 @@ type PersistedComposeDraftPayload = {
   draftKey?: string;
   recipients?: ComposeRecipientOption[];
   body?: string;
+  bodyHtml?: string;
   quotedOriginal?: ComposeQuotedOriginal | null;
   outgoingAttachments?: OutgoingAttachmentReference[];
 };
@@ -172,6 +175,7 @@ function parseComposeDraftPayload(value?: string): PersistedComposeDraftPayload 
       draftKey: typeof parsed.draftKey === 'string' ? parsed.draftKey : undefined,
       recipients,
       body: typeof parsed.body === 'string' ? parsed.body : undefined,
+      bodyHtml: typeof parsed.bodyHtml === 'string' ? parsed.bodyHtml : undefined,
       quotedOriginal,
       outgoingAttachments: normalizeOutgoingAttachments(parsed.outgoingAttachments),
     };
@@ -244,6 +248,7 @@ function buildComposeDraftOptionFromMail(mail: RendererMailSummary): ComposeDraf
     recipients: draftPayload?.recipients ?? fallbackRecipients,
     subject: mail.subject,
     body: draftPayload?.body ?? mail.bodyText ?? mail.snippet,
+    bodyHtml: draftPayload?.bodyHtml ?? mail.bodyHtml,
     quotedOriginal: draftPayload?.quotedOriginal ?? null,
     outgoingAttachments: draftPayload?.outgoingAttachments ?? [],
     date: Number.isFinite(normalizedDate.getTime()) ? normalizedDate : new Date(),
@@ -267,10 +272,12 @@ function buildRecoveredDraftFromScheduledMail(
         .filter((value): value is ComposeRecipientOption => Boolean(value))
     : []);
   const body = draftPayload?.body ?? mail.bodyText ?? mail.snippet ?? '';
+  const bodyHtml = draftPayload?.bodyHtml ?? mail.bodyHtml;
   const recoveredPayload: PersistedComposeDraftPayload = {
     draftKey,
     recipients,
     body,
+    bodyHtml,
     quotedOriginal: draftPayload?.quotedOriginal ?? null,
     outgoingAttachments: draftPayload?.outgoingAttachments ?? [],
   };
@@ -294,6 +301,7 @@ function buildRecoveredDraftFromScheduledMail(
     localDraftKey: draftKey,
     draftPayload: JSON.stringify(recoveredPayload),
     bodyText: body,
+    bodyHtml,
     attachments: (draftPayload?.outgoingAttachments || []).map((attachment) => ({
       cacheId: attachment.id,
       filename: attachment.filename,
@@ -335,9 +343,43 @@ interface ComposeRestoreDraft {
   recipients: ComposeRecipientOption[];
   subject: string;
   body: string;
+  bodyHtml?: string;
   outgoingAttachments?: OutgoingAttachmentReference[];
   mode: ComposeContext['mode'];
   source: RendererMailSummary | RendererMailDetail | null;
+}
+
+type ScheduledSendJobStatus = 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed' | 'missed';
+
+interface ScheduledSendJobSnapshot {
+  id: string;
+  localSendId: string;
+  accountId: number;
+  fromEmail: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml?: string;
+  editableBody: string;
+  outgoingAttachments: unknown[];
+  draftPayload?: unknown;
+  sentFolderPath?: string;
+  scheduledAt: string;
+  status: ScheduledSendJobStatus;
+  createdAt: string;
+  updatedAt: string;
+  failureReason?: string;
+  sentMessageId?: string;
+}
+
+interface ScheduledSendUpdatePayload {
+  trigger: 'manual' | 'auto';
+  status: ScheduledSendJobStatus | 'skipped';
+  jobId: string;
+  job?: ScheduledSendJobSnapshot | null;
+  error?: string;
 }
 
 type StagedHistoryUiState = {
@@ -399,8 +441,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: '送信しました',
       sendFailedFallback: '送信に失敗しました',
       sendScheduled: 'メールは5秒後に送信されます',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: '取り消す',
       sendCancelled: '送信を取り消しました',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'メールをアーカイブしました',
       archiveFailed: 'メールをアーカイブできませんでした',
       archiveAction: 'アーカイブ',
@@ -423,8 +469,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: 'Email sent',
       sendFailedFallback: 'Failed to send email',
       sendScheduled: 'Email will be sent in 5 seconds',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: 'Undo',
       sendCancelled: 'Send cancelled',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'Email archived',
       archiveFailed: 'Failed to archive email',
       archiveAction: 'Archive',
@@ -447,8 +497,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: '메일을 보냈습니다',
       sendFailedFallback: '메일 전송에 실패했습니다',
       sendScheduled: '메일이 5초 후 전송됩니다',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: '실행 취소',
       sendCancelled: '전송을 취소했습니다',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: '메일을 보관했습니다',
       archiveFailed: '메일 보관에 실패했습니다',
       archiveAction: '보관',
@@ -471,8 +525,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: 'Correo enviado',
       sendFailedFallback: 'No se pudo enviar el correo',
       sendScheduled: 'El correo se enviará en 5 segundos',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: 'Deshacer',
       sendCancelled: 'Envío cancelado',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'Correo archivado',
       archiveFailed: 'No se pudo archivar el correo',
       archiveAction: 'Archivar',
@@ -495,8 +553,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: 'Mail envoyé',
       sendFailedFallback: 'Échec de l’envoi du mail',
       sendScheduled: 'Le mail sera envoyé dans 5 secondes',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: 'Annuler',
       sendCancelled: 'Envoi annulé',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'Mail archivé',
       archiveFailed: 'Échec de l’archivage du mail',
       archiveAction: 'Archiver',
@@ -519,8 +581,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: 'Mail gesendet',
       sendFailedFallback: 'Mail konnte nicht gesendet werden',
       sendScheduled: 'Mail wird in 5 Sekunden gesendet',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: 'Rückgängig',
       sendCancelled: 'Senden abgebrochen',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'Mail archiviert',
       archiveFailed: 'Mail konnte nicht archiviert werden',
       archiveAction: 'Archivieren',
@@ -543,8 +609,12 @@ function getAppUi(appLanguage: AppLanguage) {
       sendSuccess: 'Письмо отправлено',
       sendFailedFallback: 'Не удалось отправить письмо',
       sendScheduled: 'Письмо будет отправлено через 5 секунд',
+      scheduledSendCreated: 'Send later scheduled. Keep MiNiMail running.',
       sendUndoAction: 'Отменить',
       sendCancelled: 'Отправка отменена',
+      scheduledSendCancelled: 'Scheduled send cancelled',
+      missedScheduledSendNotice: (count: number) => `${count} scheduled send${count === 1 ? '' : 's'} missed. Review to send now or cancel.`,
+      reviewScheduledSendsAction: 'Review',
       archiveSuccess: 'Письмо архивировано',
       archiveFailed: 'Не удалось архивировать письмо',
       archiveAction: 'Архивировать',
@@ -566,8 +636,12 @@ function getAppUi(appLanguage: AppLanguage) {
     sendSuccess: '发送成功',
     sendFailedFallback: '发送失败',
     sendScheduled: '邮件将在 5 秒后发送',
+    scheduledSendCreated: '已安排稍后发送。请保持 MiNiMail 运行。',
     sendUndoAction: '撤销',
     sendCancelled: '已撤销发送',
+    scheduledSendCancelled: '已取消定时发送',
+    missedScheduledSendNotice: (count: number) => `${count} 封定时发送已错过，请选择重新发送或取消。`,
+    reviewScheduledSendsAction: '查看',
     archiveSuccess: '已归档邮件',
     archiveFailed: '归档失败',
     archiveAction: '归档',
@@ -609,6 +683,11 @@ function App() {
   const [isViewHydrating, setIsViewHydrating] = useState(false);
   const [localThreadMails, setLocalThreadMails] = useState<RendererMailSummary[]>([]);
   const [localComposeDrafts, setLocalComposeDrafts] = useState<ComposeDraftOption[]>([]);
+  const [scheduledSendJobs, setScheduledSendJobs] = useState<ScheduledSendJobSnapshot[]>([]);
+  const [selectedScheduledJobId, setSelectedScheduledJobId] = useState<string | null>(null);
+  const [scheduledNow, setScheduledNow] = useState(() => new Date());
+  const [isLoadingScheduledSends, setIsLoadingScheduledSends] = useState(false);
+  const [sendingScheduledJobId, setSendingScheduledJobId] = useState<string | null>(null);
   const [deletedComposeDraftTokens, setDeletedComposeDraftTokens] = useState<string[]>([]);
   const [backupState, setBackupState] = useState<BackupUiState>(() => createInitialBackupState());
   const [mailRoutingResults, setMailRoutingResults] = useState<MailRoutingResultEntry[]>([]);
@@ -639,6 +718,7 @@ function App() {
   const scheduledSendTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const activeScheduledSendsRef = useRef(new Set<string>());
   const staleScheduledSendIdsRef = useRef(new Set<string>());
+  const promptedMissedScheduledJobIdsRef = useRef(new Set<string>());
   const autoAnalysisBaselineEstablishedRef = useRef(false);
   const appLanguageHydratedRef = useRef(false);
   const accountFoldersFetchedAtRef = useRef(new Map<number, number>());
@@ -714,6 +794,11 @@ function App() {
   useEffect(() => {
     isAiClassifyingRef.current = isAiClassifying;
   }, [isAiClassifying]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setScheduledNow(new Date()), 30 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const effectiveAiTargetLanguage = useMemo(
     () => getAiLanguageFromAppLanguage(appLanguage),
@@ -1038,7 +1123,101 @@ function App() {
     return initialPath;
   }, [accountFoldersById, loadAccountFolders]);
 
+  const reloadScheduledSendJobs = useCallback(async () => {
+    setIsLoadingScheduledSends(true);
+    try {
+      const filter = currentAccount && currentAccount !== 'all'
+        ? { accountId: currentAccount.id }
+        : undefined;
+      const response = await window.electronAPI.invoke('mail:listScheduledSends', filter) as {
+        success?: boolean;
+        data?: ScheduledSendJobSnapshot[];
+        error?: string;
+      };
+      if (response?.success === false) {
+        throw new Error(response.error || 'Failed to load scheduled sends');
+      }
+      setScheduledSendJobs(Array.isArray(response?.data) ? response.data : []);
+    } catch (error) {
+      console.error('[mail:listScheduledSends]', error instanceof Error ? error.message : String(error));
+      setScheduledSendJobs([]);
+    } finally {
+      setIsLoadingScheduledSends(false);
+    }
+  }, [currentAccount]);
+
+  useEffect(() => {
+    if (accounts.length === 0) {
+      setScheduledSendJobs([]);
+      return;
+    }
+    void reloadScheduledSendJobs();
+  }, [accounts.length, reloadScheduledSendJobs]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onScheduledSendUpdated((payload) => {
+      const event = payload as ScheduledSendUpdatePayload;
+      if (!event || typeof event.jobId !== 'string') return;
+
+      if (event.job && typeof event.job === 'object') {
+        const updatedJob = event.job as ScheduledSendJobSnapshot;
+        setScheduledSendJobs((prev) => {
+          const exists = prev.some((job) => job.id === updatedJob.id);
+          return exists
+            ? prev.map((job) => job.id === updatedJob.id ? updatedJob : job)
+            : [updatedJob, ...prev];
+        });
+      }
+
+      void reloadScheduledSendJobs();
+
+      if (event.status === 'sent') {
+        setSelectedScheduledJobId((prev) => prev === event.jobId ? null : prev);
+        setSelectedEmail((prev) => (prev?.scheduledJobId === event.jobId ? null : prev));
+        clearCurrentMail();
+      }
+
+      if (event.trigger !== 'auto') return;
+
+      if (event.status === 'sent') {
+        setToasts((prev) => [...prev, {
+          id: `${event.jobId}:auto-sent`,
+          type: 'success',
+          message: appUi.sendSuccess,
+        }]);
+        return;
+      }
+
+      if (event.status === 'failed') {
+        setToasts((prev) => [...prev, {
+          id: `${event.jobId}:auto-failed`,
+          type: 'error',
+          message: appUi.sendFailedFallback,
+          actionLabel: appUi.reviewScheduledSendsAction,
+          onAction: () => {
+            setSelectedFolder('scheduled');
+            setSelectedScheduledJobId(event.jobId);
+            setSelectedEmail(null);
+            clearCurrentMail();
+          },
+        }]);
+      }
+    });
+
+    return unsubscribe;
+  }, [appUi, clearCurrentMail, reloadScheduledSendJobs]);
+
   const loadCachedForCurrentView = useCallback(async () => {
+    if (selectedFolder === 'scheduled') {
+      await reloadScheduledSendJobs();
+      setIsViewHydrating(false);
+      if (!initialHydrationDoneRef.current) {
+        initialHydrationDoneRef.current = true;
+        setIsAutoAnalysisReady(true);
+      }
+      return 0;
+    }
+
     const foldersToLoad = getSyncFoldersForView(selectedFolder);
     if (foldersToLoad.length === 0 || scopedAccounts.length === 0) {
       setIsViewHydrating(false);
@@ -1078,7 +1257,7 @@ function App() {
     }
 
     return loadedCount;
-  }, [mailFetchHistoryRange, replaceFolderEntries, resolveFolderPathForAction, scopedAccounts, selectedFolder, setMailList]);
+  }, [mailFetchHistoryRange, reloadScheduledSendJobs, replaceFolderEntries, resolveFolderPathForAction, scopedAccounts, selectedFolder, setMailList]);
 
   const reloadCurrentViewForHistoryRange = useCallback(async (range: MailHistoryRange) => {
     const foldersToLoad = getSyncFoldersForView(selectedFolder);
@@ -1241,9 +1420,78 @@ function App() {
     githubFolderCounts,
     priorityFolderCounts,
     categorySourceEmails,
-    folderEmails,
+    folderEmails: baseFolderEmails,
     githubConversationCount,
   } = mailListViewModel;
+
+  const visibleScheduledJobs = useMemo(() => {
+    const scopedAccountIds = new Set(scopedAccounts.map((account) => account.id));
+    return scheduledSendJobs
+      .filter((job) => scopedAccountIds.size === 0 || scopedAccountIds.has(job.accountId))
+      .filter((job) => job.status === 'scheduled' || job.status === 'missed' || job.status === 'failed')
+      .sort((a, b) => {
+        const rank = (status: ScheduledSendJobStatus) => status === 'scheduled' ? 0 : status === 'missed' ? 1 : 2;
+        const rankDiff = rank(a.status) - rank(b.status);
+        if (rankDiff !== 0) return rankDiff;
+        return new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime();
+      });
+  }, [scheduledSendJobs, scopedAccounts]);
+
+  const scheduledMailSummaries = useMemo<RendererMailSummary[]>(() => (
+    visibleScheduledJobs.map((job) => {
+      const account = accounts.find((item) => item.id === job.accountId);
+      const countdown = formatScheduledSendCountdown(job.scheduledAt, job.status, scheduledNow, appLanguage);
+      const scheduledDate = new Date(job.scheduledAt);
+      return {
+        id: `scheduled:${job.id}`,
+        uid: Math.abs(job.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)),
+        from: job.fromEmail || account?.email || '',
+        fromName: account?.display_name || (job.fromEmail ? job.fromEmail.split('@')[0] : ''),
+        to: job.to.join(', '),
+        subject: job.subject || (appLanguage === 'zh' ? '无主题' : 'No subject'),
+        date: Number.isFinite(scheduledDate.getTime()) ? scheduledDate : new Date(job.createdAt),
+        snippet: countdown.label,
+        hasAttachments: (job.outgoingAttachments || []).length > 0,
+        isRead: true,
+        isStarred: false,
+        folder: 'scheduled',
+        accountId: job.accountId,
+        localSendId: job.localSendId,
+        deliveryState: job.status,
+        deliveryError: job.failureReason,
+        scheduledJobId: job.id,
+        scheduledAt: job.scheduledAt,
+        bodyText: job.bodyText,
+        bodyHtml: job.bodyHtml,
+      };
+    })
+  ), [accounts, appLanguage, scheduledNow, visibleScheduledJobs]);
+
+  const folderEmails = selectedFolder === 'scheduled' ? scheduledMailSummaries : baseFolderEmails;
+  const scheduledCount = visibleScheduledJobs.filter((job) => job.status === 'scheduled').length;
+
+  useEffect(() => {
+    const missedJobs = visibleScheduledJobs.filter((job) => job.status === 'missed');
+    if (missedJobs.length === 0) return;
+    const firstUnprompted = missedJobs.find((job) => !promptedMissedScheduledJobIdsRef.current.has(job.id));
+    if (!firstUnprompted) return;
+    for (const job of missedJobs) {
+      promptedMissedScheduledJobIdsRef.current.add(job.id);
+    }
+
+    setToasts((prev) => [...prev, {
+      id: `${firstUnprompted.id}:missed-scheduled`,
+      type: 'info',
+      message: appUi.missedScheduledSendNotice(missedJobs.length),
+      actionLabel: appUi.reviewScheduledSendsAction,
+      onAction: () => {
+        setSelectedFolder('scheduled');
+        setSelectedScheduledJobId(firstUnprompted.id);
+        setSelectedEmail(null);
+        clearCurrentMail();
+      },
+    }]);
+  }, [appUi, clearCurrentMail, visibleScheduledJobs]);
 
   useEffect(() => {
     i18n.changeLanguage(appLanguage);
@@ -1537,8 +1785,12 @@ function App() {
   }, [getResolvedFolderPath, mailList, setMailList]);
 
   const sortedFolderEmails = useMemo(
-    () => [...folderEmails].sort((a, b) => b.date.getTime() - a.date.getTime()),
-    [folderEmails]
+    () => [...folderEmails].sort((a, b) => (
+      selectedFolder === 'scheduled'
+        ? a.date.getTime() - b.date.getTime()
+        : b.date.getTime() - a.date.getTime()
+    )),
+    [folderEmails, selectedFolder]
   );
 
   const dismissToast = useCallback((id: string) => {
@@ -1546,6 +1798,21 @@ function App() {
   }, []);
 
   const handleViewEmail = (email: RendererMailSummary) => {
+    if (email.folder === 'scheduled') {
+      const jobId = email.scheduledJobId || email.id.replace(/^scheduled:/, '');
+      setSelectedScheduledJobId(jobId);
+      setSelectedEmail(email);
+      setCurrentMail({
+        ...email,
+        bodyText: email.bodyText || '',
+        bodyHtml: email.bodyHtml,
+        attachments: [],
+        headers: {},
+      });
+      if (isMobile) setMobileView('detail');
+      return;
+    }
+
     const accountExists = accounts.some((account) => account.id === email.accountId);
     if (!accountExists) {
       removeMailFromState(email);
@@ -2394,6 +2661,7 @@ function App() {
       draftKey: draftIdentity,
       recipients: restoreRecipients,
       body: options.editableBody,
+      bodyHtml: options.bodyHtml,
       quotedOriginal,
       outgoingAttachments,
     } satisfies PersistedComposeDraftPayload);
@@ -2494,6 +2762,7 @@ function App() {
         recipients: restoreRecipients,
         subject: options.subject,
         body: options.editableBody,
+        bodyHtml: options.bodyHtml,
         outgoingAttachments,
         mode: composeMode,
         source,
@@ -2714,6 +2983,154 @@ function App() {
 
     return { success: true, message: appUi.sendScheduled };
   };
+
+  const handleScheduleSendMail = async (options: {
+    accountId: number;
+    fromEmail: string;
+    to: string[];
+    subject: string;
+    bodyText: string;
+    bodyHtml?: string;
+    editableBody: string;
+    draftKey: string;
+    scheduledAt: string;
+    quotedOriginal?: ComposeQuotedOriginal | null;
+    sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
+  }): Promise<{ success: boolean; message: string }> => {
+    const account = accounts.find((item) => item.id === options.accountId);
+    if (!account) {
+      const message = appUi.sendFailedFallback;
+      setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }]);
+      return { success: false, message };
+    }
+
+    const outgoingAttachments = normalizeOutgoingAttachments(options.outgoingAttachments);
+    const sentFolderPath = getResolvedFolderPath(options.accountId, 'sent');
+    const localSendId = `${options.accountId}:scheduled:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+    const restoreRecipients = options.to
+      .map((recipient) => buildComposeRecipientOption(recipient, recipient.split('@')[0]))
+      .filter((recipient): recipient is ComposeRecipientOption => Boolean(recipient));
+    const draftPayload = {
+      draftKey: options.draftKey,
+      recipients: restoreRecipients,
+      body: options.editableBody,
+      bodyHtml: options.bodyHtml,
+      quotedOriginal: options.quotedOriginal || null,
+      outgoingAttachments,
+    } satisfies PersistedComposeDraftPayload;
+
+    try {
+      const response = await window.electronAPI.invoke('mail:scheduleSend', {
+        localSendId,
+        accountId: options.accountId,
+        fromEmail: options.fromEmail || account.email,
+        to: options.to,
+        subject: options.subject,
+        bodyText: options.bodyText,
+        bodyHtml: options.bodyHtml,
+        editableBody: options.editableBody,
+        outgoingAttachments,
+        draftPayload,
+        sentFolderPath,
+        scheduledAt: options.scheduledAt,
+      }) as { success?: boolean; data?: unknown; error?: string };
+
+      if (response?.success === false) {
+        throw new Error(response.error || appUi.sendFailedFallback);
+      }
+
+      if (response?.data && typeof response.data === 'object') {
+        const job = response.data as ScheduledSendJobSnapshot;
+        setScheduledSendJobs((prev) => {
+          const filtered = prev.filter((item) => item.id !== job.id);
+          return [job, ...filtered];
+        });
+        setSelectedScheduledJobId(job.id);
+      }
+      setSelectedFolder('scheduled');
+      setSelectedEmail(null);
+      clearCurrentMail();
+      void reloadScheduledSendJobs();
+      setToasts((prev) => [...prev, {
+        id: `${localSendId}:scheduled-job`,
+        type: 'success',
+        message: appUi.scheduledSendCreated,
+      }]);
+      return { success: true, message: appUi.scheduledSendCreated };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : appUi.sendFailedFallback;
+      console.error('[mail:scheduleSend]', message);
+      setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }]);
+      return { success: false, message };
+    }
+  };
+
+  const handleCancelScheduledSend = useCallback(async (jobId: string) => {
+    try {
+      const response = await window.electronAPI.invoke('mail:cancelScheduledSend', jobId) as {
+        success?: boolean;
+        data?: ScheduledSendJobSnapshot | null;
+        error?: string;
+      };
+      if (response?.success === false) {
+        throw new Error(response.error || appUi.sendFailedFallback);
+      }
+
+      if (response?.data) {
+        setScheduledSendJobs((prev) => prev.map((job) => job.id === jobId ? response.data! : job));
+      }
+      setSelectedScheduledJobId((prev) => prev === jobId ? null : prev);
+      setSelectedEmail((prev) => (prev?.scheduledJobId === jobId ? null : prev));
+      clearCurrentMail();
+      await reloadScheduledSendJobs();
+      setToasts((prev) => [...prev, {
+        id: `${jobId}:cancelled`,
+        type: 'info',
+        message: appUi.scheduledSendCancelled,
+      }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : appUi.sendFailedFallback;
+      console.error('[mail:cancelScheduledSend]', message);
+      setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }]);
+    }
+  }, [appUi.scheduledSendCancelled, appUi.sendFailedFallback, clearCurrentMail, reloadScheduledSendJobs]);
+
+  const handleSendScheduledNow = useCallback(async (jobId: string) => {
+    setSendingScheduledJobId(jobId);
+    try {
+      const response = await window.electronAPI.invoke('mail:sendScheduledNow', jobId) as {
+        success?: boolean;
+        data?: ScheduledSendJobSnapshot | null;
+        error?: string;
+      };
+
+      if (response?.data) {
+        setScheduledSendJobs((prev) => prev.map((job) => job.id === jobId ? response.data! : job));
+      }
+
+      if (response?.success === false) {
+        throw new Error(response.error || appUi.sendFailedFallback);
+      }
+
+      setSelectedScheduledJobId((prev) => prev === jobId ? null : prev);
+      setSelectedEmail((prev) => (prev?.scheduledJobId === jobId ? null : prev));
+      clearCurrentMail();
+      await reloadScheduledSendJobs();
+      setToasts((prev) => [...prev, {
+        id: `${jobId}:sent-now`,
+        type: 'success',
+        message: appUi.sendSuccess,
+      }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : appUi.sendFailedFallback;
+      console.error('[mail:sendScheduledNow]', message);
+      await reloadScheduledSendJobs();
+      setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }]);
+    } finally {
+      setSendingScheduledJobId((prev) => prev === jobId ? null : prev);
+    }
+  }, [appUi.sendFailedFallback, appUi.sendSuccess, clearCurrentMail, reloadScheduledSendJobs]);
 
   const handleSaveAttempt = async (input: CreateAccountInput) => {
     const result = await createAccount(input);
@@ -3004,6 +3421,7 @@ function App() {
     to: string[];
     subject: string;
     body: string;
+    bodyHtml?: string;
     draftKey: string;
     quotedOriginal?: ComposeQuotedOriginal | null;
     outgoingAttachments?: OutgoingAttachmentReference[];
@@ -3032,6 +3450,8 @@ function App() {
       messageId: `<${options.draftKey}@minimail>`,
       localDraftKey: options.draftKey,
       attachments: outgoingAttachmentMetadata,
+      bodyHtml: options.bodyHtml,
+      bodyText: options.body,
     };
 
     const draftOption: ComposeDraftOption = {
@@ -3047,6 +3467,7 @@ function App() {
         .filter((value): value is ComposeRecipientOption => Boolean(value)),
       subject: options.subject,
       body: options.body,
+      bodyHtml: options.bodyHtml,
       quotedOriginal: options.quotedOriginal || null,
       outgoingAttachments,
       date: draftMail.date,
@@ -3058,10 +3479,12 @@ function App() {
         date: draftMail.date.toISOString(),
         cachedAt: new Date().toISOString(),
         bodyText: options.body,
+        bodyHtml: options.bodyHtml,
         attachments: outgoingAttachmentMetadata,
         draftPayload: JSON.stringify({
           recipients: draftOption.recipients,
           body: options.body,
+          bodyHtml: options.bodyHtml,
           quotedOriginal: options.quotedOriginal || null,
           outgoingAttachments,
         }),
@@ -3186,6 +3609,7 @@ function App() {
   }, [composeContext.mode, composeContext.source, composeRestoreDraft]);
 
   const composeInitialBody = composeRestoreDraft?.body || replySuggestion || '';
+  const composeInitialHtml = composeRestoreDraft?.bodyHtml || '';
   const composeInitialOutgoingAttachments = useMemo<OutgoingAttachmentReference[]>(
     () => composeRestoreDraft?.outgoingAttachments || [],
     [composeRestoreDraft],
@@ -3285,17 +3709,34 @@ function App() {
     return Array.from(byId.values()).sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [deletedComposeDraftTokens, localComposeDrafts, mailList]);
 
+  const selectedScheduledJob = useMemo(() => {
+    if (selectedFolder !== 'scheduled') return null;
+    if (selectedScheduledJobId) {
+      return visibleScheduledJobs.find((job) => job.id === selectedScheduledJobId) || null;
+    }
+    const selectedJobId = selectedEmail?.scheduledJobId;
+    return selectedJobId
+      ? visibleScheduledJobs.find((job) => job.id === selectedJobId) || null
+      : null;
+  }, [selectedEmail?.scheduledJobId, selectedFolder, selectedScheduledJobId, visibleScheduledJobs]);
+
   const allVisibleIds = sortedFolderEmails.map((mail) => mail.id);
   const isAllSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.includes(id));
   const isAllAccountsView = currentAccount === 'all';
   const hasConnectedAccounts = accountList.length > 0;
   const listTitle = selectedFolder === 'github'
     ? 'GitHub'
-    : (isGitHubSmartFolderView || isPriorityFolderView)
+    : selectedFolder === 'scheduled'
+      ? t('scheduled')
+      : (isGitHubSmartFolderView || isPriorityFolderView)
       ? selectedFolder
       : isAllAccountsView
         ? t('allAccounts')
         : (currentAccount && 'name' in currentAccount ? currentAccount.name : 'No account connected');
+  const selectedMailListId = selectedFolder === 'scheduled' && selectedScheduledJobId
+    ? `scheduled:${selectedScheduledJobId}`
+    : selectedEmail?.id || null;
+  const scheduledEmptyMessage = appLanguage === 'zh' ? '暂无待发送邮件' : 'No scheduled emails';
 
   return (
     <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#050B14' }}>
@@ -3312,6 +3753,7 @@ function App() {
               setSelectedFolder(folderId);
               setSelectedIds([]);
               setSelectedEmail(null);
+              setSelectedScheduledJobId(null);
               clearCurrentMail();
             }}
             onCompose={() => openCompose('new', null)}
@@ -3330,6 +3772,7 @@ function App() {
             githubConversationCount={githubConversationCount}
             githubFolderCounts={githubFolderCounts}
             priorityFolderCounts={priorityFolderCounts}
+            scheduledCount={scheduledCount}
             appLanguage={appLanguage}
             isMacOS={isMacOS}
           />
@@ -3344,19 +3787,22 @@ function App() {
             appLanguage={appLanguage}
             emails={folderEmails}
             categorySourceEmails={categorySourceEmails}
-            selectedEmailId={selectedEmail?.id || null}
+            selectedEmailId={selectedMailListId}
             onSelectEmail={handleSelectEmail}
             onViewEmail={handleViewEmail}
             onToggleSelect={handleToggleSelect}
             selectedIds={selectedIds}
             onSelectAll={handleSelectAll}
-          isAllSelected={isAllSelected}
-            isLoading={isSyncing || isViewHydrating}
+            isAllSelected={isAllSelected}
+            isLoading={selectedFolder === 'scheduled' ? isLoadingScheduledSends : (isSyncing || isViewHydrating)}
             listTitle={listTitle}
             accountEmails={conversationAccountEmails}
-            emptyMessage={!hasConnectedAccounts ? 'No account connected / 请添加邮箱账号' : undefined}
+            emptyMessage={selectedFolder === 'scheduled'
+              ? scheduledEmptyMessage
+              : !hasConnectedAccounts ? 'No account connected / 请添加邮箱账号' : undefined}
             stagedHistoryLabel={stagedHistoryLabel}
             githubPriorityById={githubPriorityById}
+            sortOrder={selectedFolder === 'scheduled' ? 'oldest' : 'newest'}
           />
         </div>
 
@@ -3377,69 +3823,85 @@ function App() {
         )}
 
         <div className="flex-1 min-w-0 flex-shrink-0 overflow-hidden flex flex-col">
-          <MailDetail
-            t={t}
-            email={displayedMail}
-            onReply={() => openCompose('reply')}
-            onForward={() => openCompose('forward')}
-            onDelete={() => {
-              if (selectedEmail) {
-                void handleDeleteForMail(selectedEmail).catch((err) => {
+          {selectedFolder === 'scheduled' ? (
+            <ScheduledSendDetail
+              job={selectedScheduledJob}
+              appLanguage={appLanguage}
+              now={scheduledNow}
+              onCancel={(jobId) => {
+                void handleCancelScheduledSend(jobId);
+              }}
+              onSendNow={(jobId) => {
+                void handleSendScheduledNow(jobId);
+              }}
+              isCancelling={isLoadingScheduledSends}
+              isSendingNow={Boolean(selectedScheduledJob && sendingScheduledJobId === selectedScheduledJob.id)}
+            />
+          ) : (
+            <MailDetail
+              t={t}
+              email={displayedMail}
+              onReply={() => openCompose('reply')}
+              onForward={() => openCompose('forward')}
+              onDelete={() => {
+                if (selectedEmail) {
+                  void handleDeleteForMail(selectedEmail).catch((err) => {
+                    setToasts((prev) => [...prev, {
+                      id: Date.now().toString(),
+                      type: 'error',
+                      message: (err as Error).message || t('delete'),
+                    }]);
+                  });
+                }
+              }}
+              onBack={isMobile ? handleBackToList : undefined}
+              onShare={handleShare}
+              aiTargetLanguage={effectiveAiTargetLanguage}
+              onReplyWithSuggestion={handleReplyWithSuggestion}
+              onSaveQuickPhrase={handleSaveQuickPhraseFromSuggestion}
+              loadMailBody={loadMailBody}
+              mailLoadingState={mailLoadingState}
+              mailError={mailError}
+              onRetry={() => selectedEmail && fetchMailDetail(selectedEmail.accountId, selectedEmail.uid, selectedEmail.folder, selectedEmail)}
+              conversationMessages={conversationMessages}
+              accountEmails={conversationAccountEmails}
+              onReplyForMail={(mail) => openCompose('reply', mail)}
+              onForwardForMail={(mail) => openCompose('forward', mail)}
+              onDeleteMail={(mail) => {
+                void handleDeleteForMail(mail).catch((err) => {
                   setToasts((prev) => [...prev, {
                     id: Date.now().toString(),
                     type: 'error',
                     message: (err as Error).message || t('delete'),
                   }]);
                 });
-              }
-            }}
-            onBack={isMobile ? handleBackToList : undefined}
-            onShare={handleShare}
-            aiTargetLanguage={effectiveAiTargetLanguage}
-            onReplyWithSuggestion={handleReplyWithSuggestion}
-            onSaveQuickPhrase={handleSaveQuickPhraseFromSuggestion}
-            loadMailBody={loadMailBody}
-            mailLoadingState={mailLoadingState}
-            mailError={mailError}
-            onRetry={() => selectedEmail && fetchMailDetail(selectedEmail.accountId, selectedEmail.uid, selectedEmail.folder, selectedEmail)}
-            conversationMessages={conversationMessages}
-            accountEmails={conversationAccountEmails}
-            onReplyForMail={(mail) => openCompose('reply', mail)}
-            onForwardForMail={(mail) => openCompose('forward', mail)}
-            onDeleteMail={(mail) => {
-              void handleDeleteForMail(mail).catch((err) => {
-                setToasts((prev) => [...prev, {
-                  id: Date.now().toString(),
-                  type: 'error',
-                  message: (err as Error).message || t('delete'),
-                }]);
-              });
-            }}
-            onArchiveMail={(mail) => {
-              void handleArchiveForMail(mail);
-            }}
-            onToggleStarMail={(mail) => {
-              void handleToggleStarForMail(mail);
-            }}
-            onError={(message: string) => setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }])}
-            isStarred={Boolean(displayedMail?.isStarred)}
-            onToggleStar={() => {
-              const target = displayedMail;
-              if (target) {
-                void handleToggleStarForMail(target);
-              }
-            }}
-            onRescanMail={(mail) => {
-              void handleRescanMail(mail);
-            }}
-            onArchive={() => {
-              const target = displayedMail;
-              if (target) {
-                void handleArchiveForMail(target);
-              }
-            }}
-            routingDiagnostics={routingDiagnostics}
-          />
+              }}
+              onArchiveMail={(mail) => {
+                void handleArchiveForMail(mail);
+              }}
+              onToggleStarMail={(mail) => {
+                void handleToggleStarForMail(mail);
+              }}
+              onError={(message: string) => setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message }])}
+              isStarred={Boolean(displayedMail?.isStarred)}
+              onToggleStar={() => {
+                const target = displayedMail;
+                if (target) {
+                  void handleToggleStarForMail(target);
+                }
+              }}
+              onRescanMail={(mail) => {
+                void handleRescanMail(mail);
+              }}
+              onArchive={() => {
+                const target = displayedMail;
+                if (target) {
+                  void handleArchiveForMail(target);
+                }
+              }}
+              routingDiagnostics={routingDiagnostics}
+            />
+          )}
         </div>
 
         <ToastContainer toasts={toasts} onDismiss={dismissToast} onClick={() => {}} />
@@ -3452,10 +3914,12 @@ function App() {
           accounts={accountList}
           selectedAccount={composeSelectedAccount}
           onSend={handleSendMail}
+          onScheduleSend={handleScheduleSendMail}
           onDeleteDraft={handleDeleteComposeDraft}
           initialRecipients={composeInitialRecipients}
           initialSubject={composeInitialSubject}
           initialEditableBody={composeInitialBody}
+          initialEditableHtml={composeInitialHtml}
           initialQuotedOriginal={composeQuotedOriginal}
           initialOutgoingAttachments={composeInitialOutgoingAttachments}
           initialHydrateKey={composeInitialHydrateKey}

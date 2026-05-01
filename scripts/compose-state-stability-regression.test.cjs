@@ -32,9 +32,9 @@ function testSubjectBodyAndAttachmentsDoNotResetRecipients() {
   assert(subjectInput.includes('onChange={(e) => setSubject(e.target.value)}'), 'Subject edits should only update subject state');
   assert(!subjectInput.includes('setRecipients'), 'Subject edits must not reset recipients');
 
-  const bodyInput = sliceBetween(compose, 'value={body}', 'placeholder={composeUi.bodyPlaceholder}');
-  assert(bodyInput.includes('onChange={(e) => setBody(e.target.value)}'), 'Body edits should only update body state');
-  assert(!bodyInput.includes('setRecipients'), 'Body edits must not reset recipients');
+  const bodyEditor = sliceBetween(compose, 'editor.on(\'text-change\'', 'editor.on(\'selection-change\'');
+  assert(bodyEditor.includes('setRichBodyState(editor.getText(), editor.root.innerHTML)'), 'Rich text body edits should only update body/bodyHtml state');
+  assert(!bodyEditor.includes('setRecipients'), 'Body edits must not reset recipients');
 
   const addAttachments = sliceBetween(compose, 'const handleAddAttachments = async () => {', 'const resolveRecipientsForSend');
   assert(addAttachments.includes('setOutgoingAttachments((prev) =>'), 'Adding attachments should append through a functional attachment update');

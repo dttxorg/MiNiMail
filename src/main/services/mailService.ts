@@ -929,7 +929,7 @@ async function syncMailsOnce(
   const errors: string[] = [];
 
   try {
-    // Step 1: Fetch from IMAP (real connection via mail.ts → imap-client)
+    // Step 1: Fetch from IMAP (real connection via mail.ts -> imapflow)
     const cachedUids = getCachedUids(accountId, folder);
     const newMails: MailSummary[] = [];
     const seenNewUids = new Set<number>();

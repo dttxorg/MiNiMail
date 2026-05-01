@@ -4,11 +4,12 @@ import log from 'electron-log';
 import { initDatabase, closeDatabase, getSetting } from './database';
 import { registerAccountHandlers } from './ipc/accounts';
 import { registerSettingsHandlers } from './ipc/settings';
-import { registerMailHandlers } from './ipc/mail';
+import { registerMailHandlers, startScheduledSendScheduler, stopScheduledSendScheduler } from './ipc/mail';
 import { registerAIHandlers } from './ipc/ai';
 import { registerOAuthHandlers } from './ipc/oauth';
 import { APP_NAME, APP_USER_MODEL_ID, getAppIconPath } from './brand';
 import { initializeAISecretStorage } from './services/ai';
+import { closeScheduledSendDb, restoreScheduledSendJobs } from './services/scheduledSendService';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -224,6 +225,19 @@ function updateApplicationMenuLanguage(language: string | null | undefined): voi
   rebuildApplicationMenu();
 }
 
+function restoreScheduledSendsOnStartup(): void {
+  try {
+    const result = restoreScheduledSendJobs(new Date());
+    log.info('[scheduledSend] startup restore summary', {
+      missedCount: result.missedCount,
+      scheduledCount: result.scheduled.length,
+      missedTotal: result.missed.length,
+    });
+  } catch (error) {
+    log.error('[scheduledSend] startup restore failed:', error instanceof Error ? error.message : String(error));
+  }
+}
+
 function createAppTray(): void {
   if (isMacOS) return;
   if (appTray) return;
@@ -379,9 +393,11 @@ app.whenReady().then(() => {
   registerMailHandlers();
   registerAIHandlers();
   registerOAuthHandlers();
+  restoreScheduledSendsOnStartup();
 
   log.info('Creating window...');
   createWindow();
+  startScheduledSendScheduler();
   if (!isMacOS) {
     createAppTray();
   }
@@ -402,6 +418,8 @@ app.on('before-quit', () => {
   isQuitting = true;
   log.info('App quitting, closing database...');
   destroyAppTray();
+  stopScheduledSendScheduler();
+  closeScheduledSendDb();
   closeDatabase();
 });
 

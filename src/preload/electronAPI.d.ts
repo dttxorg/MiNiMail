@@ -12,6 +12,14 @@ export interface MailStagedSyncProgress {
   done: boolean;
 }
 
+export interface ScheduledSendUpdateEvent {
+  trigger: 'manual' | 'auto';
+  status: 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed' | 'missed' | 'skipped';
+  jobId: string;
+  job?: unknown;
+  error?: string;
+}
+
 export interface MailAttachmentActionRequest {
   accountId: number;
   folder: string;
@@ -38,6 +46,7 @@ export interface ElectronAPI {
   onMailSync: (callback: (mail: any) => void) => void;
   onMailListUpdated: (callback: (data: { accountId: number; folder: string; newCount: number }) => void) => void;
   onMailStagedSyncProgress: (callback: (progress: MailStagedSyncProgress) => void) => () => void;
+  onScheduledSendUpdated: (callback: (event: ScheduledSendUpdateEvent) => void) => () => void;
   onBackupProgress: (callback: (progress: MailBackupProgress) => void) => () => void;
   minimizeWindow: () => void;
   maximizeWindow: () => void;

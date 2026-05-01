@@ -172,6 +172,36 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/compose-templates.test.ts'],
   },
   {
+    name: 'compose rich text regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/compose-rich-text.test.ts'],
+  },
+  {
+    name: 'scheduled send service regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/scheduled-send-service.test.ts'],
+  },
+  {
+    name: 'scheduled send IPC regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/scheduled-send-ipc.test.ts'],
+  },
+  {
+    name: 'scheduled send compose regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/scheduled-send-compose.test.ts'],
+  },
+  {
+    name: 'scheduled send UI regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/scheduled-send-ui.test.ts'],
+  },
+  {
+    name: 'scheduled send automatic due regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/scheduled-send-auto.test.ts'],
+  },
+  {
     name: 'email provider auto config regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/email-provider-auto-config.test.ts'],

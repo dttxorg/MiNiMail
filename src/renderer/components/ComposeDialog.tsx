@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
-import { ChevronDown, Globe, Languages, Loader2, Paperclip, X } from 'lucide-react';
+import Quill from 'quill';
+import 'quill/dist/quill.snow.css';
+import { CalendarClock, ChevronDown, Globe, Languages, Loader2, Paperclip, X } from 'lucide-react';
 import type { AppLanguage } from '../../shared/mailFolders';
 import {
   detectAiLanguageFromText,
@@ -16,11 +18,14 @@ import {
   uiRadius,
 } from '../utils/uiDesignTokens';
 import {
-  buildComposeHtmlBody,
+  buildComposeHtmlBodyFromEditableHtml,
   buildComposeRecipientOption,
   buildComposeTextBody,
+  convertComposePlainTextToHtml,
   filterRecipientSuggestions,
+  normalizeComposeEditorText,
   normalizeComposeRecipientInput,
+  sanitizeComposeEditableHtml,
   type ComposeDraftOption,
   type ComposeQuotedOriginal,
   type ComposeRecipientOption,
@@ -46,6 +51,11 @@ import {
   type ComposeTemplate,
   type ComposeTemplateSettings,
 } from '../../shared/compose/templates';
+import {
+  getSchedulePresetTime,
+  validateScheduledAt,
+  type ComposeSchedulePreset,
+} from '../../shared/compose/scheduleSend';
 
 type ComposeUiLabels = {
   composeTitle: string;
@@ -61,7 +71,19 @@ type ComposeUiLabels = {
   aiTranslateLabel: string;
   cancelLabel: string;
   sendLabel: string;
+  sendNowLabel: string;
   sendingLabel: string;
+  sendLaterLabel: string;
+  scheduleIn10MinutesLabel: string;
+  scheduleThisEveningLabel: string;
+  scheduleTomorrowMorningLabel: string;
+  scheduleCustomTimeLabel: string;
+  scheduleCustomTimePlaceholder: string;
+  scheduleConfirmLabel: string;
+  scheduleNoticeTitle: string;
+  scheduleNoticeBody: string;
+  schedulePastTimeError: string;
+  scheduleFailed: string;
   saveDraftLabel: string;
   savingDraftLabel: string;
   draftSavedLabel: string;
@@ -98,6 +120,28 @@ type ComposeUiLabels = {
 
 type ComposeTranslator = (key: string, options?: Record<string, unknown>) => string;
 
+let composeRichTextFormatsRegistered = false;
+
+function registerComposeRichTextFormats(): void {
+  if (composeRichTextFormatsRegistered) return;
+  composeRichTextFormatsRegistered = true;
+
+  const Font = Quill.import('formats/font') as { FontStyle?: { whitelist?: string[] } };
+  if (Font.FontStyle) {
+    Font.FontStyle.whitelist = ['sans-serif', 'serif', 'monospace'];
+    Quill.register(Font.FontStyle, true);
+  }
+
+  const Size = Quill.import('attributors/style/size') as { whitelist?: string[] };
+  Size.whitelist = ['12px', '14px', '16px', '18px', '24px', '32px'];
+  Quill.register(Size, true);
+
+  const Align = Quill.import('formats/align') as { AlignStyle?: { whitelist?: string[] } };
+  if (Align.AlignStyle) {
+    Quill.register(Align.AlignStyle, true);
+  }
+}
+
 function labelWithFallback(
   t: ComposeTranslator,
   key: string,
@@ -123,7 +167,19 @@ function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
     aiTranslateLabel: t('composeDialog.aiTranslateLabel'),
     cancelLabel: t('composeDialog.cancelLabel'),
     sendLabel: t('composeDialog.sendLabel'),
+    sendNowLabel: t('composeDialog.sendNowLabel'),
     sendingLabel: t('composeDialog.sendingLabel'),
+    sendLaterLabel: t('composeDialog.sendLaterLabel'),
+    scheduleIn10MinutesLabel: t('composeDialog.scheduleIn10MinutesLabel'),
+    scheduleThisEveningLabel: t('composeDialog.scheduleThisEveningLabel'),
+    scheduleTomorrowMorningLabel: t('composeDialog.scheduleTomorrowMorningLabel'),
+    scheduleCustomTimeLabel: t('composeDialog.scheduleCustomTimeLabel'),
+    scheduleCustomTimePlaceholder: t('composeDialog.scheduleCustomTimePlaceholder'),
+    scheduleConfirmLabel: t('composeDialog.scheduleConfirmLabel'),
+    scheduleNoticeTitle: t('composeDialog.scheduleNoticeTitle'),
+    scheduleNoticeBody: t('composeDialog.scheduleNoticeBody'),
+    schedulePastTimeError: t('composeDialog.schedulePastTimeError'),
+    scheduleFailed: t('composeDialog.scheduleFailed'),
     saveDraftLabel: t('composeDialog.saveDraftLabel'),
     savingDraftLabel: t('composeDialog.savingDraftLabel'),
     draftSavedLabel: t('composeDialog.draftSavedLabel'),
@@ -195,6 +251,7 @@ interface ComposeDialogProps {
     to: string[];
     subject: string;
     body: string;
+    bodyHtml?: string;
     draftKey: string;
     quotedOriginal?: ComposeQuotedOriginal | null;
     outgoingAttachments?: OutgoingAttachmentReference[];
@@ -223,9 +280,24 @@ interface ComposeDialogProps {
     sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
     outgoingAttachments?: OutgoingAttachmentReference[];
   }) => Promise<{ success: boolean; message: string }>;
+  onScheduleSend?: (options: {
+    accountId: number;
+    fromEmail: string;
+    to: string[];
+    subject: string;
+    bodyText: string;
+    bodyHtml?: string;
+    editableBody: string;
+    draftKey: string;
+    scheduledAt: string;
+    quotedOriginal?: ComposeQuotedOriginal | null;
+    sourceDraft?: Pick<ComposeDraftOption, 'id' | 'accountId' | 'uid' | 'folder' | 'messageId' | 'localOnly' | 'draftKey'> | null;
+    outgoingAttachments?: OutgoingAttachmentReference[];
+  }) => Promise<{ success: boolean; message: string }>;
   initialRecipients?: ComposeRecipientOption[];
   initialSubject?: string;
   initialEditableBody?: string;
+  initialEditableHtml?: string;
   initialQuotedOriginal?: ComposeQuotedOriginal | null;
   initialOutgoingAttachments?: OutgoingAttachmentReference[];
   initialHydrateKey?: string;
@@ -253,6 +325,21 @@ function sanitizeQuotedOriginalHtml(value: string): string {
       'bgcolor', 'align', 'valign', 'cellpadding', 'cellspacing', 'border', 'dir',
     ],
   });
+}
+
+function sanitizeComposeEditorHtml(value: string): string {
+  return sanitizeComposeEditableHtml(DOMPurify.sanitize(value, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'span', 'div',
+      'img', 'hr', 'pre', 'code',
+    ],
+    ALLOWED_ATTR: [
+      'href', 'src', 'alt', 'title', 'style', 'class', 'target',
+      'width', 'height', 'align',
+    ],
+    ALLOW_DATA_ATTR: false,
+  }));
 }
 
 function buildOriginalOutgoingAttachments(quotedOriginal?: ComposeQuotedOriginal | null): OutgoingAttachmentReference[] {
@@ -289,10 +376,12 @@ export function ComposeDialog({
   accounts,
   selectedAccount,
   onSend,
+  onScheduleSend,
   onDeleteDraft,
   initialRecipients,
   initialSubject,
   initialEditableBody,
+  initialEditableHtml,
   initialQuotedOriginal,
   initialOutgoingAttachments,
   initialHydrateKey,
@@ -310,12 +399,15 @@ export function ComposeDialog({
   const [recipientInput, setRecipientInput] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [bodyHtml, setBodyHtml] = useState('');
   const [sending, setSending] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showDraftMenu, setShowDraftMenu] = useState(false);
+  const [showScheduleMenu, setShowScheduleMenu] = useState(false);
   const [showQuickPhraseMenu, setShowQuickPhraseMenu] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<ComposeTemplate | null>(null);
@@ -327,8 +419,13 @@ export function ComposeDialog({
   const [currentQuotedOriginal, setCurrentQuotedOriginal] = useState<ComposeQuotedOriginal | null>(null);
   const [activeDraftSource, setActiveDraftSource] = useState<ComposeDraftOption | null>(null);
   const [outgoingAttachments, setOutgoingAttachments] = useState<OutgoingAttachmentReference[]>([]);
+  const [customScheduleValue, setCustomScheduleValue] = useState('');
   const recipientInputRef = useRef<HTMLInputElement | null>(null);
-  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const richTextContainerRef = useRef<HTMLDivElement | null>(null);
+  const richTextEditorRef = useRef<Quill | null>(null);
+  const applyingRichTextRef = useRef(false);
+  const bodyRef = useRef('');
+  const bodyHtmlRef = useRef('');
   const bodySelectionRef = useRef<{ start: number; end: number; userSet: boolean }>({ start: 0, end: 0, userSet: false });
   const lastInitialHydrateKeyRef = useRef<string | null>(null);
   const signatureApplyKeyRef = useRef<string | null>(null);
@@ -366,10 +463,79 @@ export function ComposeDialog({
 
   const createLocalDraftKey = () => `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+  const getRichTextHtml = () => sanitizeComposeEditorHtml(
+    richTextEditorRef.current?.root.innerHTML || bodyHtmlRef.current,
+  );
+
+  const focusRichTextAt = (cursor: number) => {
+    requestAnimationFrame(() => {
+      const editor = richTextEditorRef.current;
+      if (!editor) return;
+      const maxIndex = Math.max(0, editor.getLength() - 1);
+      const safeCursor = Math.max(0, Math.min(maxIndex, cursor));
+      editor.focus();
+      editor.setSelection(safeCursor, 0, 'silent');
+    });
+  };
+
+  const setPlainBodyState = (nextBody: string, options: { cursor?: number; userSet?: boolean; focus?: boolean } = {}) => {
+    const normalizedBody = String(nextBody || '').replace(/\r\n/g, '\n');
+    const nextHtml = convertComposePlainTextToHtml(normalizedBody);
+    bodyRef.current = normalizedBody;
+    bodyHtmlRef.current = nextHtml;
+    setBody(normalizedBody);
+    setBodyHtml(nextHtml);
+
+    const editor = richTextEditorRef.current;
+    if (editor) {
+      applyingRichTextRef.current = true;
+      editor.clipboard.dangerouslyPasteHTML(nextHtml || '<p><br></p>', 'silent');
+      applyingRichTextRef.current = false;
+    }
+
+    if (typeof options.cursor === 'number') {
+      bodySelectionRef.current = {
+        start: options.cursor,
+        end: options.cursor,
+        userSet: Boolean(options.userSet),
+      };
+      if (options.focus !== false) {
+        focusRichTextAt(options.cursor);
+      }
+    }
+  };
+
+  const setRichBodyState = (nextBody: string, nextHtml: string) => {
+    const normalizedBody = normalizeComposeEditorText(nextBody);
+    const sanitizedHtml = sanitizeComposeEditorHtml(nextHtml);
+    bodyRef.current = normalizedBody;
+    bodyHtmlRef.current = sanitizedHtml;
+    setBody(normalizedBody);
+    setBodyHtml(sanitizedHtml);
+  };
+
+  const getBodySelection = (currentBody: string) => {
+    const storedSelection = bodySelectionRef.current;
+    const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
+    if (!storedSelection.userSet) {
+      return { start: fallbackCursor, end: fallbackCursor };
+    }
+
+    const editorSelection = richTextEditorRef.current?.getSelection();
+    if (editorSelection) {
+      return {
+        start: editorSelection.index,
+        end: editorSelection.index + editorSelection.length,
+      };
+    }
+
+    return storedSelection;
+  };
+
   const resetComposeToBlankDraft = () => {
     setDraftKey(createLocalDraftKey());
     setSubject('');
-    setBody('');
+    setPlainBodyState('', { cursor: 0, userSet: false, focus: false });
     setRecipients([]);
     setRecipientInput('');
     setCurrentQuotedOriginal(null);
@@ -379,13 +545,73 @@ export function ComposeDialog({
     bodySelectionRef.current = { start: 0, end: 0, userSet: false };
     setShowQuotedOriginal(false);
     setShowDraftMenu(false);
+    setShowScheduleMenu(false);
     setShowQuickPhraseMenu(false);
     setShowTemplateMenu(false);
+    setCustomScheduleValue('');
     setPendingTemplate(null);
     setError(null);
     setStatusMessage(null);
     setQuickTranslateToggled(false);
   };
+
+  useEffect(() => {
+    if (!isOpen) {
+      richTextEditorRef.current = null;
+      return;
+    }
+    const container = richTextContainerRef.current;
+    if (!container || richTextEditorRef.current) return;
+
+    registerComposeRichTextFormats();
+    const editor = new Quill(container, {
+      theme: 'snow',
+      placeholder: composeUi.bodyPlaceholder,
+      modules: {
+        toolbar: [
+          [{ font: ['sans-serif', 'serif', 'monospace'] }, { size: ['12px', '14px', '16px', '18px', '24px', '32px'] }],
+          ['bold', 'italic', 'underline'],
+          [{ color: [] }],
+          [{ list: 'bullet' }, { list: 'ordered' }],
+          [{ align: [] }],
+          ['link', 'image'],
+        ],
+      },
+      formats: ['font', 'size', 'color', 'bold', 'italic', 'underline', 'list', 'align', 'link', 'image'],
+    });
+    richTextEditorRef.current = editor;
+    editor.root.setAttribute('aria-label', composeUi.bodyLabel);
+    editor.root.classList.add('compose-rich-text-root');
+
+    const initialHtml = bodyHtmlRef.current || convertComposePlainTextToHtml(bodyRef.current);
+    applyingRichTextRef.current = true;
+    editor.clipboard.dangerouslyPasteHTML(initialHtml || '<p><br></p>', 'silent');
+    applyingRichTextRef.current = false;
+    const initialCursor = bodySelectionRef.current.start || getDefaultComposeCursorPosition(bodyRef.current);
+    focusRichTextAt(initialCursor);
+
+    editor.on('text-change', () => {
+      if (applyingRichTextRef.current) return;
+      setRichBodyState(editor.getText(), editor.root.innerHTML);
+      const selection = editor.getSelection();
+      if (selection) {
+        bodySelectionRef.current = {
+          start: selection.index,
+          end: selection.index + selection.length,
+          userSet: true,
+        };
+      }
+    });
+
+    editor.on('selection-change', (range) => {
+      if (!range) return;
+      bodySelectionRef.current = {
+        start: range.index,
+        end: range.index + range.length,
+        userSet: true,
+      };
+    });
+  }, [composeUi.bodyLabel, composeUi.bodyPlaceholder, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -396,19 +622,33 @@ export function ComposeDialog({
     setRecipients(initialRecipients || []);
     setRecipientInput('');
     setSubject(initialSubject || '');
-    setBody(initialEditableBody || '');
+    const hydratedBody = initialEditableBody || '';
+    const hydratedHtml = initialEditableHtml
+      ? sanitizeComposeEditorHtml(initialEditableHtml)
+      : convertComposePlainTextToHtml(hydratedBody);
+    bodyRef.current = hydratedBody;
+    bodyHtmlRef.current = hydratedHtml;
+    setBody(hydratedBody);
+    setBodyHtml(hydratedHtml);
+    if (richTextEditorRef.current) {
+      applyingRichTextRef.current = true;
+      richTextEditorRef.current.clipboard.dangerouslyPasteHTML(hydratedHtml || '<p><br></p>', 'silent');
+      applyingRichTextRef.current = false;
+    }
     signatureApplyKeyRef.current = null;
     bodySelectionRef.current = {
-      start: getDefaultComposeCursorPosition(initialEditableBody || ''),
-      end: getDefaultComposeCursorPosition(initialEditableBody || ''),
+      start: getDefaultComposeCursorPosition(hydratedBody),
+      end: getDefaultComposeCursorPosition(hydratedBody),
       userSet: false,
     };
     setError(null);
     setStatusMessage(null);
     setShowLangMenu(false);
     setShowDraftMenu(false);
+    setShowScheduleMenu(false);
     setShowQuickPhraseMenu(false);
     setShowTemplateMenu(false);
+    setCustomScheduleValue('');
     setPendingTemplate(null);
     setQuickTranslateToggled(false);
     setShowRecipientSuggestions(false);
@@ -422,7 +662,7 @@ export function ComposeDialog({
     );
     setActiveDraftSource(null);
     setDraftKey(createLocalDraftKey());
-  }, [accounts, initialEditableBody, initialHydrateKey, initialOutgoingAttachments, initialQuotedOriginal, initialRecipients, initialSubject, isOpen, selectedAccount]);
+  }, [accounts, initialEditableBody, initialEditableHtml, initialHydrateKey, initialOutgoingAttachments, initialQuotedOriginal, initialRecipients, initialSubject, isOpen, selectedAccount]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -439,20 +679,15 @@ export function ComposeDialog({
     if (signatureApplyKeyRef.current === signatureKey) return;
     signatureApplyKeyRef.current = signatureKey;
 
-    setBody((currentBody) => {
-      const nextBody = applySignatureToBody(currentBody, signature, {
-        knownSignatures: knownSignatureTexts,
-      });
-      if (!bodySelectionRef.current.userSet) {
-        const cursor = getDefaultComposeCursorPosition(nextBody);
-        bodySelectionRef.current = { start: cursor, end: cursor, userSet: false };
-        requestAnimationFrame(() => {
-          bodyTextareaRef.current?.focus();
-          bodyTextareaRef.current?.setSelectionRange(cursor, cursor);
-        });
-      }
-      return nextBody;
+    const nextBody = applySignatureToBody(bodyRef.current, signature, {
+      knownSignatures: knownSignatureTexts,
     });
+    if (!bodySelectionRef.current.userSet) {
+      const cursor = getDefaultComposeCursorPosition(nextBody);
+      setPlainBodyState(nextBody, { cursor, userSet: false, focus: true });
+    } else {
+      setPlainBodyState(nextBody, { focus: false });
+    }
   }, [accounts, composeSignatureSettings, from, isOpen, knownSignatureTexts]);
 
   const filteredSuggestions = useMemo(
@@ -482,65 +717,30 @@ export function ComposeDialog({
     );
   }, [currentQuotedOriginal, outgoingAttachments]);
 
-  const rememberBodySelection = (userSet = true) => {
-    const textarea = bodyTextareaRef.current;
-    if (!textarea) return;
-    bodySelectionRef.current = {
-      start: textarea.selectionStart,
-      end: textarea.selectionEnd,
-      userSet,
-    };
-  };
-
   const handleInsertQuickPhrase = (phraseText: string) => {
-    setBody((currentBody) => {
-      const textarea = bodyTextareaRef.current;
-      const storedSelection = bodySelectionRef.current;
-      const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
-      const selection = textarea && storedSelection.userSet
-        ? { start: textarea.selectionStart, end: textarea.selectionEnd }
-        : storedSelection.userSet
-          ? storedSelection
-          : { start: fallbackCursor, end: fallbackCursor };
-      const result = insertTextAtSelection(currentBody, phraseText, selection.start, selection.end);
-      bodySelectionRef.current = { start: result.cursor, end: result.cursor, userSet: true };
-      requestAnimationFrame(() => {
-        bodyTextareaRef.current?.focus();
-        bodyTextareaRef.current?.setSelectionRange(result.cursor, result.cursor);
-      });
-      return result.body;
-    });
+    const currentBody = bodyRef.current;
+    const selection = getBodySelection(currentBody);
+    const result = insertTextAtSelection(currentBody, phraseText, selection.start, selection.end);
+    setPlainBodyState(result.body, { cursor: result.cursor, userSet: true });
     setShowQuickPhraseMenu(false);
   };
 
   const applyTemplate = (template: ComposeTemplate, mode: 'replace' | 'insert') => {
-    setBody((currentBody) => {
-      const textarea = bodyTextareaRef.current;
-      const storedSelection = bodySelectionRef.current;
-      const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
-      const selection = mode === 'insert'
-        ? textarea && storedSelection.userSet
-          ? { start: textarea.selectionStart, end: textarea.selectionEnd }
-          : storedSelection.userSet
-            ? storedSelection
-            : { start: fallbackCursor, end: fallbackCursor }
-        : { start: 0, end: fallbackCursor };
-      const result = applyComposeTemplateToDraft({
-        currentSubject: subject,
-        currentBody,
-        template,
-        mode,
-        selectionStart: selection.start,
-        selectionEnd: selection.end,
-      });
-      setSubject(result.subject);
-      bodySelectionRef.current = { start: result.cursor, end: result.cursor, userSet: true };
-      requestAnimationFrame(() => {
-        bodyTextareaRef.current?.focus();
-        bodyTextareaRef.current?.setSelectionRange(result.cursor, result.cursor);
-      });
-      return result.body;
+    const currentBody = bodyRef.current;
+    const fallbackCursor = getDefaultComposeCursorPosition(currentBody);
+    const selection = mode === 'insert'
+      ? getBodySelection(currentBody)
+      : { start: 0, end: fallbackCursor };
+    const result = applyComposeTemplateToDraft({
+      currentSubject: subject,
+      currentBody,
+      template,
+      mode,
+      selectionStart: selection.start,
+      selectionEnd: selection.end,
     });
+    setSubject(result.subject);
+    setPlainBodyState(result.body, { cursor: result.cursor, userSet: true });
     setPendingTemplate(null);
     setShowTemplateMenu(false);
   };
@@ -576,7 +776,25 @@ export function ComposeDialog({
     setRecipients(draft.recipients);
     setRecipientInput('');
     setSubject(draft.subject);
-    setBody(draft.body);
+    if (draft.bodyHtml) {
+      const normalizedBody = draft.body;
+      const sanitizedHtml = sanitizeComposeEditorHtml(draft.bodyHtml);
+      bodyRef.current = normalizedBody;
+      bodyHtmlRef.current = sanitizedHtml;
+      setBody(normalizedBody);
+      setBodyHtml(sanitizedHtml);
+      if (richTextEditorRef.current) {
+        applyingRichTextRef.current = true;
+        richTextEditorRef.current.clipboard.dangerouslyPasteHTML(sanitizedHtml || '<p><br></p>', 'silent');
+        applyingRichTextRef.current = false;
+      }
+      const cursor = getDefaultComposeCursorPosition(normalizedBody);
+      bodySelectionRef.current = { start: cursor, end: cursor, userSet: false };
+      focusRichTextAt(cursor);
+    } else {
+      const cursor = getDefaultComposeCursorPosition(draft.body);
+      setPlainBodyState(draft.body, { cursor, userSet: false });
+    }
     setDraftKey(draft.draftKey);
     setCurrentQuotedOriginal(draft.quotedOriginal || null);
     const normalizedDraftAttachments = normalizeOutgoingAttachments(draft.outgoingAttachments);
@@ -655,7 +873,8 @@ export function ComposeDialog({
       };
 
       if (res.success && res.content) {
-        setBody(res.content);
+        const cursor = getDefaultComposeCursorPosition(res.content);
+        setPlainBodyState(res.content, { cursor, userSet: false });
       } else {
         setError(res.error || composeUi.polishFailed);
       }
@@ -681,7 +900,8 @@ export function ComposeDialog({
       };
 
       if (res.success && res.content) {
-        setBody(res.content);
+        const cursor = getDefaultComposeCursorPosition(res.content);
+        setPlainBodyState(res.content, { cursor, userSet: false });
       } else {
         setError(res.error || composeUi.translateFailed);
       }
@@ -711,7 +931,8 @@ export function ComposeDialog({
       };
 
       if (res.success && res.content) {
-        setBody(res.content);
+        const cursor = getDefaultComposeCursorPosition(res.content);
+        setPlainBodyState(res.content, { cursor, userSet: false });
         setQuickTranslateToggled((prev) => !prev);
       } else {
         setError(res.error || composeUi.translateFailed);
@@ -724,12 +945,12 @@ export function ComposeDialog({
   };
 
   const handleCloseRequest = async () => {
-    if (sending) return;
+    if (sending || scheduling) return;
     onClose();
   };
 
   const handleSaveDraft = async () => {
-    if (sending || savingDraft) return;
+    if (sending || scheduling || savingDraft) return;
 
     const account = accounts.find((item) => item.email === from);
     if (!account) {
@@ -749,6 +970,7 @@ export function ComposeDialog({
         to: resolvedRecipients.map((item) => item.email),
         subject: subject.trim(),
         body: stripSignatureMarkerBeforeSend(body),
+        bodyHtml: sanitizeComposeEditorHtml(bodyHtml || bodyHtmlRef.current),
         draftKey,
         quotedOriginal: currentQuotedOriginal,
         outgoingAttachments,
@@ -757,6 +979,54 @@ export function ComposeDialog({
     } finally {
       setSavingDraft(false);
     }
+  };
+
+  const buildComposeSendPayload = () => {
+    const resolvedRecipients = resolveRecipientsForSend();
+    setRecipients(resolvedRecipients);
+    setRecipientInput('');
+
+    if (resolvedRecipients.length === 0) {
+      setError(composeUi.recipientRequired);
+      return null;
+    }
+
+    if (!subject.trim()) {
+      setError(composeUi.subjectRequired);
+      return null;
+    }
+
+    const account = accounts.find((item) => item.email === from);
+    if (!account) {
+      setError(composeUi.accountRequired);
+      return null;
+    }
+
+    const editableBodyForSend = stripSignatureMarkerBeforeSend(body);
+    const editableHtmlForSend = getRichTextHtml()
+      || convertComposePlainTextToHtml(editableBodyForSend);
+    return {
+      account,
+      to: resolvedRecipients.map((item) => item.email),
+      subject: subject.trim(),
+      bodyText: buildComposeTextBody(editableBodyForSend, currentQuotedOriginal),
+      bodyHtml: buildComposeHtmlBodyFromEditableHtml(editableHtmlForSend, currentQuotedOriginal) || undefined,
+      editableBody: editableBodyForSend,
+      draftKey,
+      quotedOriginal: currentQuotedOriginal,
+      outgoingAttachments,
+      sourceDraft: activeDraftSource
+        ? {
+            id: activeDraftSource.id,
+            accountId: activeDraftSource.accountId,
+            uid: activeDraftSource.uid,
+            folder: activeDraftSource.folder,
+            messageId: activeDraftSource.messageId,
+            localOnly: activeDraftSource.localOnly,
+            draftKey: activeDraftSource.draftKey,
+          }
+        : null,
+    };
   };
 
   const handleDeleteDraft = async (draft: ComposeDraftOption) => {
@@ -769,53 +1039,25 @@ export function ComposeDialog({
   };
 
   const handleSend = async () => {
-    if (sending) return;
+    if (sending || scheduling) return;
 
-    const resolvedRecipients = resolveRecipientsForSend();
-    setRecipients(resolvedRecipients);
-    setRecipientInput('');
-
-    if (resolvedRecipients.length === 0) {
-      setError(composeUi.recipientRequired);
-      return;
-    }
-
-    if (!subject.trim()) {
-      setError(composeUi.subjectRequired);
-      return;
-    }
-
-    const account = accounts.find((item) => item.email === from);
-    if (!account) {
-      setError(composeUi.accountRequired);
-      return;
-    }
+    const payload = buildComposeSendPayload();
+    if (!payload) return;
 
     setSending(true);
     setError(null);
 
     try {
-      const editableBodyForSend = stripSignatureMarkerBeforeSend(body);
       const result = await onSend({
-        accountId: account.id,
-        to: resolvedRecipients.map((item) => item.email),
-        subject: subject.trim(),
-        bodyText: buildComposeTextBody(editableBodyForSend, currentQuotedOriginal),
-        bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(editableBodyForSend, currentQuotedOriginal) : undefined,
-        editableBody: editableBodyForSend,
-        draftKey,
-        outgoingAttachments,
-        sourceDraft: activeDraftSource
-          ? {
-              id: activeDraftSource.id,
-              accountId: activeDraftSource.accountId,
-              uid: activeDraftSource.uid,
-              folder: activeDraftSource.folder,
-              messageId: activeDraftSource.messageId,
-              localOnly: activeDraftSource.localOnly,
-              draftKey: activeDraftSource.draftKey,
-            }
-          : null,
+        accountId: payload.account.id,
+        to: payload.to,
+        subject: payload.subject,
+        bodyText: payload.bodyText,
+        bodyHtml: payload.bodyHtml,
+        editableBody: payload.editableBody,
+        draftKey: payload.draftKey,
+        outgoingAttachments: payload.outgoingAttachments,
+        sourceDraft: payload.sourceDraft,
       });
 
       if (result.success) {
@@ -826,6 +1068,61 @@ export function ComposeDialog({
     } finally {
       setSending(false);
     }
+  };
+
+  const handleScheduleSend = async (scheduledAt: Date) => {
+    if (sending || scheduling || !onScheduleSend) return;
+
+    const validation = validateScheduledAt(scheduledAt);
+    if (!validation.ok || !validation.scheduledAt) {
+      setError(composeUi.schedulePastTimeError);
+      return;
+    }
+
+    const payload = buildComposeSendPayload();
+    if (!payload) return;
+
+    setScheduling(true);
+    setError(null);
+
+    try {
+      const result = await onScheduleSend({
+        accountId: payload.account.id,
+        fromEmail: payload.account.email,
+        to: payload.to,
+        subject: payload.subject,
+        bodyText: payload.bodyText,
+        bodyHtml: payload.bodyHtml,
+        editableBody: payload.editableBody,
+        draftKey: payload.draftKey,
+        scheduledAt: validation.scheduledAt.toISOString(),
+        quotedOriginal: payload.quotedOriginal,
+        outgoingAttachments: payload.outgoingAttachments,
+        sourceDraft: payload.sourceDraft,
+      });
+
+      if (result.success) {
+        setShowScheduleMenu(false);
+        onClose();
+      } else {
+        setError(result.message || composeUi.scheduleFailed);
+      }
+    } finally {
+      setScheduling(false);
+    }
+  };
+
+  const handleSchedulePreset = (preset: ComposeSchedulePreset) => {
+    void handleScheduleSend(getSchedulePresetTime(preset));
+  };
+
+  const handleScheduleCustom = () => {
+    const validation = validateScheduledAt(customScheduleValue);
+    if (!validation.ok || !validation.scheduledAt) {
+      setError(composeUi.schedulePastTimeError);
+      return;
+    }
+    void handleScheduleSend(validation.scheduledAt);
   };
 
   if (!isOpen) return null;
@@ -853,7 +1150,7 @@ export function ComposeDialog({
           <button
             type="button"
             onClick={() => void handleCloseRequest()}
-            disabled={sending}
+            disabled={sending || scheduling}
             className="p-2 transition-colors disabled:opacity-40 [-webkit-app-region:no-drag]"
             style={buildIconButtonStyle()}
           >
@@ -1141,18 +1438,12 @@ export function ComposeDialog({
               {composeUi.bodyLabel}
             </div>
             <div className="p-5">
-              <textarea
-                ref={bodyTextareaRef}
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                onSelect={() => rememberBodySelection(true)}
-                onKeyUp={() => rememberBodySelection(true)}
-                onMouseUp={() => rememberBodySelection(true)}
-                onFocus={() => rememberBodySelection(false)}
-                className="h-72 w-full resize-none bg-transparent px-3 py-2 text-sm leading-6 text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
-                placeholder={composeUi.bodyPlaceholder}
+              <div
+                className="compose-rich-text-editor min-h-72 px-3 py-2 text-sm leading-6 text-zinc-100"
                 style={{ borderRadius: uiRadius.lg }}
-              />
+              >
+                <div ref={richTextContainerRef} />
+              </div>
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <div className="relative">
                   <button
@@ -1384,7 +1675,7 @@ export function ComposeDialog({
           <button
             type="button"
             onClick={() => void handleCloseRequest()}
-            disabled={sending}
+            disabled={sending || scheduling}
             className="cursor-pointer px-4 py-2.5 text-sm text-zinc-400 transition-colors hover:text-zinc-200 disabled:opacity-40"
           >
             {composeUi.cancelLabel}
@@ -1393,21 +1684,101 @@ export function ComposeDialog({
             <button
               type="button"
               onClick={() => void handleSaveDraft()}
-              disabled={sending || savingDraft}
+              disabled={sending || scheduling || savingDraft}
               className="cursor-pointer rounded-xl px-5 py-2.5 text-sm font-medium text-zinc-200 transition-colors disabled:opacity-50"
               style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
             >
               {savingDraft ? composeUi.savingDraftLabel : composeUi.saveDraftLabel}
             </button>
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={sending}
-              className="cursor-pointer rounded-xl px-6 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
-              style={{ background: 'linear-gradient(135deg, #7C3AED, #6366F1)' }}
-            >
-              {sending ? composeUi.sendingLabel : composeUi.sendLabel}
-            </button>
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={sending || scheduling}
+                className="cursor-pointer rounded-l-xl px-6 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #7C3AED, #6366F1)' }}
+                title={composeUi.sendNowLabel}
+              >
+                {sending ? composeUi.sendingLabel : composeUi.sendLabel}
+              </button>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setShowScheduleMenu((prev) => !prev)}
+                disabled={sending || scheduling || !onScheduleSend}
+                className="cursor-pointer rounded-r-xl border-l border-white/15 px-3 py-2.5 text-sm font-medium text-white transition-colors disabled:opacity-50"
+                style={{ background: 'linear-gradient(135deg, #6366F1, #4F46E5)' }}
+                title={composeUi.sendLaterLabel}
+              >
+                {scheduling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarClock className="h-4 w-4" />}
+              </button>
+
+              {showScheduleMenu && (
+                <div
+                  className="absolute bottom-full right-0 z-30 mb-2 w-[320px] overflow-hidden rounded-2xl text-left"
+                  style={{
+                    backgroundColor: '#202938',
+                    border: `1px solid ${uiColor.borderSubtle}`,
+                    boxShadow: '0 18px 44px rgba(0,0,0,0.38)',
+                  }}
+                >
+                  <div className="px-4 py-3" style={{ borderBottom: `1px solid ${uiColor.borderSubtle}` }}>
+                    <div className="text-xs font-semibold" style={{ color: '#DDD6FE' }}>
+                      {composeUi.sendLaterLabel}
+                    </div>
+                    <div className="mt-1 text-[11px] leading-relaxed" style={{ color: uiColor.textSubtle }}>
+                      <span className="font-semibold text-zinc-300">{composeUi.scheduleNoticeTitle}</span>
+                      {' '}
+                      {composeUi.scheduleNoticeBody}
+                    </div>
+                  </div>
+
+                  <div className="p-2">
+                    {([
+                      ['10m', composeUi.scheduleIn10MinutesLabel],
+                      ['this_evening', composeUi.scheduleThisEveningLabel],
+                      ['tomorrow_morning', composeUi.scheduleTomorrowMorningLabel],
+                    ] as Array<[ComposeSchedulePreset, string]>).map(([preset, label]) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => handleSchedulePreset(preset)}
+                        disabled={scheduling}
+                        className="block w-full rounded-xl px-3 py-2.5 text-left text-xs text-zinc-200 transition-colors hover:bg-white/6 disabled:opacity-50 cursor-pointer"
+                      >
+                        {label}
+                      </button>
+                    ))}
+
+                    <div className="mt-2 rounded-xl p-3" style={{ backgroundColor: 'rgba(255,255,255,0.04)' }}>
+                      <label className="block text-[11px] font-semibold" style={{ color: uiColor.textSubtle }}>
+                        {composeUi.scheduleCustomTimeLabel}
+                      </label>
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="datetime-local"
+                          value={customScheduleValue}
+                          onChange={(event) => setCustomScheduleValue(event.target.value)}
+                          className="min-w-0 flex-1 rounded-lg bg-zinc-900/70 px-2 py-2 text-xs text-zinc-100 focus:outline-none"
+                          placeholder={composeUi.scheduleCustomTimePlaceholder}
+                        />
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={handleScheduleCustom}
+                          disabled={scheduling || !customScheduleValue}
+                          className="rounded-lg px-3 py-2 text-xs font-medium text-white transition-colors disabled:opacity-50 cursor-pointer"
+                          style={{ backgroundColor: '#4F46E5' }}
+                        >
+                          {composeUi.scheduleConfirmLabel}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

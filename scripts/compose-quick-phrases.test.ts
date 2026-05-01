@@ -94,9 +94,9 @@ const serialized = serializeComposeQuickPhraseSettings(added);
 assert.deepEqual(parseComposeQuickPhraseSettings(serialized), added, 'settings should round-trip through JSON');
 
 const composeDialog = readFileSync('src/renderer/components/ComposeDialog.tsx', 'utf8');
-assert(composeDialog.includes('bodyTextareaRef'), 'ComposeDialog should keep a textarea ref for quick phrase insertion');
-assert(composeDialog.includes('selectionStart'), 'ComposeDialog should track textarea selectionStart');
-assert(composeDialog.includes('selectionEnd'), 'ComposeDialog should track textarea selectionEnd');
+assert(composeDialog.includes('richTextEditorRef'), 'ComposeDialog should keep a rich text editor ref for quick phrase insertion');
+assert(composeDialog.includes('selection.index'), 'ComposeDialog should track rich text selection index');
+assert(composeDialog.includes('selection.index + selection.length'), 'ComposeDialog should track rich text selection length');
 assert(composeDialog.includes('getDefaultComposeCursorPosition'), 'ComposeDialog should default quick phrase insertion before signatures');
 assert(composeDialog.includes('insertTextAtSelection'), 'ComposeDialog should use the shared insertion helper');
 assert(!composeDialog.includes('removeExistingMinimailSignature(body'), 'quick phrase insertion should not call signature cleanup helpers');

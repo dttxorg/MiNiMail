@@ -61,6 +61,101 @@ input::placeholder {
   color: #71717a;
 }
 
+.compose-rich-text-editor {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.compose-rich-text-editor .ql-toolbar.ql-snow {
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 8px 4px 10px;
+}
+
+.compose-rich-text-editor .ql-container.ql-snow {
+  min-height: 240px;
+  border: 0;
+  color: #f4f4f5;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.compose-rich-text-editor .ql-editor {
+  min-height: 240px;
+  padding: 12px 0 4px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.compose-rich-text-editor .ql-editor.ql-blank::before {
+  color: #52525b;
+  font-style: normal;
+  left: 0;
+  right: 0;
+}
+
+.compose-rich-text-editor .ql-snow .ql-stroke {
+  stroke: #d4d4d8;
+}
+
+.compose-rich-text-editor .ql-snow .ql-fill,
+.compose-rich-text-editor .ql-snow .ql-stroke.ql-fill {
+  fill: #d4d4d8;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker {
+  color: #d4d4d8;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker-options {
+  background: #181f2d;
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #e4e4e7;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-expanded .ql-picker-label,
+.compose-rich-text-editor .ql-snow .ql-toolbar button:hover,
+.compose-rich-text-editor .ql-snow.ql-toolbar button:hover,
+.compose-rich-text-editor .ql-snow .ql-toolbar button.ql-active,
+.compose-rich-text-editor .ql-snow.ql-toolbar button.ql-active,
+.compose-rich-text-editor .ql-snow .ql-picker-label:hover,
+.compose-rich-text-editor .ql-snow .ql-picker-item:hover,
+.compose-rich-text-editor .ql-snow .ql-picker-item.ql-selected {
+  color: #c4b5fd;
+}
+
+.compose-rich-text-editor .ql-snow .ql-toolbar button:hover .ql-stroke,
+.compose-rich-text-editor .ql-snow.ql-toolbar button:hover .ql-stroke,
+.compose-rich-text-editor .ql-snow .ql-toolbar button.ql-active .ql-stroke,
+.compose-rich-text-editor .ql-snow.ql-toolbar button.ql-active .ql-stroke,
+.compose-rich-text-editor .ql-snow .ql-picker-label:hover .ql-stroke,
+.compose-rich-text-editor .ql-snow .ql-picker-item:hover .ql-stroke,
+.compose-rich-text-editor .ql-snow .ql-picker-item.ql-selected .ql-stroke {
+  stroke: #c4b5fd;
+}
+
+.compose-rich-text-editor .ql-snow .ql-toolbar button:hover .ql-fill,
+.compose-rich-text-editor .ql-snow.ql-toolbar button:hover .ql-fill,
+.compose-rich-text-editor .ql-snow .ql-toolbar button.ql-active .ql-fill,
+.compose-rich-text-editor .ql-snow.ql-toolbar button.ql-active .ql-fill,
+.compose-rich-text-editor .ql-snow .ql-picker-label:hover .ql-fill,
+.compose-rich-text-editor .ql-snow .ql-picker-item:hover .ql-fill,
+.compose-rich-text-editor .ql-snow .ql-picker-item.ql-selected .ql-fill {
+  fill: #c4b5fd;
+}
+
+.compose-rich-text-editor .ql-font-sans-serif {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+}
+
+.compose-rich-text-editor .ql-font-serif {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.compose-rich-text-editor .ql-font-monospace {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 /* Toast slide-in animation */
 @keyframes slideIn {
   from {

@@ -34,6 +34,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:clearScanResults',
       'mail:getCurrentFolder',
       'mail:send',
+      'mail:scheduleSend',
+      'mail:listScheduledSends',
+      'mail:cancelScheduledSend',
+      'mail:getScheduledSend',
+      'mail:markMissedScheduledSends',
+      'mail:sendScheduledNow',
+      'mail:retryScheduledSend',
       'mail:testSmtp',
       'mail:delete',
       'mail:move',
@@ -96,6 +103,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
     ipcRenderer.on('mail:stagedSyncProgress', listener);
     return () => ipcRenderer.removeListener('mail:stagedSyncProgress', listener);
+  },
+  onScheduledSendUpdated: (callback: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload);
+    ipcRenderer.on('mail:scheduledSendUpdated', listener);
+    return () => ipcRenderer.removeListener('mail:scheduledSendUpdated', listener);
   },
   onBackupProgress: (callback: (progress: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);

@@ -41,7 +41,7 @@ function testComposeDialogKeepsQuotedOriginalOutsideAiEdits() {
   assert(compose.includes('quotedOriginal: currentQuotedOriginal,'), 'Expected saved drafts to keep their matching quoted original');
   assert(compose.includes('const editableBodyForSend = stripSignatureMarkerBeforeSend(body);'), 'Expected sending to strip internal signature markers before send');
   assert(compose.includes('bodyText: buildComposeTextBody(editableBodyForSend, currentQuotedOriginal)'), 'Expected sending to merge cleaned editable body with the current quoted original at send time');
-  assert(compose.includes('bodyHtml: currentQuotedOriginal ? buildComposeHtmlBody(editableBodyForSend, currentQuotedOriginal) : undefined'), 'Expected HTML send payload to include the current quoted original only at send time');
+  assert(compose.includes('bodyHtml: buildComposeHtmlBodyFromEditableHtml(editableHtmlForSend, currentQuotedOriginal) || undefined'), 'Expected HTML send payload to include editable rich text and the current quoted original at send time');
   assert(compose.includes('ai:polish'), 'Expected polish action to remain wired');
   assert(compose.includes("window.electronAPI.invoke('ai:translate', body"), 'Expected translate to operate only on editable body');
 }
@@ -105,8 +105,8 @@ function testComposeDialogOverallWindowCanScroll() {
 function testComposeBodyTextareaHasSafeTextPadding() {
   const compose = read('src/renderer/components/ComposeDialog.tsx');
 
-  assert(compose.includes('px-3 py-2'), 'Expected compose body textarea to have inner padding so the first character is not clipped');
-  assert(compose.includes('leading-6'), 'Expected compose body textarea to use a stable line height');
+  assert(compose.includes('compose-rich-text-editor min-h-72 px-3 py-2'), 'Expected compose rich text editor to have inner padding so the first character is not clipped');
+  assert(compose.includes('leading-6'), 'Expected compose rich text editor to use a stable line height');
 }
 
 function run() {

@@ -38,6 +38,7 @@ interface MailListProps {
   stagedHistoryLabel?: string | null;
   emptyMessage?: string;
   githubPriorityById?: Record<string, GitHubPriorityBadgeInfo | undefined>;
+  sortOrder?: 'newest' | 'oldest';
 }
 
 type TimeGroup = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'older';
@@ -178,6 +179,33 @@ function getTimeGroupLabel(appLanguage: AppLanguage, group: TimeGroup): string {
   return (MAIL_LIST_UI[appLanguage] ?? MAIL_LIST_UI.en).groups[group];
 }
 
+function getScheduledStatusLabel(status: RendererMailSummary['deliveryState'], appLanguage: AppLanguage): string | null {
+  if (!status || !['scheduled', 'missed', 'failed', 'cancelled'].includes(status)) return null;
+  if (appLanguage === 'zh') {
+    if (status === 'scheduled') return '待发送';
+    if (status === 'missed') return '已错过';
+    if (status === 'failed') return '失败';
+    return '已取消';
+  }
+  if (status === 'scheduled') return 'Scheduled';
+  if (status === 'missed') return 'Missed';
+  if (status === 'failed') return 'Failed';
+  return 'Cancelled';
+}
+
+function getScheduledStatusStyle(status: RendererMailSummary['deliveryState']) {
+  if (status === 'scheduled') {
+    return { color: '#C4B5FD', backgroundColor: 'rgba(124,58,237,0.16)', borderColor: 'rgba(196,181,253,0.24)' };
+  }
+  if (status === 'missed') {
+    return { color: '#FBBF24', backgroundColor: 'rgba(245,158,11,0.14)', borderColor: 'rgba(251,191,36,0.24)' };
+  }
+  if (status === 'failed') {
+    return { color: '#FCA5A5', backgroundColor: 'rgba(239,68,68,0.14)', borderColor: 'rgba(252,165,165,0.24)' };
+  }
+  return { color: '#CBD5E1', backgroundColor: 'rgba(148,163,184,0.12)', borderColor: 'rgba(203,213,225,0.18)' };
+}
+
 function SkeletonItem() {
   return (
     <div className="px-3 py-2.5 animate-pulse flex items-center gap-2.5">
@@ -209,6 +237,7 @@ export function MailList({
   stagedHistoryLabel = null,
   emptyMessage,
   githubPriorityById = {},
+  sortOrder = 'newest',
 }: MailListProps) {
   const { i18n } = useTranslation();
   const locale = i18n.language || undefined;
@@ -243,7 +272,11 @@ export function MailList({
   const filteredEmails = filterMailListByTab(emails, activeTab, accountEmails);
   const searchedEmails = filterMailsBySearchQuery(filteredEmails, searchQuery);
 
-  const sortedEmails = [...searchedEmails].sort((a, b) => b.date.getTime() - a.date.getTime());
+  const sortedEmails = [...searchedEmails].sort((a, b) => (
+    sortOrder === 'oldest'
+      ? a.date.getTime() - b.date.getTime()
+      : b.date.getTime() - a.date.getTime()
+  ));
   const categoryMails = categorySourceEmails ?? emails;
   const hasSelection = selectedIds.length > 0;
 
@@ -391,6 +424,12 @@ export function MailList({
             const githubPriority = githubPriorityById[email.id];
             const searchMatch = searchQuery.trim() ? getMailSearchMatchPreview(email, searchQuery) : null;
             const previewText = searchMatch?.text || email.snippet;
+            const isScheduledMail = email.folder === 'scheduled';
+            const scheduledStatusLabel = isScheduledMail ? getScheduledStatusLabel(email.deliveryState, appLanguage) : null;
+            const scheduledStatusStyle = getScheduledStatusStyle(email.deliveryState);
+            const rowDateLabel = isScheduledMail
+              ? formatMailListDate(email.date, locale || '', new Date())
+              : formatRelativeTime(email.date, t, locale || '');
 
               return (
                 <div
@@ -450,7 +489,7 @@ export function MailList({
                       {displayName}
                     </span>
                     <span className="flex-shrink-0" style={{ fontSize: 11, color: uiColor.textSubtle, lineHeight: 1 }}>
-                      {formatRelativeTime(email.date, t, locale || '')}
+                      {rowDateLabel}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
@@ -466,6 +505,20 @@ export function MailList({
                     >
                       {email.subject}
                     </span>
+                    {scheduledStatusLabel && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{
+                          color: scheduledStatusStyle.color,
+                          backgroundColor: scheduledStatusStyle.backgroundColor,
+                          border: `1px solid ${scheduledStatusStyle.borderColor}`,
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"',
+                          lineHeight: 1,
+                        }}
+                      >
+                        {scheduledStatusLabel}
+                      </span>
+                    )}
                     {email.hasAttachments && (
                       <Paperclip className="w-3 h-3 flex-shrink-0" style={{ color: uiColor.textSubtle }} />
                     )}

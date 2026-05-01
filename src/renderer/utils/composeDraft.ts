@@ -48,6 +48,7 @@ export interface ComposeDraftOption {
   recipients: ComposeRecipientOption[];
   subject: string;
   body: string;
+  bodyHtml?: string;
   quotedOriginal?: ComposeQuotedOriginal | null;
   outgoingAttachments?: OutgoingAttachmentReference[];
   date: Date;
@@ -96,6 +97,78 @@ function toParagraphHtml(value: string): string {
   return sections
     .map((part) => `<p style="margin:0 0 14px; line-height:1.7;">${part.replace(/\n/g, '<br/>')}</p>`)
     .join('');
+}
+
+export function normalizeComposeEditorText(value: string): string {
+  return String(value || '').replace(/\r\n/g, '\n').replace(/\n$/, '');
+}
+
+export function convertComposePlainTextToHtml(value: string): string {
+  const normalized = String(value || '').replace(/\r\n/g, '\n');
+  if (!normalized) return '';
+
+  return normalized
+    .split('\n')
+    .map((line) => `<p>${line ? escapeHtml(line) : '<br/>'}</p>`)
+    .join('');
+}
+
+function stripUnsafeHtml(value: string): string {
+  return String(value || '')
+    .replace(/\[\[MINIMAIL_SIGNATURE_START\]\][\s\S]*?\[\[MINIMAIL_SIGNATURE_END\]\]/g, '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object\b[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed\b[\s\S]*?>/gi, '')
+    .replace(/<link\b[\s\S]*?>/gi, '')
+    .replace(/<meta\b[\s\S]*?>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, '')
+    .replace(/\s+(href|src)\s*=\s*javascript:[^\s>]+/gi, '');
+}
+
+export function sanitizeComposeEditableHtml(value: string): string {
+  const sanitized = stripUnsafeHtml(value)
+    .replace(/contenteditable\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .trim();
+  return sanitized === '<p><br></p>' || sanitized === '<p><br/></p>' ? '' : sanitized;
+}
+
+export function convertComposeHtmlToPlainText(value: string): string {
+  const html = sanitizeComposeEditableHtml(value)
+    .replace(/<\/(?:p|div|li|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  return html.replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
+export function buildComposeHtmlBodyFromEditableHtml(
+  editableBodyHtml: string,
+  quotedOriginal?: ComposeQuotedOriginal | null,
+): string {
+  const editableHtml = sanitizeComposeEditableHtml(editableBodyHtml);
+  if (!quotedOriginal) {
+    return editableHtml;
+  }
+
+  const quoteBlock = `
+    <div style="margin-top:20px;border-top:1px solid #d1d5db;padding-top:16px;">
+      ${quotedOriginal.html}
+    </div>
+  `.trim();
+
+  if (!editableHtml) {
+    return quoteBlock;
+  }
+
+  return `${editableHtml}${quoteBlock}`;
 }
 
 export function extractQuotedOriginalHtmlFragment(value: string): string {

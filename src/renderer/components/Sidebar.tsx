@@ -4,6 +4,7 @@ import {
   Archive,
   BellDot,
   BriefcaseBusiness,
+  CalendarClock,
   Check,
   ChevronRight,
   Circle,
@@ -65,6 +66,7 @@ interface SidebarProps {
   githubConversationCount?: number;
   githubFolderCounts?: Record<GitHubSmartFolder, number>;
   priorityFolderCounts?: Record<GenericPriorityFolderId, number>;
+  scheduledCount?: number;
   appLanguage: AppLanguage;
   isMacOS?: boolean;
 }
@@ -337,6 +339,7 @@ export function Sidebar({
   githubConversationCount = 0,
   githubFolderCounts,
   priorityFolderCounts,
+  scheduledCount = 0,
   appLanguage: appLanguageSetting,
   isMacOS = false,
 }: SidebarProps) {
@@ -361,6 +364,7 @@ export function Sidebar({
   const navIcons: Record<string, React.ReactNode> = useMemo(() => ({
     inbox: <Inbox className="w-4 h-4" strokeWidth={1.8} />,
     sent: <Send className="w-4 h-4" strokeWidth={1.8} />,
+    scheduled: <CalendarClock className="w-4 h-4" strokeWidth={1.8} />,
     unread: <Mail className="w-4 h-4" strokeWidth={1.8} />,
     trash: <Trash2 className="w-4 h-4" strokeWidth={1.8} />,
     spam: <ShieldAlert className="w-4 h-4" strokeWidth={1.8} />,
@@ -458,6 +462,12 @@ export function Sidebar({
           <button onClick={() => onSelectFolder('archive')} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selectedFolder === 'archive')}>
             <NavIcon active={selectedFolder === 'archive'}>{navIcons.archive}</NavIcon>
             <span className="flex-1 text-left leading-none">{ui.archive}</span>
+          </button>
+
+          <button onClick={() => onSelectFolder('scheduled')} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selectedFolder === 'scheduled')}>
+            <NavIcon active={selectedFolder === 'scheduled'}>{navIcons.scheduled}</NavIcon>
+            <span className="flex-1 text-left leading-none">{t('scheduled')}</span>
+            {scheduledCount > 0 && <span style={{ fontSize: 11, color: uiColor.textSubtle, lineHeight: 1 }}>{scheduledCount}</span>}
           </button>
 
           <div className="space-y-1">

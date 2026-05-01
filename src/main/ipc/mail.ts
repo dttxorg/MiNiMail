@@ -40,11 +40,26 @@ import {
   readOutgoingAttachmentCache,
   writeOutgoingAttachmentCacheFromPath,
 } from '../services/outgoingAttachmentCache';
+import {
+  cancelScheduledSendJob,
+  createScheduledSendJob,
+  getScheduledSendJob,
+  listScheduledSendJobs,
+  markMissedScheduledJobs,
+  markScheduledJobFailed,
+  markScheduledJobSent,
+  tryMarkJobSending,
+  type CreateScheduledSendJobInput,
+  type ScheduledSendJobStatus,
+} from '../services/scheduledSendService';
 import { getAccountById } from '../database';
 import type { MailHistoryRange } from '../../shared/mailSyncSettings';
 import type { MailCacheRange } from '../../shared/mailSyncSettings';
 
 let stagedSyncProgressForwarderDispose: (() => void) | null = null;
+let scheduledSendSchedulerTimer: ReturnType<typeof setTimeout> | null = null;
+let scheduledSendSchedulerRunning = false;
+let scheduledSendSchedulerInFlight = false;
 const outgoingAttachmentTokens = new Map<string, {
   filePath: string;
   filename: string;
@@ -59,6 +74,7 @@ const LOCAL_ATTACHMENT_READ_ERROR_MESSAGE = '无法读取本地附件，请重�
 const ORIGINAL_ATTACHMENT_READ_ERROR_MESSAGE = '无法读取原邮件附件，请重新同步邮件或移除该附件后重试。';
 const ORIGINAL_ATTACHMENT_METADATA_MISSING_MESSAGE = '原邮件附件缓存不存在，请重新打开原邮件后再转发。';
 const OAUTH_ATTACHMENT_READ_ERROR_MESSAGE = '账号认证暂时不可用，请重新连接账号或稍后重试。';
+const SCHEDULED_SEND_SCHEDULER_MAX_DELAY_MS = 60 * 1000;
 
 const ATTACHMENT_METADATA_MISSING_MESSAGE = '\u9644\u4ef6\u4fe1\u606f\u4e0d\u5b58\u5728\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u90ae\u4ef6\u6216\u7a0d\u540e\u540c\u6b65\u540e\u518d\u8bd5\u3002';
 const ATTACHMENT_SYNC_PENDING_MESSAGE = '\u9644\u4ef6\u6b63\u5728\u540c\u6b65\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u3002';
@@ -145,6 +161,215 @@ function toOutgoingAttachmentErrorMessage(error: unknown, fallback: string): str
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || '');
+}
+
+function normalizeScheduledSendRequest(input: unknown): CreateScheduledSendJobInput {
+  const request = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const accountId = Number(request.accountId);
+  if (!Number.isFinite(accountId) || accountId <= 0) throw new Error('Invalid account id');
+
+  const account = getAccountById(accountId);
+  if (!account) throw new Error('Account not found');
+
+  const scheduledAtValue = request.scheduledAt;
+  if (!(typeof scheduledAtValue === 'string' || scheduledAtValue instanceof Date)) {
+    throw new Error('Invalid scheduled time');
+  }
+  const scheduledAt = new Date(scheduledAtValue);
+  if (!Number.isFinite(scheduledAt.getTime())) throw new Error('Invalid scheduled time');
+
+  return {
+    localSendId: typeof request.localSendId === 'string' ? request.localSendId : undefined,
+    accountId,
+    fromEmail: typeof request.fromEmail === 'string' ? request.fromEmail : account.email,
+    to: Array.isArray(request.to) ? request.to : [],
+    cc: Array.isArray(request.cc) ? request.cc : [],
+    bcc: Array.isArray(request.bcc) ? request.bcc : [],
+    subject: typeof request.subject === 'string' ? request.subject : '',
+    bodyText: typeof request.bodyText === 'string' ? request.bodyText : '',
+    bodyHtml: typeof request.bodyHtml === 'string' ? request.bodyHtml : undefined,
+    editableBody: typeof request.editableBody === 'string' ? request.editableBody : '',
+    outgoingAttachments: Array.isArray(request.outgoingAttachments) ? request.outgoingAttachments : [],
+    draftPayload: request.draftPayload,
+    sentFolderPath: typeof request.sentFolderPath === 'string' ? request.sentFolderPath : undefined,
+    scheduledAt,
+  };
+}
+
+function normalizeScheduledSendStatusFilter(value: unknown): ScheduledSendJobStatus | ScheduledSendJobStatus[] | undefined {
+  const valid = new Set<ScheduledSendJobStatus>(['scheduled', 'sending', 'sent', 'cancelled', 'failed', 'missed']);
+  if (typeof value === 'string' && valid.has(value as ScheduledSendJobStatus)) {
+    return value as ScheduledSendJobStatus;
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item): item is ScheduledSendJobStatus =>
+      typeof item === 'string' && valid.has(item as ScheduledSendJobStatus)
+    );
+  }
+  return undefined;
+}
+
+type ScheduledSendTrigger = 'manual' | 'auto';
+
+function emitScheduledSendUpdate(payload: {
+  trigger: ScheduledSendTrigger;
+  status: ScheduledSendJobStatus | 'skipped';
+  jobId: string;
+  job?: unknown;
+  error?: string;
+}): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (typeof win.isDestroyed === 'function' && win.isDestroyed()) continue;
+      if (typeof win.webContents?.isDestroyed === 'function' && win.webContents.isDestroyed()) continue;
+      win.webContents.send('mail:scheduledSendUpdated', payload);
+    } catch (error) {
+      log.error('[scheduledSend] failed to emit update:', error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
+async function sendScheduledJobNow(jobId: string, trigger: ScheduledSendTrigger): Promise<{
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}> {
+  let locked = false;
+  try {
+    const existing = getScheduledSendJob(jobId);
+    if (!existing) throw new Error('Scheduled send job not found');
+
+    if (trigger === 'manual') {
+      if (!['missed', 'failed'].includes(existing.status)) {
+        throw new Error('Scheduled send job is not ready for manual resend');
+      }
+    } else {
+      const scheduledAt = new Date(existing.scheduledAt).getTime();
+      if (existing.status !== 'scheduled' || !Number.isFinite(scheduledAt) || scheduledAt > Date.now()) {
+        return { success: false, data: existing, error: 'Scheduled send job is not due' };
+      }
+    }
+
+    locked = tryMarkJobSending(jobId);
+    if (!locked) {
+      const current = getScheduledSendJob(jobId);
+      return { success: false, error: 'Scheduled send job is already processing', data: current };
+    }
+
+    const job = getScheduledSendJob(jobId);
+    if (!job) throw new Error('Scheduled send job not found');
+    emitScheduledSendUpdate({ trigger, status: 'sending', jobId, job });
+
+    const attachments = await resolveOutgoingAttachmentsForSend(
+      normalizeOutgoingAttachments(job.outgoingAttachments as OutgoingAttachmentReference[]),
+      {
+        accountId: job.accountId,
+        folder: job.sentFolderPath,
+        uid: Date.now(),
+      },
+    );
+    const result = await sendMail({
+      accountId: job.accountId,
+      to: job.to,
+      cc: job.cc,
+      bcc: job.bcc,
+      subject: job.subject,
+      body: job.bodyHtml || job.bodyText,
+      isHtml: Boolean(job.bodyHtml),
+      attachments,
+    });
+
+    if (!result.success) {
+      const failed = markScheduledJobFailed(jobId, result.message || 'Scheduled send failed');
+      emitScheduledSendUpdate({ trigger, status: 'failed', jobId, job: failed, error: result.message || 'Scheduled send failed' });
+      return { success: false, error: result.message || 'Scheduled send failed', data: failed };
+    }
+
+    const sent = markScheduledJobSent(jobId, result.messageId);
+    emitScheduledSendUpdate({ trigger, status: 'sent', jobId, job: sent });
+    return { success: true, data: sent };
+  } catch (err) {
+    const error = err as Error;
+    const failed = locked ? markScheduledJobFailed(jobId, error) : getScheduledSendJob(jobId);
+    emitScheduledSendUpdate({ trigger, status: failed?.status || 'skipped', jobId, job: failed, error: error.message });
+    log.error('[scheduledSend] send job failed:', {
+      id: jobId,
+      trigger,
+      error: error.message,
+    });
+    return { success: false, error: error.message, data: failed };
+  }
+}
+
+function scheduleNextScheduledSendCheck(): void {
+  if (!scheduledSendSchedulerRunning) return;
+  if (scheduledSendSchedulerTimer) {
+    clearTimeout(scheduledSendSchedulerTimer);
+    scheduledSendSchedulerTimer = null;
+  }
+
+  let delay = SCHEDULED_SEND_SCHEDULER_MAX_DELAY_MS;
+  try {
+    const jobs = listScheduledSendJobs({ status: 'scheduled' });
+    const now = Date.now();
+    const nextDueAt = jobs.reduce<number | null>((earliest, job) => {
+      const value = new Date(job.scheduledAt).getTime();
+      if (!Number.isFinite(value)) return earliest;
+      if (earliest === null || value < earliest) return value;
+      return earliest;
+    }, null);
+    if (nextDueAt !== null) {
+      delay = Math.min(Math.max(nextDueAt - now, 0), SCHEDULED_SEND_SCHEDULER_MAX_DELAY_MS);
+    }
+  } catch (error) {
+    log.error('[scheduledSend] failed to schedule next check:', error instanceof Error ? error.message : String(error));
+  }
+
+  scheduledSendSchedulerTimer = setTimeout(() => {
+    void runScheduledSendSchedulerTick();
+  }, delay);
+  if (typeof scheduledSendSchedulerTimer.unref === 'function') scheduledSendSchedulerTimer.unref();
+}
+
+async function runScheduledSendSchedulerTick(): Promise<void> {
+  if (!scheduledSendSchedulerRunning) return;
+  if (scheduledSendSchedulerInFlight) {
+    scheduleNextScheduledSendCheck();
+    return;
+  }
+
+  scheduledSendSchedulerInFlight = true;
+  try {
+    const now = Date.now();
+    const dueJobs = listScheduledSendJobs({ status: 'scheduled' }).filter((job) => {
+      const scheduledAt = new Date(job.scheduledAt).getTime();
+      return Number.isFinite(scheduledAt) && scheduledAt <= now;
+    });
+    for (const job of dueJobs) {
+      await sendScheduledJobNow(job.id, 'auto');
+    }
+  } catch (error) {
+    log.error('[scheduledSend] scheduler tick failed:', error instanceof Error ? error.message : String(error));
+  } finally {
+    scheduledSendSchedulerInFlight = false;
+    scheduleNextScheduledSendCheck();
+  }
+}
+
+export function startScheduledSendScheduler(): void {
+  if (scheduledSendSchedulerRunning) return;
+  scheduledSendSchedulerRunning = true;
+  scheduleNextScheduledSendCheck();
+  log.info('[scheduledSend] scheduler started');
+}
+
+export function stopScheduledSendScheduler(): void {
+  scheduledSendSchedulerRunning = false;
+  if (scheduledSendSchedulerTimer) {
+    clearTimeout(scheduledSendSchedulerTimer);
+    scheduledSendSchedulerTimer = null;
+  }
+  log.info('[scheduledSend] scheduler stopped');
 }
 
 function formatAttachmentActionError(error: unknown, action: 'download' | 'open'): string {
@@ -397,6 +622,85 @@ function registerStagedSyncProgressForwarder(): void {
 export function registerMailHandlers(): void {
   log.info('Registering mail IPC handlers');
   registerStagedSyncProgressForwarder();
+
+  ipcMain.handle('mail:scheduleSend', async (_event, request: unknown) => {
+    try {
+      const job = createScheduledSendJob(normalizeScheduledSendRequest(request));
+      scheduleNextScheduledSendCheck();
+      return { success: true, data: job };
+    } catch (err) {
+      const error = err as Error;
+      log.error('[mail] failed to create scheduled send job:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:listScheduledSends', async (_event, filter?: { status?: unknown; accountId?: unknown }) => {
+    try {
+      const accountId = filter?.accountId == null ? undefined : Number(filter.accountId);
+      if (accountId !== undefined && (!Number.isFinite(accountId) || accountId <= 0)) {
+        throw new Error('Invalid account id');
+      }
+      if (accountId !== undefined && !getAccountById(accountId)) {
+        throw new Error('Account not found');
+      }
+      const jobs = listScheduledSendJobs({
+        accountId,
+        status: normalizeScheduledSendStatusFilter(filter?.status),
+      });
+      return { success: true, data: jobs };
+    } catch (err) {
+      const error = err as Error;
+      log.error('[mail] failed to list scheduled send jobs:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:cancelScheduledSend', async (_event, id: string) => {
+    try {
+      const job = cancelScheduledSendJob(String(id || ''));
+      scheduleNextScheduledSendCheck();
+      return { success: true, data: job };
+    } catch (err) {
+      const error = err as Error;
+      log.error('[mail] failed to cancel scheduled send job:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:getScheduledSend', async (_event, id: string) => {
+    try {
+      const job = getScheduledSendJob(String(id || ''));
+      return { success: true, data: job };
+    } catch (err) {
+      const error = err as Error;
+      log.error('[mail] failed to get scheduled send job:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:markMissedScheduledSends', async (_event, now?: string) => {
+    try {
+      const count = markMissedScheduledJobs(now || new Date());
+      return { success: true, data: { count } };
+    } catch (err) {
+      const error = err as Error;
+      log.error('[mail] failed to mark missed scheduled send jobs:', error.message);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:sendScheduledNow', async (_event, id: string) => {
+    const result = await sendScheduledJobNow(String(id || ''), 'manual');
+    scheduleNextScheduledSendCheck();
+    return result;
+  });
+
+  ipcMain.handle('mail:retryScheduledSend', async (_event, id: string) => {
+    const result = await sendScheduledJobNow(String(id || ''), 'manual');
+    scheduleNextScheduledSendCheck();
+    return result;
+  });
 
   // Get mail folders
   ipcMain.handle('mail:getFolders', async (_event, accountId: number) => {
