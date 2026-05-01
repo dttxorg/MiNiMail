@@ -797,6 +797,26 @@ export function ComposeDialog({
       selectionEnd: selection.end,
     });
     setSubject(result.subject);
+
+    if (template.bodyHtml && richTextEditorRef.current) {
+      const editor = richTextEditorRef.current;
+      const sanitizedHtml = sanitizeComposeEditorHtml(template.bodyHtml);
+      applyingRichTextRef.current = true;
+      editor.deleteText(selection.start, Math.max(0, selection.end - selection.start), 'silent');
+      editor.clipboard.dangerouslyPasteHTML(selection.start, sanitizedHtml || '<p><br></p>', 'silent');
+      applyingRichTextRef.current = false;
+      setRichBodyState(editor.getText(), editor.root.innerHTML);
+      bodySelectionRef.current = {
+        start: result.cursor,
+        end: result.cursor,
+        userSet: true,
+      };
+      focusRichTextAt(result.cursor);
+      setPendingTemplate(null);
+      setShowTemplateMenu(false);
+      return;
+    }
+
     setPlainBodyState(result.body, { cursor: result.cursor, userSet: true });
     setPendingTemplate(null);
     setShowTemplateMenu(false);

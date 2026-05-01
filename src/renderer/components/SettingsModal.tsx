@@ -1,4 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import DOMPurify from 'dompurify';
+import Quill from 'quill';
+import 'quill/dist/quill.snow.css';
 import {
   Ban,
   Check,
@@ -60,6 +63,11 @@ import {
   upsertComposeTemplate,
   type ComposeTemplateSettings,
 } from '../../shared/compose/templates';
+import {
+  convertComposePlainTextToHtml,
+  normalizeComposeEditorText,
+  sanitizeComposeEditableHtml,
+} from '../utils/composeDraft';
 
 interface SettingsModalProps {
   t: (key: string) => string;
@@ -130,6 +138,96 @@ interface SettingsModalProps {
 type NavId = 'accounts' | 'backup' | 'writing' | 'ai' | 'aiProvider' | 'about';
 type AIConfigProfileId = 'primary' | 'secondary';
 type WritingSection = 'phrases' | 'templates';
+
+let settingsTemplateRichTextFormatsRegistered = false;
+
+const SETTINGS_TEMPLATE_RICH_TEXT_FONTS = [
+  'Arial',
+  'Times New Roman',
+  'Courier New',
+  'Verdana',
+  'Tahoma',
+  'Georgia',
+  'Trebuchet MS',
+  'Helvetica',
+  'sans-serif',
+  'serif',
+  'monospace',
+] as const;
+
+const SETTINGS_TEMPLATE_RICH_TEXT_SIZES = [
+  false,
+  '8px',
+  '10px',
+  '12px',
+  '14px',
+  '16px',
+  '18px',
+  '20px',
+  '24px',
+  '28px',
+  '32px',
+  '36px',
+  '48px',
+] as const;
+
+function registerSettingsTemplateRichTextFormats(): void {
+  if (settingsTemplateRichTextFormatsRegistered) return;
+  settingsTemplateRichTextFormatsRegistered = true;
+
+  const Font = Quill.import('formats/font') as { FontStyle?: { whitelist?: string[] } };
+  if (Font.FontStyle) {
+    Font.FontStyle.whitelist = [...SETTINGS_TEMPLATE_RICH_TEXT_FONTS];
+    Quill.register(Font.FontStyle, true);
+  }
+
+  const Size = Quill.import('attributors/style/size') as { whitelist?: string[] };
+  Size.whitelist = SETTINGS_TEMPLATE_RICH_TEXT_SIZES.filter((size): size is string => Boolean(size));
+  Quill.register(Size, true);
+
+  const Align = Quill.import('formats/align') as { AlignStyle?: { whitelist?: string[] } };
+  if (Align.AlignStyle) {
+    Quill.register(Align.AlignStyle, true);
+  }
+}
+
+function improveSettingsTemplateRichTextToolbarLabels(toolbar: HTMLElement): void {
+  const labels: Record<string, string> = {
+    '.ql-font .ql-picker-label': 'Font',
+    '.ql-size .ql-picker-label': 'Size',
+    '.ql-color .ql-picker-label': 'Text color',
+    '.ql-align .ql-picker-label': 'Text alignment',
+    '.ql-bold': 'Bold',
+    '.ql-italic': 'Italic',
+    '.ql-underline': 'Underline',
+    '.ql-list[value="bullet"]': 'Bulleted list',
+    '.ql-list[value="ordered"]': 'Numbered list',
+    '.ql-link': 'Insert link',
+    '.ql-image': 'Insert image',
+  };
+
+  Object.entries(labels).forEach(([selector, label]) => {
+    toolbar.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+      element.setAttribute('title', label);
+      element.setAttribute('aria-label', label);
+    });
+  });
+}
+
+function sanitizeTemplateEditorHtml(value: string): string {
+  return sanitizeComposeEditableHtml(DOMPurify.sanitize(value, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'span', 'div',
+      'img', 'hr', 'pre', 'code',
+    ],
+    ALLOWED_ATTR: [
+      'href', 'src', 'alt', 'title', 'style', 'class', 'target',
+      'width', 'height', 'align',
+    ],
+    ALLOW_DATA_ATTR: false,
+  }));
+}
 
 type AIConfigProfileForm = {
   id: string;
@@ -1840,12 +1938,16 @@ export function SettingsModal({
   const [quickPhraseDrafts, setQuickPhraseDrafts] = useState<Array<{ id: string; title: string; text: string; tags: string }>>([]);
   const [savingQuickPhrases, setSavingQuickPhrases] = useState(false);
   const [quickPhraseSaveStatus, setQuickPhraseSaveStatus] = useState<'success' | 'error' | null>(null);
-  const [templateDrafts, setTemplateDrafts] = useState<Array<{ id: string; name: string; subject: string; bodyText: string; tags: string }>>([]);
+  const [templateDrafts, setTemplateDrafts] = useState<Array<{ id: string; name: string; subject: string; bodyText: string; bodyHtml?: string; tags: string }>>([]);
   const [savingTemplates, setSavingTemplates] = useState(false);
   const [templateSaveStatus, setTemplateSaveStatus] = useState<'success' | 'error' | null>(null);
   const [writingSection, setWritingSection] = useState<WritingSection>('phrases');
   const [selectedQuickPhraseDraftId, setSelectedQuickPhraseDraftId] = useState<string | null>(null);
   const [selectedTemplateDraftId, setSelectedTemplateDraftId] = useState<string | null>(null);
+  const templateRichTextContainerRef = useRef<HTMLDivElement | null>(null);
+  const templateRichTextEditorRef = useRef<Quill | null>(null);
+  const templateRichTextDraftIdRef = useRef<string | null>(null);
+  const applyingTemplateRichTextRef = useRef(false);
 
   const normalizedLanguage = normalizeAppLanguage(appLanguage);
   const ui = useMemo(() => getSettingsText(normalizedLanguage), [normalizedLanguage]);
@@ -1907,6 +2009,7 @@ export function SettingsModal({
       name: template.name,
       subject: template.subject,
       bodyText: template.bodyText,
+      bodyHtml: template.bodyHtml,
       tags: template.tags.join(', '),
     }));
     setTemplateDrafts(drafts);
@@ -1918,6 +2021,65 @@ export function SettingsModal({
 
   const selectedQuickPhraseDraft = quickPhraseDrafts.find((phrase) => phrase.id === selectedQuickPhraseDraftId) ?? null;
   const selectedTemplateDraft = templateDrafts.find((template) => template.id === selectedTemplateDraftId) ?? null;
+
+  useEffect(() => {
+    if (!isOpen || writingSection !== 'templates' || !selectedTemplateDraft) {
+      templateRichTextEditorRef.current = null;
+      templateRichTextDraftIdRef.current = null;
+      return;
+    }
+
+    const container = templateRichTextContainerRef.current;
+    if (!container) return;
+    if (
+      templateRichTextEditorRef.current &&
+      templateRichTextDraftIdRef.current === selectedTemplateDraft.id
+    ) {
+      return;
+    }
+
+    container.innerHTML = '';
+    registerSettingsTemplateRichTextFormats();
+    const editor = new Quill(container, {
+      theme: 'snow',
+      placeholder: ui.templateBodyPlaceholder,
+      modules: {
+        toolbar: [
+          [{ font: [...SETTINGS_TEMPLATE_RICH_TEXT_FONTS] }, { size: [...SETTINGS_TEMPLATE_RICH_TEXT_SIZES] }],
+          ['bold', 'italic', 'underline'],
+          [{ color: [] }],
+          [{ list: 'bullet' }, { list: 'ordered' }],
+          [{ align: [] }],
+          ['link', 'image'],
+        ],
+      },
+      formats: ['font', 'size', 'color', 'bold', 'italic', 'underline', 'list', 'align', 'link', 'image'],
+    });
+
+    templateRichTextEditorRef.current = editor;
+    templateRichTextDraftIdRef.current = selectedTemplateDraft.id;
+    const toolbar = container.previousElementSibling;
+    if (toolbar instanceof HTMLElement) {
+      improveSettingsTemplateRichTextToolbarLabels(toolbar);
+    }
+    editor.root.setAttribute('aria-label', ui.templateBodyLabel);
+    editor.root.classList.add('compose-rich-text-root');
+
+    const initialHtml = selectedTemplateDraft.bodyHtml
+      ? sanitizeTemplateEditorHtml(selectedTemplateDraft.bodyHtml)
+      : convertComposePlainTextToHtml(selectedTemplateDraft.bodyText);
+    applyingTemplateRichTextRef.current = true;
+    editor.clipboard.dangerouslyPasteHTML(initialHtml || '<p><br></p>', 'silent');
+    applyingTemplateRichTextRef.current = false;
+
+    editor.on('text-change', () => {
+      if (applyingTemplateRichTextRef.current) return;
+      updateTemplateDraft(selectedTemplateDraft.id, {
+        bodyText: normalizeComposeEditorText(editor.getText()),
+        bodyHtml: sanitizeTemplateEditorHtml(editor.root.innerHTML),
+      });
+    });
+  }, [isOpen, selectedTemplateDraft, ui.templateBodyLabel, ui.templateBodyPlaceholder, writingSection]);
 
   function handleSelectWritingSection(section: WritingSection) {
     setWritingSection(section);
@@ -1936,7 +2098,7 @@ export function SettingsModal({
     setQuickPhraseSaveStatus(null);
   }
 
-  function updateTemplateDraft(id: string, patch: Partial<{ name: string; subject: string; bodyText: string; tags: string }>) {
+  function updateTemplateDraft(id: string, patch: Partial<{ name: string; subject: string; bodyText: string; bodyHtml?: string; tags: string }>) {
     setTemplateDrafts((current) => current.map((item) =>
       item.id === id ? { ...item, ...patch } : item
     ));
@@ -2024,7 +2186,7 @@ export function SettingsModal({
     const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setTemplateDrafts((current) => [
       ...current,
-      { id, name: '', subject: '', bodyText: '', tags: '' },
+      { id, name: '', subject: '', bodyText: '', bodyHtml: '', tags: '' },
     ]);
     setSelectedTemplateDraftId(id);
     setWritingSection('templates');
@@ -2044,6 +2206,7 @@ export function SettingsModal({
           name: draft.name,
           subject: draft.subject,
           bodyText: draft.bodyText,
+          bodyHtml: draft.bodyHtml,
           tags: draft.tags,
         });
       }
@@ -3733,17 +3896,15 @@ export function SettingsModal({
                               style={{ backgroundColor: '#0d0d0f' }}
                             />
                           </label>
-                          <label className="mt-3 block text-[10px]" style={{ color: '#8e8e93' }}>
-                            {ui.templateBodyLabel}
-                            <textarea
-                              value={selectedTemplateDraft.bodyText}
-                              onChange={(event) => updateTemplateDraft(selectedTemplateDraft.id, { bodyText: event.target.value })}
-                              rows={10}
-                              placeholder={ui.templateBodyPlaceholder}
-                              className="mt-1 w-full resize-y rounded-lg px-2.5 py-2 text-[11px] text-white placeholder:text-zinc-600 focus:outline-none"
-                              style={{ backgroundColor: '#0d0d0f' }}
-                            />
-                          </label>
+                          <div className="mt-3 block text-[10px]" style={{ color: '#8e8e93' }}>
+                            <div>{ui.templateBodyLabel}</div>
+                            <div
+                              key={selectedTemplateDraft.id}
+                              className="compose-rich-text-editor mt-1 min-h-56 rounded-lg px-3 py-2 text-sm leading-6 text-zinc-100"
+                            >
+                              <div ref={templateRichTextContainerRef} />
+                            </div>
+                          </div>
                           <div className="mt-3 flex items-center justify-between gap-2">
                             <div className="text-[10px]" style={{ color: templateSaveStatus === 'error' ? '#ff6b6b' : '#30d158' }}>
                               {templateSaveStatus === 'success'

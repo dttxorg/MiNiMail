@@ -13,6 +13,7 @@ export type ComposeTemplate = {
   name: string;
   subject: string;
   bodyText: string;
+  bodyHtml?: string;
   tags: string[];
   updatedAt: string;
 };
@@ -22,6 +23,7 @@ export type ComposeTemplateInput = {
   name?: string;
   subject?: string;
   bodyText?: string;
+  bodyHtml?: string;
   tags?: string[] | string;
   updatedAt?: string;
 };
@@ -50,6 +52,11 @@ export function createEmptyComposeTemplateSettings(): ComposeTemplateSettings {
 
 export function normalizeTemplateText(value: string): string {
   return String(value || '').replace(/\r\n/g, '\n').trim();
+}
+
+export function normalizeTemplateHtml(value: string | undefined): string | undefined {
+  const normalized = String(value || '').trim();
+  return normalized || undefined;
 }
 
 function normalizeTemplateLine(value: string): string {
@@ -101,7 +108,8 @@ export function parseComposeTemplateSettings(raw: string | null | undefined): Co
 
       const subject = normalizeTemplateLine((template as Partial<ComposeTemplate>).subject || '');
       const bodyText = normalizeTemplateText((template as Partial<ComposeTemplate>).bodyText || '');
-      if (!subject && !bodyText) continue;
+      const bodyHtml = normalizeTemplateHtml((template as Partial<ComposeTemplate>).bodyHtml);
+      if (!subject && !bodyText && !bodyHtml) continue;
 
       seenIds.add(id);
       templates.push({
@@ -110,6 +118,7 @@ export function parseComposeTemplateSettings(raw: string | null | undefined): Co
           || generateTemplateName(subject, bodyText),
         subject,
         bodyText,
+        bodyHtml,
         tags: normalizeTemplateTags((template as Partial<ComposeTemplate>).tags),
         updatedAt: String((template as Partial<ComposeTemplate>).updatedAt || ''),
       });
@@ -127,15 +136,17 @@ export function serializeComposeTemplateSettings(settings: ComposeTemplateSettin
     templates: (settings.templates || []).map((template) => {
       const subject = normalizeTemplateLine(template.subject);
       const bodyText = normalizeTemplateText(template.bodyText);
+      const bodyHtml = normalizeTemplateHtml(template.bodyHtml);
       return {
         id: template.id,
         name: normalizeTemplateLine(template.name) || generateTemplateName(subject, bodyText),
         subject,
         bodyText,
+        bodyHtml,
         tags: normalizeTemplateTags(template.tags),
         updatedAt: template.updatedAt,
       };
-    }).filter((template) => template.id && (template.subject || template.bodyText)),
+    }).filter((template) => template.id && (template.subject || template.bodyText || template.bodyHtml)),
   } satisfies ComposeTemplateSettings);
 }
 
@@ -146,7 +157,8 @@ export function upsertComposeTemplate(
 ): ComposeTemplateSettings {
   const subject = normalizeTemplateLine(input.subject || '');
   const bodyText = normalizeTemplateText(input.bodyText || '');
-  if (!subject && !bodyText) {
+  const bodyHtml = normalizeTemplateHtml(input.bodyHtml);
+  if (!subject && !bodyText && !bodyHtml) {
     throw new Error('Template subject or body is required.');
   }
 
@@ -159,6 +171,7 @@ export function upsertComposeTemplate(
     name: normalizeTemplateLine(input.name || '') || generateTemplateName(subject, bodyText),
     subject,
     bodyText,
+    bodyHtml,
     tags: normalizeTemplateTags(input.tags),
     updatedAt: input.updatedAt || updatedAt,
   };

@@ -18,6 +18,7 @@ const added = upsertComposeTemplate(empty, {
   name: '',
   subject: 'Follow up',
   bodyText: 'First paragraph\r\n\r\nSecond paragraph with {{name}}',
+  bodyHtml: '<p><strong>First paragraph</strong></p>',
   tags: 'sales, follow up, sales',
 }, '2026-04-30T00:00:00.000Z');
 assert.equal(added.templates.length, 1, 'upsert should add a template');
@@ -25,6 +26,7 @@ assert.equal(added.templates[0].id, 'template-one');
 assert.equal(added.templates[0].name, 'Follow up');
 assert.equal(added.templates[0].subject, 'Follow up');
 assert.equal(added.templates[0].bodyText, 'First paragraph\n\nSecond paragraph with {{name}}');
+assert.equal(added.templates[0].bodyHtml, '<p><strong>First paragraph</strong></p>');
 assert.deepEqual(added.templates[0].tags, ['sales', 'follow up']);
 assert.equal(added.templates[0].updatedAt, '2026-04-30T00:00:00.000Z');
 
@@ -46,6 +48,7 @@ assert.equal(removed.templates.length, 0, 'delete should remove a template');
 
 const serialized = serializeComposeTemplateSettings(added);
 assert.deepEqual(parseComposeTemplateSettings(serialized), added, 'settings should round-trip through JSON');
+assert.equal(parseComposeTemplateSettings(serialized).templates[0].bodyHtml, '<p><strong>First paragraph</strong></p>', 'template HTML should round-trip for rich template editing');
 
 const template = added.templates[0];
 const signatureOnlyBody = applySignatureToBody('', 'SIGNATURE_TEXT');
@@ -112,12 +115,18 @@ assert(writingPage.includes('writing-editor-panel'), 'Writing page should render
 assert(settingsModal.includes('selectedTemplateDraftId'), 'Settings should track the selected template');
 assert(settingsModal.includes('setSelectedTemplateDraftId(id)'), 'Adding a template should select the new draft');
 assert(settingsModal.includes('window.confirm(ui.templateDelete)'), 'Deleting a template should confirm first');
+assert(settingsModal.includes("import Quill from 'quill';"), 'Settings template editor should initialize Quill');
+assert(settingsModal.includes('templateRichTextContainerRef'), 'Settings template editor should render a rich text editor container');
+assert(settingsModal.includes('new Quill'), 'Settings template body should use Quill instead of a textarea');
+assert(settingsModal.includes('bodyHtml: sanitizeTemplateEditorHtml(editor.root.innerHTML)'), 'Settings should preserve rich template HTML while editing');
+assert(settingsModal.includes('SETTINGS_TEMPLATE_RICH_TEXT_FONTS'), 'Settings template rich text editor should expose the common font list');
 const templateHelper = readFileSync('src/shared/compose/templates.ts', 'utf8');
 assert(templateHelper.includes("compose_templates_v1"), 'Templates should keep the original settings key');
 
 const composeDialog = readFileSync('src/renderer/components/ComposeDialog.tsx', 'utf8');
 assert(composeDialog.includes('templatesLabel'), 'ComposeDialog should include a Templates button/menu');
 assert(composeDialog.includes('applyComposeTemplateToDraft'), 'ComposeDialog should use the shared template application helper');
+assert(composeDialog.includes('template.bodyHtml') && composeDialog.includes('dangerouslyPasteHTML(selection.start'), 'ComposeDialog should preserve rich template HTML when applying templates');
 assert(!composeDialog.includes('removeExistingMinimailSignature(body'), 'template application should not call signature cleanup helpers directly');
 
 const testSource = readFileSync('scripts/compose-templates.test.ts', 'utf8');
