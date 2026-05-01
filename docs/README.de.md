@@ -40,7 +40,7 @@ MiNiMail ist auf Nutzerkontrolle ausgelegt.
 
 ## Aktuelle Plattform
 
-MiNiMail richtet sich derzeit vor allem an Windows-Desktop-Nutzer.
+MiNiMail unterstützt inzwischen die macOS-Desktop-App und pflegt weiterhin die Windows-Desktop-Erfahrung.
 
 Der Stack umfasst:
 
@@ -51,9 +51,8 @@ Der Stack umfasst:
 
 ## Roadmap
 
-MiNiMail konzentriert sich derzeit auf die Windows-Desktop-Erfahrung. Nach weiterer Stabilisierung der Architektur sollen folgende Richtungen geprüft werden:
+MiNiMail konzentriert sich derzeit auf die macOS- und Windows-Desktop-Erfahrung. Nach weiterer Stabilisierung der Architektur sollen folgende Richtungen geprüft werden:
 
-- Unterstützung für macOS Desktop.
 - Mobile Erfahrungen, einschließlich iOS, Android und weiterer möglicher Plattformen.
 - Ausgereiftere lokale Datenschutzmodi und AI-Mail-Wissensfunktionen.
 

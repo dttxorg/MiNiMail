@@ -40,7 +40,7 @@ MiNiMail est conçu autour du contrôle utilisateur.
 
 ## Plateforme Actuelle
 
-MiNiMail se concentre actuellement sur l'application de bureau Windows.
+MiNiMail prend désormais en charge l'application de bureau macOS et continue de maintenir l'expérience de bureau Windows.
 
 La stack comprend :
 
@@ -51,9 +51,8 @@ La stack comprend :
 
 ## Feuille de Route
 
-MiNiMail se concentre actuellement sur l'amélioration de l'expérience Windows Desktop. Une fois l'architecture plus stable, le projet prévoit d'explorer :
+MiNiMail se concentre actuellement sur l'amélioration des expériences de bureau macOS et Windows. Une fois l'architecture plus stable, le projet prévoit d'explorer :
 
-- La prise en charge de macOS Desktop.
 - Des expériences mobiles, notamment iOS, Android et d'autres plateformes possibles.
 - Des modes de confidentialité locale plus complets et des fonctions de connaissance e-mail AI.
 

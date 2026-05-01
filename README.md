@@ -77,7 +77,7 @@ MiNiMail 的 AI 能力围绕用户控制设计。
 
 ## 当前平台
 
-MiNiMail 当前主要面向 Windows 桌面端。
+MiNiMail 当前支持 macOS 桌面端，并继续维护 Windows 桌面端体验。
 
 技术栈包括：
 
@@ -88,9 +88,8 @@ MiNiMail 当前主要面向 Windows 桌面端。
 
 ## 路线规划
 
-MiNiMail 当前优先打磨 Windows 桌面端体验，并计划在架构稳定后继续探索：
+MiNiMail 当前优先打磨 macOS 和 Windows 桌面端体验，并计划在架构稳定后继续探索：
 
-- macOS 桌面端支持。
 - 移动端体验，包括 iOS、Android 以及其他可能的平台。
 - 更完善的本地隐私模式和 AI 邮件知识能力。
 
