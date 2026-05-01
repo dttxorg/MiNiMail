@@ -55,6 +55,16 @@ function testDefaultExpandedConversationLoadsDetailBody() {
   assert(detail.includes('void ensureDetailLoaded();'), 'Expected expanded conversation cards to invoke detail loading without waiting for a click');
 }
 
+function testConversationSummaryInlineBodyRendersWithoutReload() {
+  const detail = read('src/renderer/components/MailDetail.tsx');
+
+  assert(detail.includes('function buildInlineDetail'), 'Expected conversation cards to promote summary bodies into renderable detail');
+  assert(detail.includes('const inlineDetail = useMemo(() => buildInlineDetail(email), [email]);'), 'Expected each conversation card to preserve inline body fields from local summaries');
+  assert(detail.includes('const resolvedInitialDetail = initialDetail ?? inlineDetail;'), 'Expected inline bodies to be used when no loaded detail is available');
+  assert(detail.includes('bodyHtml: \'bodyHtml\' in email ? email.bodyHtml : undefined'), 'Expected inline detail to preserve HTML body content');
+  assert(detail.includes('bodyText: \'bodyText\' in email ? email.bodyText : undefined'), 'Expected inline detail to preserve plain text body content');
+}
+
 function testCollapseIndicatorUsesChevronInsteadOfQuestionMark() {
   const detail = read('src/renderer/components/MailDetail.tsx');
 
@@ -174,6 +184,7 @@ function run() {
   testWindowControlsKeepClickHandlersActive();
   testAssistantWaitsForDetailBodyBeforeAiActions();
   testDefaultExpandedConversationLoadsDetailBody();
+  testConversationSummaryInlineBodyRendersWithoutReload();
   testCollapseIndicatorUsesChevronInsteadOfQuestionMark();
   testUnifiedMailDetailAndAssistantWrapping();
   testSelfSentMailDoesNotAutoShowAssistant();

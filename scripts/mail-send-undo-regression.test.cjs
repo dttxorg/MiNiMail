@@ -41,8 +41,14 @@ function testUndoActionIsExposedThroughToast() {
 
   assert(toast.includes('actionLabel?: string'), 'ToastData should support an action label');
   assert(toast.includes('onAction?: () => void'), 'ToastData should support an action callback');
+  assert(toast.includes('countdownUntil?: number'), 'ToastData should support a countdown deadline');
+  assert(toast.includes('countdownMessage?: (secondsRemaining: number) => string'), 'ToastData should support live countdown message formatting');
+  assert(toast.includes('window.setInterval(() => setNow(Date.now()), 250)'), 'Toast countdown should update live instead of staying static');
   assert(app.includes('actionLabel: appUi.sendUndoAction'), 'scheduled send toast should expose undo action');
   assert(app.includes('onAction: () => cancelScheduledSend()'), 'scheduled send toast should call cancelScheduledSend');
+  assert(app.includes('const undoWindowEndsAt = Date.now() + SEND_UNDO_DELAY_MS'), 'send flow should compute a countdown deadline for the undo toast');
+  assert(app.includes('countdownUntil: undoWindowEndsAt'), 'scheduled send toast should render a live countdown');
+  assert(app.includes('countdownMessage: (secondsRemaining) => formatSendUndoCountdown(secondsRemaining, appLanguage)'), 'scheduled send toast should format the remaining seconds');
 }
 
 function testUndoCancelsTimerAndRestoresComposeWithoutSmtp() {

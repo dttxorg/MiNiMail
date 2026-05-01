@@ -20,6 +20,12 @@ assert(mailIpc.includes('markScheduledJobSent'), 'automatic send success should 
 assert(mailIpc.includes('markScheduledJobFailed'), 'automatic send failure should mark the job failed');
 assert(mailIpc.includes("win.webContents.send('mail:scheduledSendUpdated'"), 'automatic send should notify renderer windows');
 assert(mailIpc.includes('scheduleNextScheduledSendCheck();'), 'scheduler should reschedule after job changes');
+assert(mailIpc.includes('cacheScheduledSentMail'), 'scheduled send should cache a local Sent row for list visibility');
+assert(mailIpc.includes('saveLocalMailToCache({'), 'scheduled send should persist the Sent row to mail_cache');
+assert(mailIpc.includes('subject: job.subject'), 'scheduled Sent cache should preserve the scheduled subject');
+assert(mailIpc.includes('from: job.fromEmail || account?.email ||'), 'scheduled Sent cache should preserve the sender');
+assert(mailIpc.includes('localSendId: job.localSendId'), 'scheduled Sent cache should preserve localSendId for de-duplication');
+assert(mailIpc.indexOf('cacheScheduledSentMail(job, {') < mailIpc.indexOf('const result = await sendMail({'), 'scheduled send should cache the sending row before SMTP');
 
 assert(mainIndex.includes('restoreScheduledSendsOnStartup()'), 'startup should restore missed jobs before scheduling future sends');
 assert(mainIndex.indexOf('restoreScheduledSendsOnStartup()') < mainIndex.indexOf('startScheduledSendScheduler()'), 'scheduler should start after startup missed restore');
@@ -35,6 +41,12 @@ assert(app.includes("event.status === 'sent'") && app.includes('appUi.sendSucces
 assert(app.includes("event.status === 'failed'") && app.includes('appUi.sendFailedFallback'), 'automatic failure should show a failed notification');
 assert(app.includes('reviewScheduledSendsAction'), 'failed automatic sends should guide the user to retry or cancel');
 assert(app.includes("window.electronAPI.invoke('mail:sendScheduledNow'"), 'manual retry should remain available from Scheduled detail');
+assert(app.includes('reloadSentCacheForScheduledJob'), 'renderer should refresh Sent list cache after a scheduled send completes');
+assert(app.includes("event.status === 'sent'") && app.includes('void reloadSentCacheForScheduledJob'), 'scheduled sent events should refresh Sent visibility');
+assert(app.includes('upsertScheduledSentThreadMail'), 'renderer should add scheduled sent mail to the local conversation universe');
+assert(app.includes('setLocalThreadMails((prev) =>'), 'scheduled sent mail should be visible in aggregated contact conversations');
+assert(app.includes('bodyHtml: job.bodyHtml'), 'scheduled sent conversation mail should preserve HTML body content');
+assert(app.includes('bodyText: job.bodyText'), 'scheduled sent conversation mail should preserve plain text body content');
 
 const schedulerSource = mailIpc.slice(
   mailIpc.indexOf('function scheduleNextScheduledSendCheck'),

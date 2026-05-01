@@ -107,10 +107,34 @@ input::placeholder {
   color: #d4d4d8;
 }
 
+.compose-rich-text-editor .ql-snow .ql-picker-label {
+  border-radius: 8px;
+}
+
 .compose-rich-text-editor .ql-snow .ql-picker-options {
   background: #181f2d;
   border-color: rgba(148, 163, 184, 0.22);
   color: #e4e4e7;
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 20;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker-item {
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-font {
+  width: 150px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-size {
+  width: 82px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-align {
+  width: 42px;
 }
 
 .compose-rich-text-editor .ql-snow .ql-picker.ql-expanded .ql-picker-label,
@@ -154,6 +178,74 @@ input::placeholder {
 
 .compose-rich-text-editor .ql-font-monospace {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item::before {
+  content: attr(data-value);
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label:not([data-value])::before {
+  content: "Font";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label[data-value="sans-serif"]::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item[data-value="sans-serif"]::before {
+  content: "Sans";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label[data-value="serif"]::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item[data-value="serif"]::before {
+  content: "Serif";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-label[data-value="monospace"]::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-font .ql-picker-item[data-value="monospace"]::before {
+  content: "Mono";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item::before {
+  content: attr(data-value);
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-label:not([data-value])::before,
+.compose-rich-text-editor .ql-snow .ql-picker.ql-size .ql-picker-item:not([data-value])::before {
+  content: "Normal";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-label {
+  padding-left: 8px;
+  padding-right: 20px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-options {
+  min-width: 118px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-item {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-label svg {
+  display: inline-block;
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-item::before {
+  content: "Left";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-item[data-value="center"]::before {
+  content: "Center";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-item[data-value="right"]::before {
+  content: "Right";
+}
+
+.compose-rich-text-editor .ql-snow .ql-picker.ql-align .ql-picker-item[data-value="justify"]::before {
+  content: "Justify";
 }
 
 /* Toast slide-in animation */

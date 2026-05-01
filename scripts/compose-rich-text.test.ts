@@ -21,6 +21,18 @@ assert(!composeDialog.includes('<textarea'), 'Compose body should no longer rend
 for (const toolbarToken of ['font', 'size', 'color', 'bold', 'italic', 'underline', 'bullet', 'ordered', 'align', 'link', 'image']) {
   assert(composeDialog.includes(toolbarToken), `Compose rich text toolbar should include ${toolbarToken}`);
 }
+for (const fontName of ['Arial', 'Times New Roman', 'Courier New', 'Verdana', 'Tahoma', 'Georgia', 'Trebuchet MS', 'Helvetica']) {
+  assert(composeDialog.includes(`'${fontName}'`), `Compose font picker should include ${fontName}`);
+}
+for (const fontSize of ['8px', '10px', '12px', '14px', '16px', '18px', '20px', '24px', '36px', '48px']) {
+  assert(composeDialog.includes(`'${fontSize}'`), `Compose size picker should include ${fontSize}`);
+}
+assert(composeDialog.includes('const COMPOSE_RICH_TEXT_SIZES = ['), 'ComposeDialog should centralize rich text size choices');
+assert(composeDialog.includes('false,'), 'Compose size picker should include a Normal/default size option');
+assert(composeDialog.includes('improveComposeRichTextToolbarLabels'), 'ComposeDialog should add human-readable toolbar labels');
+for (const toolbarLabel of ['Font', 'Size', 'Text color', 'Text alignment', 'Insert link', 'Insert image']) {
+  assert(composeDialog.includes(toolbarLabel), `Compose rich text toolbar should label ${toolbarLabel}`);
+}
 assert(composeDialog.includes('buildComposeHtmlBodyFromEditableHtml'), 'ComposeDialog should send sanitized editable HTML');
 assert(composeDialog.includes('bodyHtml: buildComposeHtmlBodyFromEditableHtml(editableHtmlForSend, currentQuotedOriginal) || undefined'), 'ComposeDialog should include HTML body for rich text sends');
 assert(composeDialog.includes('bodyHtml?: string;'), 'Draft and send types should carry editable HTML');
@@ -34,6 +46,9 @@ assert(app.includes('bodyHtml: options.bodyHtml'), 'App should cache draft/sched
 const styles = readFileSync('src/renderer/styles/global.css', 'utf8');
 assert(styles.includes('.compose-rich-text-editor .ql-toolbar.ql-snow'), 'Global styles should theme the rich text toolbar');
 assert(styles.includes('.compose-rich-text-editor .ql-editor'), 'Global styles should theme the rich text editable area');
+assert(styles.includes('content: "Normal";'), 'Global styles should label the default size as Normal');
+assert(styles.includes('.ql-picker.ql-size'), 'Global styles should size and label the rich text size picker');
+assert(styles.includes('.ql-picker.ql-align'), 'Global styles should clarify the alignment picker');
 
 const html = convertComposePlainTextToHtml('Hello\n\n-- \nSignature');
 assert.equal(html, '<p>Hello</p><p><br/></p><p>-- </p><p>Signature</p>', 'plain text should convert to editable HTML while preserving blank lines');

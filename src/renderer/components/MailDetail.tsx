@@ -248,6 +248,25 @@ function isDetail(email: MailEmail): email is RendererMailDetail {
   return 'bodyHtml' in email || 'bodyText' in email;
 }
 
+function hasInlineBody(email: MailEmail): boolean {
+  return Boolean(
+    ('bodyHtml' in email && email.bodyHtml?.trim()) ||
+    ('bodyText' in email && email.bodyText?.trim())
+  );
+}
+
+function buildInlineDetail(email: MailEmail): RendererMailDetail | null {
+  if (!hasInlineBody(email)) return null;
+  const summary = email as RendererMailSummary;
+  return {
+    ...summary,
+    bodyHtml: 'bodyHtml' in email ? email.bodyHtml : undefined,
+    bodyText: 'bodyText' in email ? email.bodyText : undefined,
+    attachments: summary.attachments ?? [],
+    headers: isDetail(email) ? email.headers ?? {} : {},
+  };
+}
+
 function getUi(appLanguage: string) {
   const labels = {
     zh: {
@@ -562,8 +581,10 @@ function ConversationMessageCard({
     loading: aiApiLoading,
   } = useAI();
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const [detail, setDetail] = useState<RendererMailDetail | null>(initialDetail ?? null);
-  const [loading, setLoading] = useState(initialLoading && !initialDetail);
+  const inlineDetail = useMemo(() => buildInlineDetail(email), [email]);
+  const resolvedInitialDetail = initialDetail ?? inlineDetail;
+  const [detail, setDetail] = useState<RendererMailDetail | null>(resolvedInitialDetail);
+  const [loading, setLoading] = useState(initialLoading && !resolvedInitialDetail);
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [translatedHtml, setTranslatedHtml] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -583,12 +604,12 @@ function ConversationMessageCard({
 
   useEffect(() => {
     detailRequestRef.current = null;
-    setDetail(initialDetail ?? null);
-  }, [initialDetail, email.id]);
+    setDetail(resolvedInitialDetail);
+  }, [resolvedInitialDetail, email.id]);
 
   useEffect(() => {
-    setLoading(initialLoading && !initialDetail);
-  }, [email.id, initialDetail, initialLoading]);
+    setLoading(initialLoading && !resolvedInitialDetail);
+  }, [email.id, initialLoading, resolvedInitialDetail]);
 
   useEffect(() => {
     setAssistantState(EMPTY_ASSISTANT_STATE);
@@ -1743,7 +1764,5 @@ export function MailDetail({
     </div>
   );
 }
-
-
 
 

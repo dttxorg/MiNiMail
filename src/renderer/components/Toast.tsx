@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Mail } from 'lucide-react';
 
 export interface ToastData {
@@ -10,6 +10,8 @@ export interface ToastData {
   emailId?: string;
   type?: 'success' | 'error' | 'info';
   message?: string;
+  countdownUntil?: number;
+  countdownMessage?: (secondsRemaining: number) => string;
   actionLabel?: string;
   onAction?: () => void;
 }
@@ -21,9 +23,27 @@ interface ToastProps {
 }
 
 export function ToastContainer({ toasts, onDismiss, onClick }: ToastProps) {
+  const [now, setNow] = useState(() => Date.now());
+  const hasCountdownToast = toasts.some((toast) => typeof toast.countdownUntil === 'number' && toast.countdownMessage);
+
+  useEffect(() => {
+    if (!hasCountdownToast) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [hasCountdownToast]);
+
   return (
     <div className="fixed top-4 right-4 z-[100] flex flex-col gap-3 pointer-events-none">
-      {toasts.map(toast => (
+      {toasts.map(toast => {
+        const secondsRemaining = typeof toast.countdownUntil === 'number'
+          ? Math.max(0, Math.ceil((toast.countdownUntil - now) / 1000))
+          : 0;
+        const message = toast.countdownMessage
+          ? toast.countdownMessage(secondsRemaining)
+          : toast.message;
+
+        return (
         <div
           key={toast.id}
           className="relative pointer-events-auto bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-80 overflow-hidden animate-slide-in"
@@ -35,13 +55,13 @@ export function ToastContainer({ toasts, onDismiss, onClick }: ToastProps) {
             <X className="w-4 h-4" />
           </button>
 
-          {toast.message ? (
+          {message ? (
             <div className={`p-4 pr-10 flex items-center gap-3 text-sm ${
               toast.type === 'error' ? 'text-red-400' :
               toast.type === 'success' ? 'text-green-400' :
               'text-zinc-300'
             }`}>
-              <span className="flex-1 min-w-0">{toast.message}</span>
+              <span className="flex-1 min-w-0">{message}</span>
               {toast.actionLabel && toast.onAction && (
                 <button
                   type="button"
@@ -90,7 +110,8 @@ export function ToastContainer({ toasts, onDismiss, onClick }: ToastProps) {
             </button>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

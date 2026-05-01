@@ -11,6 +11,7 @@ import {
   type OutgoingAttachmentReference,
 } from '../../shared/outgoingAttachments';
 import { fetchMailList, fetchMailDetail, getMailFolders, setMessageFlags, setMessageStarred, setMessageRead, deleteMessage, moveMessage, fetchMailAttachmentContent, sanitizeAttachmentFilename } from '../services/mail';
+import type { MailAttachmentMetadata } from '../services/mail';
 import {
   syncMails,
   subscribeStagedSyncProgress,
@@ -50,6 +51,7 @@ import {
   markScheduledJobSent,
   tryMarkJobSending,
   type CreateScheduledSendJobInput,
+  type ScheduledSendJob,
   type ScheduledSendJobStatus,
 } from '../services/scheduledSendService';
 import { getAccountById } from '../database';
@@ -229,6 +231,68 @@ function emitScheduledSendUpdate(payload: {
   }
 }
 
+function getScheduledSentLocalUid(job: ScheduledSendJob): number {
+  const fromLocalSendId = Number(String(job.localSendId || '').replace(/\D/g, '').slice(-12));
+  if (Number.isFinite(fromLocalSendId) && fromLocalSendId > 0) return Math.floor(fromLocalSendId);
+
+  const fromCreatedAt = new Date(job.createdAt).getTime();
+  if (Number.isFinite(fromCreatedAt) && fromCreatedAt > 0) return Math.floor(fromCreatedAt);
+
+  return Date.now();
+}
+
+function buildScheduledSentAttachmentMetadata(attachments: OutgoingAttachmentReference[]): MailAttachmentMetadata[] {
+  return normalizeOutgoingAttachments(attachments).map((attachment) => ({
+    cacheId: attachment.id,
+    filename: attachment.filename || 'attachment',
+    contentType: attachment.contentType || 'application/octet-stream',
+    size: Number.isFinite(Number(attachment.size)) ? Math.max(0, Math.floor(Number(attachment.size))) : 0,
+    inline: false,
+    disposition: 'attachment',
+  }));
+}
+
+function cacheScheduledSentMail(
+  job: ScheduledSendJob,
+  options: {
+    status: 'sending' | 'sent' | 'failed';
+    localSentUid: number;
+    messageId?: string;
+    error?: string;
+  },
+): void {
+  const account = getAccountById(job.accountId);
+  const fromEmail = job.fromEmail || account?.email || '';
+  const fromName = account?.display_name || (fromEmail ? fromEmail.split('@')[0] : '');
+  const now = new Date().toISOString();
+  const localMessageId = `<scheduled-${job.id}@minimail>`;
+  const attachments = buildScheduledSentAttachmentMetadata(job.outgoingAttachments as OutgoingAttachmentReference[]);
+
+  saveLocalMailToCache({
+    id: `${job.accountId}:scheduled:${job.localSendId}`,
+    uid: options.localSentUid,
+    from: job.fromEmail || account?.email || '',
+    fromName,
+    to: job.to.join(', '),
+    subject: job.subject,
+    date: now,
+    snippet: (job.bodyText || '').trim().slice(0, 160),
+    hasAttachments: attachments.length > 0,
+    isRead: true,
+    isStarred: false,
+    folder: job.sentFolderPath || 'Sent',
+    accountId: job.accountId,
+    cachedAt: now,
+    messageId: options.messageId || localMessageId,
+    bodyHtml: job.bodyHtml,
+    bodyText: job.bodyText,
+    localSendId: job.localSendId,
+    deliveryState: options.status,
+    deliveryError: options.error,
+    attachments,
+  });
+}
+
 async function sendScheduledJobNow(jobId: string, trigger: ScheduledSendTrigger): Promise<{
   success: boolean;
   data?: unknown;
@@ -260,12 +324,18 @@ async function sendScheduledJobNow(jobId: string, trigger: ScheduledSendTrigger)
     if (!job) throw new Error('Scheduled send job not found');
     emitScheduledSendUpdate({ trigger, status: 'sending', jobId, job });
 
+    const localSentUid = getScheduledSentLocalUid(job);
+    cacheScheduledSentMail(job, {
+      status: 'sending',
+      localSentUid,
+    });
+
     const attachments = await resolveOutgoingAttachmentsForSend(
       normalizeOutgoingAttachments(job.outgoingAttachments as OutgoingAttachmentReference[]),
       {
         accountId: job.accountId,
-        folder: job.sentFolderPath,
-        uid: Date.now(),
+        folder: job.sentFolderPath || 'Sent',
+        uid: localSentUid,
       },
     );
     const result = await sendMail({
@@ -281,11 +351,21 @@ async function sendScheduledJobNow(jobId: string, trigger: ScheduledSendTrigger)
 
     if (!result.success) {
       const failed = markScheduledJobFailed(jobId, result.message || 'Scheduled send failed');
+      cacheScheduledSentMail(job, {
+        status: 'failed',
+        localSentUid,
+        error: result.message || 'Scheduled send failed',
+      });
       emitScheduledSendUpdate({ trigger, status: 'failed', jobId, job: failed, error: result.message || 'Scheduled send failed' });
       return { success: false, error: result.message || 'Scheduled send failed', data: failed };
     }
 
     const sent = markScheduledJobSent(jobId, result.messageId);
+    cacheScheduledSentMail(job, {
+      status: 'sent',
+      localSentUid,
+      messageId: result.messageId,
+    });
     emitScheduledSendUpdate({ trigger, status: 'sent', jobId, job: sent });
     return { success: true, data: sent };
   } catch (err) {

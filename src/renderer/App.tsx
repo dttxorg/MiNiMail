@@ -116,6 +116,18 @@ const FOLDER_BODY_PREFETCH_LIMIT = 12;
 const SEND_UNDO_DELAY_MS = 5000;
 const CONVERSATION_BODY_PREFETCH_LIMIT = 8;
 
+function formatSendUndoCountdown(secondsRemaining: number, appLanguage: AppLanguage): string {
+  const seconds = Math.max(0, Math.ceil(secondsRemaining));
+  if (appLanguage === 'zh') return `邮件将在 ${seconds} 秒后发送`;
+  if (appLanguage === 'ja') return `メールは${seconds}秒後に送信されます`;
+  if (appLanguage === 'ko') return `메일이 ${seconds}초 후 전송됩니다`;
+  if (appLanguage === 'es') return `El correo se enviará en ${seconds} segundos`;
+  if (appLanguage === 'fr') return `Le mail sera envoyé dans ${seconds} secondes`;
+  if (appLanguage === 'de') return `Mail wird in ${seconds} Sekunden gesendet`;
+  if (appLanguage === 'ru') return `Письмо будет отправлено через ${seconds} сек.`;
+  return `Email will be sent in ${seconds} second${seconds === 1 ? '' : 's'}`;
+}
+
 function getDraftKeyFromMailId(id: string): string {
   return id.includes(':') ? id.slice(id.indexOf(':') + 1) : id;
 }
@@ -1146,6 +1158,61 @@ function App() {
     }
   }, [currentAccount]);
 
+  const reloadSentCacheForScheduledJob = useCallback(async (job: ScheduledSendJobSnapshot | null | undefined) => {
+    if (!job || selectedFolder !== 'sent') return;
+    if (currentAccount !== 'all' && currentAccount !== null && currentAccount.id !== job.accountId) return;
+
+    try {
+      const sentFolderPath = await resolveFolderPathForAction(job.accountId, 'sent');
+      const response = await window.electronAPI.invoke('mail:loadCached', job.accountId, sentFolderPath, mailFetchHistoryRange) as {
+        success?: boolean;
+        data?: RendererMailSummary[];
+      };
+      if (response?.success === false) return;
+      setMailList((prev) => replaceFolderEntries(prev, job.accountId, 'sent', Array.isArray(response?.data) ? response.data : []));
+    } catch (error) {
+      console.error('[mail:loadCached scheduled sent]', error instanceof Error ? error.message : String(error));
+    }
+  }, [currentAccount, mailFetchHistoryRange, replaceFolderEntries, resolveFolderPathForAction, selectedFolder, setMailList]);
+
+  const upsertScheduledSentThreadMail = useCallback((job: ScheduledSendJobSnapshot | null | undefined) => {
+    if (!job || job.status !== 'sent') return;
+    const account = accounts.find((item) => item.id === job.accountId);
+    const fromEmail = job.fromEmail || account?.email || '';
+    const sentAt = new Date(job.updatedAt || job.scheduledAt || job.createdAt);
+    const date = Number.isFinite(sentAt.getTime()) ? sentAt : new Date();
+    const mail: RendererMailSummary = {
+      id: `${job.accountId}:scheduled:${job.localSendId}`,
+      uid: Math.abs(job.localSendId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)) || Date.now(),
+      from: fromEmail,
+      fromName: account?.display_name || (fromEmail ? fromEmail.split('@')[0] : ''),
+      to: job.to.join(', '),
+      subject: job.subject || (appLanguage === 'zh' ? '无主题' : 'No subject'),
+      date,
+      snippet: (job.bodyText || '').trim().slice(0, 160),
+      hasAttachments: normalizeOutgoingAttachments(job.outgoingAttachments).length > 0,
+      isRead: true,
+      isStarred: false,
+      folder: job.sentFolderPath || getResolvedFolderPath(job.accountId, 'sent'),
+      accountId: job.accountId,
+      messageId: job.sentMessageId || `<scheduled-${job.id}@minimail>`,
+      localSendId: job.localSendId,
+      deliveryState: 'sent',
+      bodyHtml: job.bodyHtml,
+      bodyText: job.bodyText,
+      attachments: buildOutgoingAttachmentMetadata(normalizeOutgoingAttachments(job.outgoingAttachments)),
+    };
+
+    setLocalThreadMails((prev) => {
+      const filtered = prev.filter((item) =>
+        item.id !== mail.id &&
+        item.localSendId !== mail.localSendId &&
+        !(mail.messageId && item.messageId === mail.messageId)
+      );
+      return [mail, ...filtered];
+    });
+  }, [accounts, appLanguage, getResolvedFolderPath]);
+
   useEffect(() => {
     if (accounts.length === 0) {
       setScheduledSendJobs([]);
@@ -1167,6 +1234,10 @@ function App() {
             ? prev.map((job) => job.id === updatedJob.id ? updatedJob : job)
             : [updatedJob, ...prev];
         });
+        if (event.status === 'sent') {
+          upsertScheduledSentThreadMail(updatedJob);
+          void reloadSentCacheForScheduledJob(updatedJob);
+        }
       }
 
       void reloadScheduledSendJobs();
@@ -1205,7 +1276,7 @@ function App() {
     });
 
     return unsubscribe;
-  }, [appUi, clearCurrentMail, reloadScheduledSendJobs]);
+  }, [appUi, clearCurrentMail, reloadScheduledSendJobs, reloadSentCacheForScheduledJob, upsertScheduledSentThreadMail]);
 
   const loadCachedForCurrentView = useCallback(async () => {
     if (selectedFolder === 'scheduled') {
@@ -2968,6 +3039,7 @@ function App() {
       }
     };
 
+    const undoWindowEndsAt = Date.now() + SEND_UNDO_DELAY_MS;
     timer = setTimeout(() => {
       void runScheduledSend();
     }, SEND_UNDO_DELAY_MS);
@@ -2976,7 +3048,9 @@ function App() {
     setToasts((prev) => [...prev, {
       id: `${localSendId}:scheduled`,
       type: 'info',
-      message: appUi.sendScheduled,
+      message: formatSendUndoCountdown(SEND_UNDO_DELAY_MS / 1000, appLanguage),
+      countdownUntil: undoWindowEndsAt,
+      countdownMessage: (secondsRemaining) => formatSendUndoCountdown(secondsRemaining, appLanguage),
       actionLabel: appUi.sendUndoAction,
       onAction: () => cancelScheduledSend(),
     }]);

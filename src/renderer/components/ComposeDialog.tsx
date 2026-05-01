@@ -122,18 +122,71 @@ type ComposeTranslator = (key: string, options?: Record<string, unknown>) => str
 
 let composeRichTextFormatsRegistered = false;
 
+const COMPOSE_RICH_TEXT_FONTS = [
+  'Arial',
+  'Times New Roman',
+  'Courier New',
+  'Verdana',
+  'Tahoma',
+  'Georgia',
+  'Trebuchet MS',
+  'Helvetica',
+  'sans-serif',
+  'serif',
+  'monospace',
+] as const;
+
+const COMPOSE_RICH_TEXT_SIZES = [
+  false,
+  '8px',
+  '10px',
+  '12px',
+  '14px',
+  '16px',
+  '18px',
+  '20px',
+  '24px',
+  '28px',
+  '32px',
+  '36px',
+  '48px',
+] as const;
+
+function improveComposeRichTextToolbarLabels(toolbar: HTMLElement): void {
+  const labels: Record<string, string> = {
+    '.ql-font .ql-picker-label': 'Font',
+    '.ql-size .ql-picker-label': 'Size',
+    '.ql-color .ql-picker-label': 'Text color',
+    '.ql-align .ql-picker-label': 'Text alignment',
+    '.ql-bold': 'Bold',
+    '.ql-italic': 'Italic',
+    '.ql-underline': 'Underline',
+    '.ql-list[value="bullet"]': 'Bulleted list',
+    '.ql-list[value="ordered"]': 'Numbered list',
+    '.ql-link': 'Insert link',
+    '.ql-image': 'Insert image',
+  };
+
+  Object.entries(labels).forEach(([selector, label]) => {
+    toolbar.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+      element.setAttribute('title', label);
+      element.setAttribute('aria-label', label);
+    });
+  });
+}
+
 function registerComposeRichTextFormats(): void {
   if (composeRichTextFormatsRegistered) return;
   composeRichTextFormatsRegistered = true;
 
   const Font = Quill.import('formats/font') as { FontStyle?: { whitelist?: string[] } };
   if (Font.FontStyle) {
-    Font.FontStyle.whitelist = ['sans-serif', 'serif', 'monospace'];
+    Font.FontStyle.whitelist = [...COMPOSE_RICH_TEXT_FONTS];
     Quill.register(Font.FontStyle, true);
   }
 
   const Size = Quill.import('attributors/style/size') as { whitelist?: string[] };
-  Size.whitelist = ['12px', '14px', '16px', '18px', '24px', '32px'];
+  Size.whitelist = COMPOSE_RICH_TEXT_SIZES.filter((size): size is string => Boolean(size));
   Quill.register(Size, true);
 
   const Align = Quill.import('formats/align') as { AlignStyle?: { whitelist?: string[] } };
@@ -569,7 +622,7 @@ export function ComposeDialog({
       placeholder: composeUi.bodyPlaceholder,
       modules: {
         toolbar: [
-          [{ font: ['sans-serif', 'serif', 'monospace'] }, { size: ['12px', '14px', '16px', '18px', '24px', '32px'] }],
+          [{ font: [...COMPOSE_RICH_TEXT_FONTS] }, { size: [...COMPOSE_RICH_TEXT_SIZES] }],
           ['bold', 'italic', 'underline'],
           [{ color: [] }],
           [{ list: 'bullet' }, { list: 'ordered' }],
@@ -580,6 +633,10 @@ export function ComposeDialog({
       formats: ['font', 'size', 'color', 'bold', 'italic', 'underline', 'list', 'align', 'link', 'image'],
     });
     richTextEditorRef.current = editor;
+    const toolbar = container.previousElementSibling;
+    if (toolbar instanceof HTMLElement) {
+      improveComposeRichTextToolbarLabels(toolbar);
+    }
     editor.root.setAttribute('aria-label', composeUi.bodyLabel);
     editor.root.classList.add('compose-rich-text-root');
 
