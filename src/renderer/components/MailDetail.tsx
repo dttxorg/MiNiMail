@@ -24,10 +24,10 @@ import {
   X,
 } from 'lucide-react';
 import { RendererMailDetail, RendererMailSummary, type LoadMailBodyFn } from '../hooks/useMail';
-import { type AIEmailSourcePayload, useAI } from '../hooks/useAI';
+import { type AIEmailSourcePayload, type ContactWiki, useAI } from '../hooks/useAI';
 import { normalizeAiLanguage, normalizeAppLanguage } from '../utils/aiLanguages';
 import { extractReadableEmailText } from '../utils/emailContent';
-import { isLocalSenderMail } from '../utils/mailConversations';
+import { getConversationCounterparty, isLocalSenderMail } from '../utils/mailConversations';
 import type { MailRoutingDiagnostics } from '../utils/mailRoutingExplanationAdapter';
 import { buildIconButtonStyle, buildPanelStyle, uiColor } from '../utils/uiDesignTokens';
 import { parseKeyInfoItems, resolveKeyInfoFieldLabel, type KeyInfoItem } from '../utils/keyInfoItems';
@@ -52,6 +52,9 @@ interface MailAssistantState {
   actions: string[];
   quickReplies: string[];
   keyInfo: KeyInfoItem[];
+  replyNeeded?: boolean | null;
+  noReplyMessage?: string;
+  replyCandidates?: string[];
   error?: string;
 }
 
@@ -96,7 +99,26 @@ function readAssistantStateCache(key: string): MailAssistantState | null {
   }
   assistantResultCache.delete(key);
   assistantResultCache.set(key, cached);
-  return cached.state;
+  return {
+    ...cached.state,
+    quickReplies: normalizeQuickReplyItems(cached.state.quickReplies),
+  };
+}
+
+function normalizeQuickReplyItems(value: unknown, maxItems = 3): string[] {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        const candidate = record.text ?? record.reply ?? record.body ?? record.content ?? record.label ?? record.value;
+        return typeof candidate === 'string' ? candidate.trim() : '';
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .slice(0, maxItems);
 }
 
 function parseAiLines(value: string, maxItems: number): string[] {
@@ -543,8 +565,9 @@ function ConversationMessageCard({
   onReplyWithSuggestion,
   onSaveQuickPhrase,
   loadMailBody,
-  onError,
-  routingDiagnostics,
+      onError,
+      routingDiagnostics,
+      contactWiki,
 }: {
   email: RendererMailSummary;
   initialDetail?: RendererMailDetail | null;
@@ -569,15 +592,20 @@ function ConversationMessageCard({
   loadMailBody: LoadMailBodyFn;
   onError?: (message: string) => void;
   routingDiagnostics?: MailRoutingDiagnostics;
+  contactWiki?: ContactWiki | null;
 }) {
   const {
     translate,
     translateSegments,
     summarize,
-    suggestReply,
-    suggestActions,
-    suggestQuickReplies,
+    summarizeDetailed,
+    suggestReplyDetailed,
+    suggestContactReplyDetailed,
+    suggestActionsDetailed,
+    suggestQuickRepliesDetailed,
     extractKeyInfo,
+    getContactBehaviorSettings,
+    recordContactMailInteraction,
     loading: aiApiLoading,
   } = useAI();
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -682,6 +710,7 @@ function ConversationMessageCard({
       unavailable: 'AI 助手暂不可用',
       noActions: '暂无明确行动建议',
       noKeyInfo: '暂无可提取的关键信息',
+      noReplyNeeded: '无需回复',
       useReply: '使用这条回复',
       saveQuickPhrase: '保存为快捷短语',
       customReplyPlaceholder: '告诉 AI 如何回复...',
@@ -699,6 +728,7 @@ function ConversationMessageCard({
       unavailable: 'AI assistant unavailable',
       noActions: 'No clear action suggestions',
       noKeyInfo: 'No key information extracted',
+      noReplyNeeded: 'No reply needed',
       useReply: 'Use this reply',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Tell AI how to reply...',
@@ -716,6 +746,7 @@ function ConversationMessageCard({
       unavailable: 'AI アシスタントは現在利用できません',
       noActions: '明確なアクション提案はありません',
       noKeyInfo: '抽出できる重要情報はありません',
+      noReplyNeeded: '返信は不要です',
       useReply: 'この返信を使用',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'AI に返信内容を伝える...',
@@ -733,6 +764,7 @@ function ConversationMessageCard({
       unavailable: 'AI 도우미를 사용할 수 없습니다',
       noActions: '명확한 작업 제안이 없습니다',
       noKeyInfo: '추출할 핵심 정보가 없습니다',
+      noReplyNeeded: '답장이 필요하지 않습니다',
       useReply: '이 답장 사용',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'AI에게 답장 방향을 알려주세요...',
@@ -750,6 +782,7 @@ function ConversationMessageCard({
       unavailable: 'Asistente de IA no disponible',
       noActions: 'No hay acciones claras sugeridas',
       noKeyInfo: 'No hay información clave para extraer',
+      noReplyNeeded: 'No hace falta responder',
       useReply: 'Usar esta respuesta',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Indica a la IA cómo responder...',
@@ -767,6 +800,7 @@ function ConversationMessageCard({
       unavailable: 'Assistant IA indisponible',
       noActions: 'Aucune action claire suggérée',
       noKeyInfo: 'Aucune information clé à extraire',
+      noReplyNeeded: 'Aucune réponse nécessaire',
       useReply: 'Utiliser cette réponse',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Indiquez à l’IA comment répondre...',
@@ -784,6 +818,7 @@ function ConversationMessageCard({
       unavailable: 'KI-Assistent nicht verfügbar',
       noActions: 'Keine klaren Handlungsvorschläge',
       noKeyInfo: 'Keine wichtigen Informationen extrahierbar',
+      noReplyNeeded: 'Keine Antwort erforderlich',
       useReply: 'Diese Antwort verwenden',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Sag der KI, wie sie antworten soll...',
@@ -801,6 +836,7 @@ function ConversationMessageCard({
       unavailable: 'ИИ-ассистент недоступен',
       noActions: 'Нет явных рекомендаций',
       noKeyInfo: 'Нет ключевой информации для извлечения',
+      noReplyNeeded: 'Ответ не требуется',
       useReply: 'Использовать этот ответ',
       saveQuickPhrase: 'Save as quick phrase',
       customReplyPlaceholder: 'Подскажите ИИ, как ответить...',
@@ -810,6 +846,96 @@ function ConversationMessageCard({
   } as const;
   const assistantLabels = assistantLabelsByLanguage[normalizedLanguage] ?? assistantLabelsByLanguage.en;
   const translateButtonLabel = isTranslated ? assistantLabels.original : t('translate');
+  const contactWikiLabels = normalizedLanguage === 'zh'
+    ? {
+      title: '联系人 Wiki',
+      loading: '正在构建联系人知识库...',
+      build: '生成',
+      rebuild: '重建',
+      disabled: '在 AI 设置中开启历史邮件知识库后可用',
+      unavailable: '联系人知识库暂不可用',
+      recent: '近期脉络',
+      openLoops: '待办/风险',
+      style: '回复风格',
+      profile: '关系画像',
+      projects: '活跃事项',
+      preferences: '偏好',
+      userValue: '对我的价值',
+      userInsights: '用户洞察',
+      engagement: '行为画像',
+      subscriptionValue: '订阅价值',
+      promotionPattern: '促销规律',
+      bestDeal: '历史低价',
+      actionAdvice: '阅读建议',
+      readingValue: '阅读价值',
+      frequency: '频率',
+      contentStability: '内容稳定性',
+      serviceType: '服务类型',
+      userAction: '建议动作',
+      riskAlert: '风险提示',
+      feedbackThemes: '反馈主题',
+      featureRequests: '功能请求',
+      criticisms: '批评/问题',
+      praises: '正向反馈',
+      suggestedNextActions: '建议跟进',
+      replyEntry: '互动入口',
+      diagnostics: '诊断',
+      insufficientBehavior: '暂无足够行为数据',
+      feedbackUseful: '有用',
+      feedbackInaccurate: '不准',
+      feedbackNotRelevant: '不相关',
+      feedbackTooLong: '太长',
+      feedbackSaved: '已记录',
+      expand: '展开',
+      collapse: '收起',
+    }
+    : {
+      title: 'Contact Wiki',
+      loading: 'Building contact knowledge...',
+      build: 'Build',
+      rebuild: 'Rebuild',
+      disabled: 'Enable historical mail knowledge in AI settings',
+      unavailable: 'Contact wiki unavailable',
+      recent: 'Recent context',
+      openLoops: 'Open loops',
+      style: 'Reply style',
+      profile: 'Relationship',
+      projects: 'Active items',
+      preferences: 'Preferences',
+      userValue: 'Value for me',
+      userInsights: 'User insights',
+      engagement: 'Engagement',
+      subscriptionValue: 'Subscription value',
+      promotionPattern: 'Promotion pattern',
+      bestDeal: 'Best deal so far',
+      actionAdvice: 'Action advice',
+      readingValue: 'Reading value',
+      frequency: 'Frequency',
+      contentStability: 'Content stability',
+      serviceType: 'Service type',
+      userAction: 'Suggested action',
+      riskAlert: 'Risk alert',
+      feedbackThemes: 'Feedback themes',
+      featureRequests: 'Feature requests',
+      criticisms: 'Criticism / issues',
+      praises: 'Positive feedback',
+      suggestedNextActions: 'Suggested next actions',
+      replyEntry: 'Reply entry',
+      diagnostics: 'Diagnostics',
+      insufficientBehavior: 'Not enough behavior data yet',
+      feedbackUseful: 'Useful',
+      feedbackInaccurate: 'Inaccurate',
+      feedbackNotRelevant: 'Not relevant',
+      feedbackTooLong: 'Too long',
+      feedbackSaved: 'Saved',
+      expand: 'Expand',
+      collapse: 'Collapse',
+    };
+  const contactEmail = useMemo(
+    () => getConversationCounterparty(email, accountEmails),
+    [accountEmails, email]
+  );
+  const showAiReplyButton = !isLocalSender;
   const getKeyInfoFieldLabel = useCallback((item: KeyInfoItem) => {
     return resolveKeyInfoFieldLabel(item, normalizedLanguage, t);
   }, [normalizedLanguage, t]);
@@ -858,6 +984,29 @@ function ConversationMessageCard({
   }, [detail, email, loadMailBody]);
 
   useEffect(() => {
+    if (!expanded || !contactEmail || !/@/.test(contactEmail)) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await getContactBehaviorSettings();
+        if (cancelled || !settings.enabled) return;
+        await recordContactMailInteraction({
+          accountId: email.accountId,
+          mailId: email.id,
+          contactEmail,
+          eventType: 'open',
+          eventValue: { count: 1 },
+        });
+      } catch {
+        // Behavior learning is optional and must not affect reading mail.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [contactEmail, email.accountId, email.id, expanded, getContactBehaviorSettings, recordContactMailInteraction]);
+
+  useEffect(() => {
     if (expanded && !detail && !loading) {
       void ensureDetailLoaded();
     }
@@ -895,6 +1044,10 @@ function ConversationMessageCard({
       from_name: source.fromName,
       to: source.to,
       date: source.date,
+      messageId: source.messageId,
+      inReplyTo: source.inReplyTo,
+      references: source.references,
+      headers: 'headers' in source ? source.headers ?? {} : {},
       body_html: bodyHtml,
       body_text: readableBodyText || source.snippet,
       snippet: source.snippet,
@@ -914,7 +1067,17 @@ function ConversationMessageCard({
       case 'summarize':
         return summarize(aiPayload, normalizedLanguage);
       case 'reply':
-        return suggestReply(aiPayload, normalizedLanguage);
+        if (contactWiki && contactEmail) {
+          const response = await suggestContactReplyDetailed({
+            accountId: source.accountId,
+            contactEmail,
+            aliases: contactWiki.aliases,
+            mailId: source.id,
+            targetLang: normalizedLanguage,
+          });
+          return response.content || '';
+        }
+        return (await suggestReplyDetailed(aiPayload, normalizedLanguage)).content || '';
       default:
         return '';
     }
@@ -1023,18 +1186,27 @@ function ConversationMessageCard({
       const source = await ensureDetailLoaded();
       const aiPayload = buildAiPayload(source);
 
-      const summaryResult = await summarize(aiPayload, normalizedLanguage);
-      const actionsResult = await suggestActions(aiPayload, normalizedLanguage);
-      const repliesResult = await suggestQuickReplies(aiPayload, normalizedLanguage);
+      const summaryResponse = await summarizeDetailed(aiPayload, normalizedLanguage);
+      const actionsResponse = await suggestActionsDetailed(aiPayload, normalizedLanguage);
+      const repliesResponse = await suggestQuickRepliesDetailed(aiPayload, normalizedLanguage);
       const keyInfoResult = await extractKeyInfo(aiPayload, normalizedLanguage);
+      const replyNeeded = repliesResponse.metadata?.replyNeeded ?? actionsResponse.metadata?.replyNeeded ?? null;
 
       const readyState: MailAssistantState = {
         status: 'ready',
         loadedForId: email.id,
-        summary: summaryResult.trim(),
-        actions: parseActionSuggestionLines(actionsResult, 4),
-        quickReplies: parseAiLines(repliesResult, 3),
+        summary: (summaryResponse.content || '').trim(),
+        actions: actionsResponse.metadata?.actions?.length
+          ? actionsResponse.metadata.actions.map((action) => [action.label, action.evidence].filter(Boolean).join(' — ')).slice(0, 4)
+          : parseActionSuggestionLines(actionsResponse.content || '', 4),
+        quickReplies: replyNeeded === false
+          ? []
+          : (repliesResponse.metadata?.quickReplies?.length
+            ? normalizeQuickReplyItems(repliesResponse.metadata.quickReplies)
+            : parseAiLines(repliesResponse.content || '', 3)),
         keyInfo: parseKeyInfoItems(keyInfoResult),
+        replyNeeded,
+        noReplyMessage: repliesResponse.metadata?.noReplyMessage || actionsResponse.metadata?.noReplyMessage,
       };
       rememberAssistantState(cacheKey, readyState, ASSISTANT_RESULT_TTL_MS);
       setAssistantState(readyState);
@@ -1056,9 +1228,9 @@ function ConversationMessageCard({
     email.id,
     ensureDetailLoaded,
     extractKeyInfo,
-    summarize,
-    suggestActions,
-    suggestQuickReplies,
+    summarizeDetailed,
+    suggestActionsDetailed,
+    suggestQuickRepliesDetailed,
     ui.aiFailed,
   ]);
 
@@ -1084,8 +1256,26 @@ function ConversationMessageCard({
     setAiResult(null);
     try {
       const loadedSource = await ensureDetailLoaded();
-      const result = await generateAIResult('reply', loadedSource);
-      onReplyWithSuggestion(result);
+      const normalizedLanguage = normalizeAiLanguage(aiTargetLanguage);
+      const aiPayload = buildAiPayload(loadedSource);
+      const response = contactWiki && contactEmail
+        ? await suggestContactReplyDetailed({
+            accountId: loadedSource.accountId,
+            contactEmail,
+            aliases: contactWiki.aliases,
+            mailId: loadedSource.id,
+            targetLang: normalizedLanguage,
+          })
+        : await suggestReplyDetailed(aiPayload, normalizedLanguage);
+      if (response.metadata?.replyNeeded === false) {
+        onError?.(response.metadata.noReplyMessage || response.content || assistantLabels.noReplyNeeded);
+        return;
+      }
+      const candidate = response.metadata?.replyCandidates?.find((item) => item.style === 'best')?.body ||
+        response.metadata?.replyCandidates?.[0]?.body ||
+        response.content ||
+        '';
+      if (candidate.trim()) onReplyWithSuggestion(candidate);
     } catch (err) {
       console.error('[ConversationMessageCard] AI reply failed:', err);
       onError?.(ui.aiFailed);
@@ -1305,7 +1495,7 @@ function ConversationMessageCard({
                 <Languages className="w-3.5 h-3.5" strokeWidth={1.8} />
                 {translateButtonLabel}
               </button>
-              {!isLocalSender && (
+              {showAiReplyButton && (
                 <button
                   type="button"
                   onClick={() => void handleAiReply()}
@@ -1538,36 +1728,43 @@ function ConversationMessageCard({
 
                 <div className="mt-3">
                   <div className="mb-2 text-[12px] font-semibold" style={{ color: '#C4B5FD' }}>{assistantLabels.quickReplies}</div>
-                  <div className="flex flex-wrap gap-2">
-                    {assistantState.quickReplies.map((reply, index) => (
-                      <div
-                        key={`${reply}-${index}`}
-                        className="inline-flex max-w-full overflow-hidden rounded-lg"
-                        style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => onReplyWithSuggestion(reply)}
-                          className="min-w-0 px-3 py-1.5 text-left text-[12px] cursor-pointer"
-                          title={assistantLabels.useReply}
-                          style={{ color: '#EDE9FE' }}
+                  {assistantState.replyNeeded === false ? (
+                    <div className="rounded-lg px-3 py-2 text-[12px]" style={{ color: '#CBD5E1', backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                      {assistantState.noReplyMessage || assistantLabels.noReplyNeeded}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {assistantState.quickReplies.map((reply, index) => (
+                        <div
+                          key={`${reply}-${index}`}
+                          className="inline-flex max-w-full overflow-hidden rounded-lg"
+                          style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
                         >
-                          <span className="block truncate">{reply}</span>
-                        </button>
-                        {onSaveQuickPhrase && (
                           <button
                             type="button"
-                            onClick={() => void onSaveQuickPhrase(reply)}
-                            className="border-l border-white/10 px-2 py-1.5 text-[11px] cursor-pointer"
-                            title={assistantLabels.saveQuickPhrase}
-                            style={{ color: '#C4B5FD' }}
+                            onClick={() => onReplyWithSuggestion(reply)}
+                            className="min-w-0 px-3 py-1.5 text-left text-[12px] cursor-pointer"
+                            title={assistantLabels.useReply}
+                            style={{ color: '#EDE9FE' }}
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                            <span className="block truncate">{reply}</span>
                           </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                          {onSaveQuickPhrase && (
+                            <button
+                              type="button"
+                              onClick={() => void onSaveQuickPhrase(reply)}
+                              className="border-l border-white/10 px-2 py-1.5 text-[11px] cursor-pointer"
+                              title={assistantLabels.saveQuickPhrase}
+                              style={{ color: '#C4B5FD' }}
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.8} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {assistantState.replyNeeded !== false && (
                   <div className="mt-3 flex items-center gap-2 rounded-[18px] px-3 py-2" style={{ backgroundColor: 'rgba(15,23,42,0.46)' }}>
                     <input
                       value={quickReplyDraft}
@@ -1592,6 +1789,7 @@ function ConversationMessageCard({
                       <Send className="w-4 h-4" strokeWidth={1.8} />
                     </button>
                   </div>
+                  )}
                 </div>
 
                 <div className="mt-3 rounded-[20px] p-4" style={{ backgroundColor: 'rgba(15,23,42,0.46)' }}>
@@ -1655,6 +1853,18 @@ export function MailDetail({
   const appLanguage = normalizeAppLanguage(i18n.language);
   const locale = i18n.language || undefined;
   const ui = useMemo(() => getUi(appLanguage), [appLanguage]);
+  const {
+    getContactKnowledgeSettings,
+    getContactWiki,
+    buildContactWiki,
+    saveContactWikiFeedback,
+    loading: aiApiLoading,
+  } = useAI();
+  const [contactWiki, setContactWiki] = useState<ContactWiki | null>(null);
+  const [contactWikiStatus, setContactWikiStatus] = useState<'idle' | 'disabled' | 'loading' | 'ready' | 'error'>('idle');
+  const [contactWikiError, setContactWikiError] = useState<string | null>(null);
+  const [contactWikiFeedbackStatus, setContactWikiFeedbackStatus] = useState<string | null>(null);
+  const [contactWikiExpanded, setContactWikiExpanded] = useState(false);
 
   const formatDate = useCallback((date: Date) => {
     return date.toLocaleString(locale, {
@@ -1666,6 +1876,182 @@ export function MailDetail({
       minute: '2-digit',
     });
   }, [locale]);
+
+  const selectedSummary = email as RendererMailSummary | null;
+  const sortedConversation = (conversationMessages.length > 0 ? conversationMessages : [selectedSummary])
+    .filter((message): message is RendererMailSummary => Boolean(message))
+    .slice()
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  const contactEmail = selectedSummary ? getConversationCounterparty(selectedSummary, accountEmails) : '';
+  const contactName = selectedSummary && isLocalSenderMail(selectedSummary, accountEmails)
+    ? contactEmail
+    : (selectedSummary?.fromName || contactEmail);
+  const contactWikiLabels = appLanguage === 'zh'
+    ? {
+      title: '联系人 Wiki',
+      loading: '正在构建联系人知识库...',
+      build: '生成',
+      rebuild: '重建',
+      disabled: '在 AI 设置中开启历史邮件知识库后可用',
+      unavailable: '联系人知识库暂不可用',
+      recent: '近期脉络',
+      openLoops: '待办/风险',
+      style: '回复风格',
+      profile: '关系画像',
+      projects: '活跃事项',
+      preferences: '偏好',
+      userValue: '对我的价值',
+      userInsights: '用户洞察',
+      engagement: '行为画像',
+      subscriptionValue: '订阅价值',
+      promotionPattern: '促销规律',
+      bestDeal: '历史低价',
+      actionAdvice: '阅读建议',
+      readingValue: '阅读价值',
+      frequency: '频率',
+      contentStability: '内容稳定性',
+      serviceType: '服务类型',
+      userAction: '建议动作',
+      riskAlert: '风险提示',
+      feedbackThemes: '反馈主题',
+      featureRequests: '功能请求',
+      criticisms: '批评/问题',
+      praises: '正向反馈',
+      suggestedNextActions: '建议跟进',
+      replyEntry: '互动入口',
+      diagnostics: '诊断',
+      insufficientBehavior: '暂无足够行为数据',
+      feedbackUseful: '有用',
+      feedbackInaccurate: '不准',
+      feedbackNotRelevant: '不相关',
+      feedbackTooLong: '太长',
+      feedbackSaved: '已记录',
+      expand: '展开',
+      collapse: '收起',
+    }
+    : {
+      title: 'Contact Wiki',
+      loading: 'Building contact knowledge...',
+      build: 'Build',
+      rebuild: 'Rebuild',
+      disabled: 'Enable historical mail knowledge in AI settings',
+      unavailable: 'Contact wiki unavailable',
+      recent: 'Recent context',
+      openLoops: 'Open loops',
+      style: 'Reply style',
+      profile: 'Relationship',
+      projects: 'Active items',
+      preferences: 'Preferences',
+      userValue: 'Value for me',
+      userInsights: 'User insights',
+      engagement: 'Engagement',
+      subscriptionValue: 'Subscription value',
+      promotionPattern: 'Promotion pattern',
+      bestDeal: 'Best deal so far',
+      actionAdvice: 'Action advice',
+      readingValue: 'Reading value',
+      frequency: 'Frequency',
+      contentStability: 'Content stability',
+      serviceType: 'Service type',
+      userAction: 'Suggested action',
+      riskAlert: 'Risk alert',
+      feedbackThemes: 'Feedback themes',
+      featureRequests: 'Feature requests',
+      criticisms: 'Criticism / issues',
+      praises: 'Positive feedback',
+      suggestedNextActions: 'Suggested next actions',
+      replyEntry: 'Reply entry',
+      diagnostics: 'Diagnostics',
+      insufficientBehavior: 'Not enough behavior data yet',
+      feedbackUseful: 'Useful',
+      feedbackInaccurate: 'Inaccurate',
+      feedbackNotRelevant: 'Not relevant',
+      feedbackTooLong: 'Too long',
+      feedbackSaved: 'Saved',
+      expand: 'Expand',
+      collapse: 'Collapse',
+    };
+
+  const loadContactWiki = useCallback(async (force = false, buildIfMissing = false) => {
+    if (!selectedSummary || !contactEmail || !/@/.test(contactEmail)) {
+      setContactWikiStatus('idle');
+      return;
+    }
+    setContactWikiStatus('loading');
+    setContactWikiError(null);
+    try {
+      const settings = await getContactKnowledgeSettings();
+      if (!settings.enabled) {
+        setContactWiki(null);
+        setContactWikiStatus('disabled');
+        return;
+      }
+      const existing = !force ? await getContactWiki({ accountId: selectedSummary.accountId, contactEmail }) : null;
+      if (existing && !existing.stale) {
+        setContactWiki(existing);
+        setContactWikiStatus('ready');
+        setContactWikiExpanded(false);
+        return;
+      }
+      if (!buildIfMissing) {
+        setContactWiki(existing ?? null);
+        setContactWikiStatus(existing ? 'ready' : 'idle');
+        setContactWikiExpanded(false);
+        return;
+      }
+      setContactWikiExpanded(true);
+      const built = await buildContactWiki({
+        accountId: selectedSummary.accountId,
+        contactEmail,
+        contactName,
+        force,
+        targetLang: normalizeAiLanguage(aiTargetLanguage),
+      });
+      setContactWiki(built);
+      setContactWikiStatus('ready');
+      setContactWikiExpanded(false);
+    } catch (error) {
+      setContactWikiStatus('error');
+      setContactWikiError((error as Error).message);
+      setContactWikiExpanded(true);
+    }
+  }, [
+    aiTargetLanguage,
+    buildContactWiki,
+    contactEmail,
+    contactName,
+    getContactKnowledgeSettings,
+    getContactWiki,
+    selectedSummary?.accountId,
+  ]);
+
+  useEffect(() => {
+    setContactWiki(null);
+    setContactWikiStatus('idle');
+    setContactWikiError(null);
+    setContactWikiFeedbackStatus(null);
+    setContactWikiExpanded(false);
+    void loadContactWiki(false, false);
+  }, [contactEmail, selectedSummary?.accountId, loadContactWiki]);
+
+  const handleContactWikiFeedback = useCallback(async (
+    target: 'wiki' | 'reply',
+    rating: 'useful' | 'inaccurate' | 'not_relevant' | 'too_long' | 'too_formal' | 'too_short',
+  ) => {
+    if (!selectedSummary || !contactEmail) return;
+    try {
+      await saveContactWikiFeedback({
+        accountId: selectedSummary.accountId,
+        contactEmail,
+        target,
+        rating,
+      });
+      setContactWikiFeedbackStatus(contactWikiLabels.feedbackSaved);
+      setTimeout(() => setContactWikiFeedbackStatus(null), 1800);
+    } catch (error) {
+      setContactWikiFeedbackStatus((error as Error).message);
+    }
+  }, [contactEmail, contactWikiLabels.feedbackSaved, saveContactWikiFeedback, selectedSummary]);
 
   if (!email && mailLoadingState === 'idle') {
     return <EmptyMailState appLanguage={appLanguage} />;
@@ -1705,12 +2091,7 @@ export function MailDetail({
     );
   }
 
-  if (!email) return null;
-
-  const selectedSummary = email as RendererMailSummary;
-  const sortedConversation = (conversationMessages.length > 0 ? conversationMessages : [selectedSummary])
-    .slice()
-    .sort((a, b) => b.date.getTime() - a.date.getTime());
+  if (!selectedSummary) return null;
 
   return (
     <div className="flex-1 h-full min-h-0 flex flex-col relative w-full min-w-0" style={{ backgroundColor: '#07101D' }}>
@@ -1732,21 +2113,175 @@ export function MailDetail({
             </div>
           </div>
         </div>
+        {contactEmail && /@/.test(contactEmail) && (
+          <div className="mb-5 rounded-[20px] p-4" style={{ backgroundColor: 'rgba(15,23,42,0.62)', border: '1px solid rgba(148,163,184,0.14)' }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(48,209,88,0.14)', color: '#86EFAC' }}>
+                  <Sparkles className="w-4 h-4" strokeWidth={1.8} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-white">{contactWikiLabels.title}</div>
+                  <div className="truncate text-[11px]" style={{ color: uiColor.textSubtle }}>{contactEmail}</div>
+                </div>
+              </div>
+              <div className="shrink-0 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void loadContactWiki(Boolean(contactWiki), true)}
+                  disabled={contactWikiStatus === 'loading' || aiApiLoading}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer disabled:opacity-50"
+                  style={{ color: '#BBF7D0', backgroundColor: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.22)' }}
+                >
+                  {contactWiki ? contactWikiLabels.rebuild : contactWikiLabels.build}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContactWikiExpanded((expanded) => !expanded)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer"
+                  style={{ color: uiColor.textSubtle, backgroundColor: 'rgba(255,255,255,0.04)' }}
+                >
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${contactWikiExpanded ? 'rotate-180' : ''}`} strokeWidth={1.8} />
+                  {contactWikiExpanded ? contactWikiLabels.collapse : contactWikiLabels.expand}
+                </button>
+              </div>
+            </div>
+            {contactWikiStatus === 'loading' ? (
+              <div className="mt-3 text-[12px]" style={{ color: uiColor.textSubtle }}>{contactWikiLabels.loading}</div>
+            ) : contactWikiStatus === 'disabled' ? (
+              <div className="mt-3 text-[12px]" style={{ color: uiColor.textSubtle }}>{contactWikiLabels.disabled}</div>
+            ) : contactWikiStatus === 'error' ? (
+              <div className="mt-3 text-[12px]" style={{ color: '#FCA5A5' }}>{contactWikiError || contactWikiLabels.unavailable}</div>
+            ) : contactWiki ? (
+              <div className={contactWikiExpanded ? 'mt-3 space-y-3' : 'mt-3'}>
+                <p
+                  className={`text-[12px] leading-6 break-words ${contactWikiExpanded ? 'whitespace-pre-wrap' : 'truncate'}`}
+                  style={{ color: '#DDE4F2' }}
+                >
+                  {contactWiki.summary}
+                </p>
+                {!contactWikiExpanded && (
+                  <div className="mt-1 text-[10px]" style={{ color: uiColor.textSubtle }}>
+                    {contactWiki.sourceMailCount} mails · {contactWiki.chunkCount} chunks
+                    {contactWiki.stale ? ` · ${contactWiki.staleReason || 'stale'}` : ''}
+                  </div>
+                )}
+                {contactWikiExpanded && (
+                <>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-2">
+                  {(() => {
+                    const supportsUserInsights = contactWiki.senderType === 'personal' || contactWiki.senderType === 'work_contact';
+                    const compact = (value: string | null | undefined): string[] => value ? [value] : [];
+                    const normalizeWikiText = (value: string): string => value.replace(/\s+/g, '').replace(/[，。；;:：,.!！?？\-—–]/g, '').toLowerCase();
+                    const summaryKey = normalizeWikiText(contactWiki.summary || '');
+                    const visibleItems = (items: string[]): string[] => items.filter((item) => normalizeWikiText(item) !== summaryKey);
+                    const row = (label: string, items: string[]): [string, string[]] => [label, items];
+                    const scenarioRows: Array<[string, string[]]> = [
+                      row(contactWikiLabels.subscriptionValue, compact(contactWiki.subscriptionValue)),
+                      row(contactWikiLabels.promotionPattern, compact(contactWiki.promotionPattern)),
+                      row(contactWikiLabels.bestDeal, contactWiki.bestDealSoFar || []),
+                      row(contactWikiLabels.actionAdvice, compact(contactWiki.actionAdvice)),
+                      row(contactWikiLabels.readingValue, compact(contactWiki.readingValue)),
+                      row(contactWikiLabels.frequency, compact(contactWiki.frequency)),
+                      row(contactWikiLabels.contentStability, compact(contactWiki.contentStability)),
+                      row(contactWikiLabels.serviceType, compact(contactWiki.serviceType)),
+                      row(contactWikiLabels.userAction, compact(contactWiki.userAction)),
+                      row(contactWikiLabels.riskAlert, compact(contactWiki.riskAlert)),
+                      row(contactWikiLabels.feedbackThemes, contactWiki.feedbackThemes || []),
+                      row(contactWikiLabels.featureRequests, contactWiki.featureRequests || []),
+                      row(contactWikiLabels.criticisms, contactWiki.criticisms || []),
+                      row(contactWikiLabels.praises, contactWiki.praises || []),
+                      row(contactWikiLabels.suggestedNextActions, contactWiki.suggestedNextActions || []),
+                      row(contactWikiLabels.replyEntry, compact(contactWiki.replyEntry)),
+                      ...(import.meta.env.DEV && contactWiki.wikiDiagnostics
+                        ? [row(contactWikiLabels.diagnostics, [
+                          ...(contactWiki.wikiDiagnostics.fallbackReasons || []).map((item) => `fallback: ${item}`),
+                          ...(contactWiki.wikiDiagnostics.strippedFields || []).map((item) => `stripped: ${item}`),
+                          contactWiki.wikiDiagnostics.canonicalSummaryField ? `canonical: ${contactWiki.wikiDiagnostics.canonicalSummaryField}` : '',
+                          contactWiki.wikiDiagnostics.summaryReplaced ? 'summaryReplaced: true' : '',
+                        ].filter(Boolean))]
+                        : []),
+                    ].map(([label, items]) => row(label, visibleItems(items))).filter(([, items]) => items.length > 0);
+                    const rows: Array<[string, string[]]> = [
+                      row(contactWikiLabels.recent, contactWiki.recentContext),
+                      ...(supportsUserInsights
+                        ? [
+                          row(contactWikiLabels.openLoops, contactWiki.openLoops),
+                          row(contactWikiLabels.style, contactWiki.replyStyle),
+                          row(contactWikiLabels.projects, contactWiki.activeProjects),
+                        ]
+                        : []),
+                      ...(supportsUserInsights ? [row(contactWikiLabels.preferences, contactWiki.preferences)] : []),
+                      ...(supportsUserInsights ? [row(contactWikiLabels.userValue, (contactWiki.valueForUser || []).map((item) => item.text))] : []),
+                      ...scenarioRows,
+                      ...(supportsUserInsights
+                        ? [
+                          row(contactWikiLabels.userInsights, (contactWiki.userInsights || []).map((item) => item.text).length > 0 ? (contactWiki.userInsights || []).map((item) => item.text) : [contactWikiLabels.insufficientBehavior]),
+                          row(contactWikiLabels.engagement, contactWiki.engagementProfile || []),
+                        ]
+                        : []),
+                      ...(supportsUserInsights ? [row(contactWikiLabels.profile, compact(contactWiki.relationshipProfile || contactWiki.lastInteractionSummary))] : []),
+                    ];
+                    return rows;
+                  })().map(([label, items]) => (
+                    <div key={label as string} className="rounded-[14px] px-3 py-2" style={{ backgroundColor: 'rgba(2,6,23,0.32)' }}>
+                      <div className="mb-1.5 text-[11px] font-semibold" style={{ color: '#86EFAC' }}>{label as string}</div>
+                      <ul className="space-y-1 text-[11px] leading-5" style={{ color: '#DDE4F2' }}>
+                        {((items as string[]).length > 0 ? items as string[] : ['-']).map((item, index) => (
+                          <li key={`${item}-${index}`} className="break-words">{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[10px]" style={{ color: uiColor.textSubtle }}>
+                  {contactWiki.sourceMailCount} mails · {contactWiki.chunkCount} chunks
+                  {contactWiki.stale ? ` · ${contactWiki.staleReason || 'stale'}` : ''}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {[
+                    [contactWikiLabels.feedbackUseful, 'useful'],
+                    [contactWikiLabels.feedbackInaccurate, 'inaccurate'],
+                    [contactWikiLabels.feedbackNotRelevant, 'not_relevant'],
+                    [contactWikiLabels.feedbackTooLong, 'too_long'],
+                  ].map(([label, rating]) => (
+                    <button
+                      key={rating as string}
+                      type="button"
+                      onClick={() => void handleContactWikiFeedback('wiki', rating as 'useful' | 'inaccurate' | 'not_relevant' | 'too_long')}
+                      className="rounded-md px-2 py-1 text-[10px] cursor-pointer"
+                      style={{ color: '#BBF7D0', backgroundColor: 'rgba(34,197,94,0.10)' }}
+                    >
+                      {label as string}
+                    </button>
+                  ))}
+                  {contactWikiFeedbackStatus && (
+                    <span className="text-[10px]" style={{ color: uiColor.textSubtle }}>{contactWikiFeedbackStatus}</span>
+                  )}
+                </div>
+                </>
+                )}
+              </div>
+            ) : (
+              <div className="mt-3 text-[12px]" style={{ color: uiColor.textSubtle }}>{contactWikiLabels.unavailable}</div>
+            )}
+          </div>
+        )}
         {sortedConversation.map((message, index) => (
           <ConversationMessageCard
             key={message.id}
             email={message}
-            initialDetail={message.id === email.id && isDetail(email) ? email : null}
+            initialDetail={message.id === selectedSummary.id && isDetail(selectedSummary) ? selectedSummary : null}
             defaultExpanded={index === 0}
             accountEmails={accountEmails}
             t={t}
             locale={locale || ''}
             ui={ui}
             aiTargetLanguage={aiTargetLanguage}
-            initialLoading={message.id === email.id && mailLoadingState === 'loading' && !isDetail(email)}
-            initialError={message.id === email.id && (mailLoadingState === 'error' || mailLoadingState === 'timeout')}
-            mailError={message.id === email.id ? mailError : null}
-            onRetry={message.id === email.id ? onRetry : undefined}
+            initialLoading={message.id === selectedSummary.id && mailLoadingState === 'loading' && !isDetail(selectedSummary)}
+            initialError={message.id === selectedSummary.id && (mailLoadingState === 'error' || mailLoadingState === 'timeout')}
+            mailError={message.id === selectedSummary.id ? mailError : null}
+            onRetry={message.id === selectedSummary.id ? onRetry : undefined}
             onReply={(mail) => (onReplyForMail ? onReplyForMail(mail) : onReply())}
             onForward={(mail) => (onForwardForMail ? onForwardForMail(mail) : onForward())}
             onDelete={(mail) => (onDeleteMail ? onDeleteMail(mail) : onDelete())}
@@ -1758,11 +2293,10 @@ export function MailDetail({
             loadMailBody={loadMailBody}
             onError={onError}
             routingDiagnostics={routingDiagnostics[message.id]}
+            contactWiki={contactWiki}
           />
         ))}
       </div>
     </div>
   );
 }
-
-

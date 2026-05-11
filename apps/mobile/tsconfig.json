@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "ignoreDeprecations": "6.0",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "baseUrl": ".",
+    "paths": {
+      "@minimail/core": ["../../packages/core/src/index.ts"],
+      "@minimail/core/*": ["../../packages/core/src/*"]
+    },
+    "types": []
+  },
+  "include": [
+    "src/**/*",
+    "../../packages/core/src/**/*",
+    "../../src/shared/**/*",
+    "../../src/renderer/types.ts"
+  ]
+}

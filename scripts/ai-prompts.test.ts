@@ -6,6 +6,7 @@ import {
   buildSummarizePrompt,
   buildTranslatePrompt,
 } from '../src/shared/email-ai/aiPrompts';
+import { deriveEmailAIContext } from '../src/shared/email-ai/aiContext';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -30,6 +31,8 @@ function testTranslatePromptUsesLatestReply() {
 
   assert(request.prompt.includes('Please pay invoice INV-2026-88 before 2026-04-30.'), 'Expected latest reply in translate prompt');
   assert(!request.prompt.includes('Old quoted history'), 'Expected quoted history to be excluded from translate prompt');
+  assert(request.system.includes('Do not translate brand names'), 'Expected translation prompt to preserve proper nouns');
+  assert(request.system.includes('Preserve tone and register'), 'Expected translation prompt to preserve tone');
 }
 
 function testSummarizePromptIncludesActionSignals() {
@@ -45,6 +48,8 @@ function testSummarizePromptIncludesActionSignals() {
   assert(request.prompt.includes('$88.00'), 'Expected amount in summary prompt');
   assert(request.prompt.includes('Please pay invoice INV-2026-88 before 2026-04-30.'), 'Expected latest reply in summary prompt');
   assert(request.system.includes('Chinese'), 'Expected summary prompt to enforce the target language');
+  assert(request.system.includes('JSON object'), 'Expected summary prompt to request structured JSON');
+  assert(request.system.includes('what, impact, action, keyFacts, urgency'), 'Expected summary schema keys');
 }
 
 function testReplyPromptKeepsQuotedContextSeparate() {
@@ -65,8 +70,9 @@ function testReplyPromptKeepsQuotedContextSeparate() {
   assert(request.prompt.includes('We can ship after QA finishes.'), 'Expected quoted context in reply prompt');
   assert(request.system.includes('Chinese'), 'Expected reply prompt to enforce the target language');
   assert(request.system.includes('Do not translate or summarize'), 'Expected reply prompt to generate an actual reply instead of translating');
-  assert(request.system.includes('Draft the actual reply'), 'Expected reply prompt to produce sendable reply content');
+  assert(request.system.includes('candidate reply drafts'), 'Expected reply prompt to produce candidate reply drafts');
   assert(request.system.includes('Never include analysis headings'), 'Expected reply prompt to forbid assistant-analysis sections in sendable replies');
+  assert(request.system.includes('do not draft a polite acknowledgement'), 'Expected no-reply prompt to forbid polite acknowledgements');
 }
 
 function testAssistantPromptsExposeStructuredAssistantSections() {
@@ -82,22 +88,27 @@ function testAssistantPromptsExposeStructuredAssistantSections() {
   };
 
   const actions = buildActionSuggestionsPrompt(source, 'Chinese');
-  assert(actions.system.includes('bullet'), 'Expected action suggestions to request concise bullet output');
+  assert(actions.system.includes('JSON object'), 'Expected action suggestions to request structured JSON');
   assert(actions.system.includes('Action score'), 'Expected action suggestions to use deterministic action score');
-  assert(actions.system.includes('handling level'), 'Expected action suggestions to require a stable handling level');
+  assert(actions.system.includes('Allowed intents'), 'Expected action suggestions to include intent limits');
   assert(actions.system.includes('evidence'), 'Expected action suggestions to require evidence');
-  assert(actions.system.includes('Line 1 must be the overall handling level'), 'Expected action prompt to separate the overall handling level from action lines');
-  assert(actions.system.includes('Do not repeat the handling level on every action line'), 'Expected action prompt to forbid repeating the handling level on every bullet');
   assert(actions.system.includes('generic advice'), 'Expected action prompt to explicitly avoid generic advice');
   assert(actions.system.includes('Do not output free-form High/Medium/Low priority labels'), 'Expected action prompt to avoid drifting priority labels');
   assert(actions.prompt.includes('Detected deadlines:'), 'Expected action prompt to include deadline context');
   assert(actions.prompt.includes('Detected amounts:'), 'Expected action prompt to include amount context');
   assert(actions.system.includes('Chinese'), 'Expected action prompt to enforce target language');
 
-  const quickReplies = buildQuickRepliesPrompt(source, 'Chinese');
+  const quickReplies = buildQuickRepliesPrompt({
+    subject: 'Project rollout',
+    from: 'alice@example.com',
+    fromName: 'Alice',
+    category: '工作/业务类',
+    snippet: 'Can you confirm the rollout by Friday?',
+    bodyText: 'Can you confirm the rollout by Friday?',
+  }, 'Chinese');
   assert(quickReplies.system.includes('exactly 3'), 'Expected quick replies prompt to request three options');
-  assert(quickReplies.system.includes('different intent'), 'Expected quick replies to request varied intents');
-  assert(quickReplies.system.includes('clarification'), 'Expected quick replies to include a clarification variant');
+  assert(quickReplies.system.includes('intent families'), 'Expected quick replies to request varied intents');
+  assert(quickReplies.system.includes('clarify'), 'Expected quick replies to include a clarification variant');
   assert(quickReplies.prompt.includes('Latest reply:'), 'Expected quick replies prompt to include latest reply context');
 
   const keyInfo = buildKeyInfoPrompt(source, 'Chinese');
@@ -126,7 +137,7 @@ function testJapaneseAssistantPromptsForbidEnglishLabels() {
   const actions = buildActionSuggestionsPrompt(source, 'Japanese');
   assert(actions.system.includes('Japanese'), 'Expected action prompt to target Japanese');
   assert(actions.system.includes('Do not use English labels'), 'Expected Japanese action prompt to forbid English labels');
-  assert(actions.system.includes('対応レベル'), 'Expected Japanese action prompt to provide localized handling-level guidance');
+  assert(actions.system.includes('対応レベル'), 'Expected Japanese action prompt to provide localized label guidance');
 
   const quickReplies = buildQuickRepliesPrompt(source, 'Japanese');
   assert(quickReplies.system.includes('Do not use English labels'), 'Expected Japanese quick replies prompt to forbid English labels');
@@ -171,8 +182,105 @@ function testActionSuggestionsUseAiCategoryAndStableScoringForMarketing() {
   assert(request.prompt.includes('Category guidance:'), 'Expected action prompt to include category-aware guidance');
   assert(request.prompt.includes('Action score:'), 'Expected action prompt to include deterministic action score context');
   assert(request.prompt.includes('Marketing email'), 'Expected marketing category to constrain action suggestions');
+  assert(request.system.includes('read, archive, unsubscribe'), 'Expected marketing actions to be intent-limited');
   assert(!request.system.includes('Each line must include: priority'), 'Expected old priority-based action format to be removed');
   assert(!request.system.includes('Each line must include: handling level'), 'Expected handling level to stop repeating on every action line');
+}
+
+function testEmailAiContextGatesBulkReplies() {
+  const marketing = deriveEmailAIContext({
+    subject: 'Save 80% today',
+    from: 'news@send.projects-software.com',
+    fromName: 'FRANZIS',
+    headers: { 'list-unsubscribe': '<https://example.test/unsubscribe>' },
+    snippet: 'Limited discount. Unsubscribe here.',
+  });
+  assert(marketing.senderType === 'marketing', 'Expected ESP/list mail to be marketing');
+  assert(marketing.replyNeeded === false, 'Expected marketing mail to be no-reply');
+  assert(marketing.allowedQuickReplyIntents.length === 0, 'Expected marketing mail to disable quick replies');
+
+  const work = deriveEmailAIContext({
+    subject: 'Project rollout',
+    from: 'alice@example.com',
+    fromName: 'Alice',
+    category: '工作/业务类',
+    snippet: 'Can you confirm the rollout by Friday?',
+  });
+  assert(work.replyNeeded === true, 'Expected work request to need a reply');
+  assert(work.allowedQuickReplyIntents.includes('clarify'), 'Expected work request to allow clarification quick replies');
+}
+
+function testEmailAiContextDoesNotSuppressSupportOrUnknownHumanMail() {
+  const support = deriveEmailAIContext({
+    subject: 'Need more details',
+    from: 'support@example.com',
+    fromName: 'Support Team',
+    snippet: 'Please reply with a short description of the issue.',
+  });
+  assert(support.senderType !== 'system_notification', 'Expected support@ not to be treated as a pure system notification');
+  assert(support.replyNeeded === true, 'Expected support@ with an explicit request to allow replies');
+
+  const unknown = deriveEmailAIContext({
+    subject: 'Question',
+    from: 'person@example.com',
+    fromName: 'Person',
+    snippet: 'Can you check this when you have a moment?',
+  });
+  assert(unknown.replyNeeded === true, 'Expected unknown non-bulk human request not to be hard no-reply');
+}
+
+function testContentOnlyMarketingSignalsDoNotHardGateReplies() {
+  const workDiscount = deriveEmailAIContext({
+    subject: 'Project discount terms',
+    from: 'alice@example.com',
+    fromName: 'Alice',
+    category: '工作/业务类',
+    snippet: 'Can you confirm the discount terms for the client proposal?',
+  });
+  assert(workDiscount.senderType === 'work_contact', 'Expected work category to beat content-only discount wording');
+  assert(workDiscount.replyNeeded === true, 'Expected work mail with discount wording to remain replyable');
+}
+
+function testForumNoReplyRelayCanStillBeReplyable() {
+  const forum = deriveEmailAIContext({
+    subject: '[Example Forum] New reply on your topic',
+    from: 'noreply@mails.example.test',
+    fromName: 'Forum User',
+    snippet: 'Visit the topic or reply to this email to respond.',
+    bodyText: 'A community member left feedback. Visit the topic or reply to this email to respond.',
+  });
+  assert(forum.senderType === 'vendor', 'Expected forum mail relay to be treated as a service/community notification');
+  assert(forum.replyNeeded === true, 'Expected reply-by-email forum notification not to be hard no-reply');
+  assert(forum.allowedQuickReplyIntents.length > 0, 'Expected forum notification to allow quick replies when reply is supported');
+}
+
+function testSecurityReplyToEmailDoesNotBecomeForumReply() {
+  const security = deriveEmailAIContext({
+    subject: 'Verify a login attempt from a new location',
+    from: 'hello@example-app.test',
+    fromName: 'Example App Team',
+    snippet: 'If you did not attempt to login from a new place, reply to this email to let us know, and reset your password.',
+    bodyText: [
+      'Sign-In From a New Location',
+      'We need to confirm a recent sign-in attempt from a new IP address.',
+      'Your account tried to login from this location:',
+      'If you did not attempt to login from a new place, reply to this email to let us know, and reset your password.',
+    ].join('\n'),
+  });
+  assert(security.senderType === 'vendor' || security.senderType === 'system_notification', 'Expected login verification to stay account/security oriented');
+  assert(security.replyNeeded === false, 'Expected account-security verification to avoid quick replies');
+  assert(security.replyNeededReason !== 'forum notification supports reply', 'Expected reply-to-email wording not to trigger forum reply logic');
+  assert(security.allowedQuickReplyIntents.length === 0, 'Expected security notification to disable quick replies');
+
+  const projectThread = deriveEmailAIContext({
+    subject: 'Project thread follow-up',
+    from: 'alice@example.com',
+    fromName: 'Alice',
+    category: '工作/业务类',
+    snippet: 'Can you review the current email thread?',
+  });
+  assert(projectThread.senderType === 'work_contact', 'Expected ordinary work thread wording to stay work_contact');
+  assert(projectThread.replyNeeded === true, 'Expected ordinary work thread request to remain replyable');
 }
 
 function run() {
@@ -183,6 +291,11 @@ function run() {
   testJapaneseAssistantPromptsForbidEnglishLabels();
   testKeyInfoPromptHandlesBounceRecipientsSafely();
   testActionSuggestionsUseAiCategoryAndStableScoringForMarketing();
+  testEmailAiContextGatesBulkReplies();
+  testEmailAiContextDoesNotSuppressSupportOrUnknownHumanMail();
+  testContentOnlyMarketingSignalsDoNotHardGateReplies();
+  testForumNoReplyRelayCanStillBeReplyable();
+  testSecurityReplyToEmailDoesNotBecomeForumReply();
   console.log('ai-prompts tests passed');
 }
 

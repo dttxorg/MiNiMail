@@ -1,4 +1,5 @@
 ﻿import { buildEmailAiSnapshot, type MailLikeForAi } from './fromBodies';
+import { deriveEmailAIContext, type EmailAIContext, type EmailAIContextSource } from './aiContext';
 
 export type EmailAiPromptSource = MailLikeForAi;
 
@@ -11,6 +12,10 @@ export interface BuiltAiPrompt {
 
 function buildSnapshot(source: EmailAiPromptSource) {
   return buildEmailAiSnapshot(source);
+}
+
+function buildContext(source: EmailAiPromptSource): EmailAIContext {
+  return deriveEmailAIContext(source as EmailAIContextSource);
 }
 
 function formatLinks(source: ReturnType<typeof buildSnapshot>['actionView']['links']): string {
@@ -138,7 +143,13 @@ export function buildTranslatePrompt(source: EmailAiPromptSource, targetLang: st
   const focusText = snapshot.summaryView.latestReply || snapshot.parsed.plainText || source.snippet || '';
 
   return {
-    system: `You are a professional translator. Translate the email content into ${targetLang}. Preserve paragraphs, list structure, dates, amounts, and link text. Only provide the translation.`,
+    system: [
+      `You are a professional translator. Translate the email content into ${targetLang}.`,
+      'Preserve paragraphs, list structure, dates, amounts, link text, placeholders, and quoted formatting.',
+      'Do not translate brand names, product names, company names, order/ticket/invoice/reference numbers, URLs, code, email addresses, phone numbers, or placeholders such as [LINK_1], [URL_1], [EMAIL_1], [PHONE_1], [NAME_1].',
+      'Preserve tone and register: if the original is formal, translate formally; if it is casual, translate casually. Do not upgrade or downgrade the relationship tone.',
+      'Only provide the translation.',
+    ].join(' '),
     prompt: [
       `Subject: ${source.subject || '(No subject)'}`,
       '',
@@ -155,11 +166,24 @@ export function buildTranslatePrompt(source: EmailAiPromptSource, targetLang: st
  */
 export function buildSummarizePrompt(source: EmailAiPromptSource, targetLang = 'English'): BuiltAiPrompt {
   const snapshot = buildSnapshot(source);
+  const context = buildContext(source);
 
   return {
-    system: `You are a professional email summarizer. Provide a concise summary in 3-5 sentences in ${targetLang}. Ignore signature, disclaimer, unsubscribe footer, and redundant quoted history unless it adds essential context. Only output the summary in ${targetLang}.`,
+    system: [
+      `You are a professional email summarizer. Return one strict JSON object only in ${targetLang}. No markdown.`,
+      strictTargetLanguageInstruction(targetLang),
+      'Use stable English JSON keys only: what, impact, action, keyFacts, urgency.',
+      'Schema: { "what": string, "impact": string|null, "action": string|null, "keyFacts": string[] <=6, "urgency": "now"|"today"|"later"|"none" }.',
+      'For long threads, summarize the latest progress first instead of retelling the whole thread.',
+      'For marketing/newsletter emails, impact must answer whether it is worth reading, and action may only be read/ignore/unsubscribe in natural language.',
+      'For system notifications, focus on account/service impact and concrete user action. If no action is needed, set action to null.',
+      'Ignore signature, disclaimer, unsubscribe footer, CTA copy, and redundant quoted history unless it adds essential context.',
+      'Do not invent actions, facts, dates, amounts, or urgency.',
+    ].join(' '),
     prompt: [
       `Subject: ${source.subject || '(No subject)'}`,
+      `Sender type: ${context.senderType}`,
+      `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
       '',
       'Latest reply:',
       snapshot.summaryView.latestReply || snapshot.parsed.plainText || source.snippet || '(No body)',
@@ -186,20 +210,26 @@ export function buildSummarizePrompt(source: EmailAiPromptSource, targetLang = '
  */
 export function buildReplyPrompt(source: EmailAiPromptSource, targetLang = 'English'): BuiltAiPrompt {
   const snapshot = buildSnapshot(source);
+  const context = buildContext(source);
 
   return {
     system: [
-      `You are an AI assistant helping draft email replies. Write a clear, context-aware response in ${targetLang} that directly answers the latest message.`,
+      `You are an AI assistant helping draft email replies. Return one strict JSON object only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
-      'Do not translate or summarize the incoming email. Draft the actual reply that the user could send.',
+      'Use stable English JSON keys only: replyNeeded, candidates.',
+      'Schema: { "replyNeeded": boolean, "candidates": [{ "style": "short"|"formal"|"best", "body": string }] }.',
+      'Generate exactly 3 candidate reply drafts only when replyNeeded=true: short/direct (<=60 characters when possible), formal/complete, and best-fit for the sender type and scene.',
+      'Do not translate or summarize the incoming email. Draft actual replies that the user could send.',
       'Never include analysis headings or assistant sections such as email summary, action suggestions, quick replies, key information, priority, reason, timing, or bullet-point triage notes.',
       'Use the quoted history only as supporting context. Address concrete requests, deadlines, links, approvals, or questions from the latest message.',
-      'If the latest message does not require a reply, write a brief polite acknowledgement or decline, not a generic summary.',
-      `Only output the reply draft in ${targetLang}.`,
+      'If Reply needed is no, do not draft a polite acknowledgement. Return { "replyNeeded": false, "candidates": [] }.',
+      'For work_contact, best-fit should focus on commitments and dates. For personal, best-fit should be warm but not over-familiar.',
     ].join(' '),
     prompt: [
       `Subject: ${source.subject || '(No subject)'}`,
       `From: ${source.fromName || source.from || '(Unknown sender)'}`,
+      `Sender type: ${context.senderType}`,
+      `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
       '',
       'Suggested opening:',
       snapshot.replyView.suggestedOpening,
@@ -221,18 +251,19 @@ export function buildReplyPrompt(source: EmailAiPromptSource, targetLang = 'Engl
 export function buildActionSuggestionsPrompt(source: EmailAiPromptSource, targetLang = 'English'): BuiltAiPrompt {
   const snapshot = buildSnapshot(source);
   const actionContext = buildActionScoringContext(source, snapshot, targetLang);
+  const context = buildContext(source);
 
   return {
     system: [
-      `You are a senior email triage assistant. Give useful, concrete action suggestions in ${targetLang}.`,
+      `You are a senior email triage assistant. Return one strict JSON object only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
       'Use the supplied deterministic Action score and handling level. Stable mapping: 0-2 no action, 3-5 optional later, 6-8 follow up, 9-10 act soon.',
-      'Return 2-4 plain-text lines total.',
-      'Line 1 must be the overall handling level using a localized "Handling level: <label>" format.',
-      'Remaining 1-3 lines must be concise action bullets with next action, evidence, and timing when available.',
-      'Do not repeat the handling level on every action line.',
+      'Use stable English JSON keys only: actions, urgency.',
+      'Schema: { "actions": [{ "label": string, "type": "primary"|"secondary"|"dismiss", "intent": "reply"|"archive"|"unsubscribe"|"read"|"external_link"|"none", "evidence": string }], "urgency": "now"|"today"|"later"|"none" }.',
+      'Return 1-4 actions. Labels and evidence must be concise and user-facing.',
+      `Allowed intents for this email: ${context.allowedActionIntents.join(', ')}. Do not output any other intent.`,
+      context.replyNeeded ? '' : 'Reply intent is forbidden because replyNeeded=false.',
       'Do not output free-form High/Medium/Low priority labels. Do not re-score differently from the supplied Action score unless the email evidence is explicitly contradictory.',
-      'Use plain text only. Do not use Markdown bold, asterisks, tables, or code fences.',
       'Avoid generic advice such as "read the email" or "reply if needed". If no real action is needed, say that clearly and explain why.',
       'Use the email context, link placeholders, deadlines, security/billing signals, and sender relationship. If a URL is redacted to a placeholder, treat it as a real actionable link but do not guess the hidden URL.',
       'Do not invent actions that are not supported by the email.',
@@ -243,6 +274,8 @@ export function buildActionSuggestionsPrompt(source: EmailAiPromptSource, target
       source.date ? `Date: ${new Date(source.date).toISOString()}` : '',
       `AI category: ${actionContext.category}`,
       `Stored scan result: ${actionContext.scanResult}`,
+      `Sender type: ${context.senderType}`,
+      `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
       `Action score: ${actionContext.score}/10`,
       `Handling level: ${actionContext.level}`,
       'Score breakdown:',
@@ -272,19 +305,27 @@ export function buildActionSuggestionsPrompt(source: EmailAiPromptSource, target
 
 export function buildQuickRepliesPrompt(source: EmailAiPromptSource, targetLang = 'English'): BuiltAiPrompt {
   const snapshot = buildSnapshot(source);
+  const context = buildContext(source);
+  const intentInstruction = context.allowedQuickReplyIntents.length > 0
+    ? `Use exactly these intent families once each when possible: ${context.allowedQuickReplyIntents.join(', ')}.`
+    : 'No quick replies are allowed for this email. Return an empty JSON array.';
 
   return {
     system: [
-      `You are an email assistant. Generate exactly 3 distinct quick-reply options in ${targetLang}.`,
+      `You are an email assistant. Return one strict JSON array only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
-      'Each option must be one line, ready to send, without numbering or markdown.',
-      'The three replies must have different intent: acknowledge/confirm, ask a focused clarification, and defer or propose a next step when appropriate.',
+      'Each item must be one ready-to-send quick reply string, without numbering or markdown.',
+      'Generate exactly 3 distinct options only when quick replies are allowed.',
+      intentInstruction,
       'Do not reuse the same generic wording across emails. Reflect the sender, request, deadline, and risk level from the email.',
+      'For marketing/newsletter/system notification/no-reply senders, return [] and do not draft replies.',
     ].join(' '),
     prompt: [
       `Subject: ${source.subject || '(No subject)'}`,
       `From: ${source.fromName || source.from || '(Unknown sender)'}`,
       source.date ? `Date: ${new Date(source.date).toISOString()}` : '',
+      `Sender type: ${context.senderType}`,
+      `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
       '',
       'Latest reply:',
       snapshot.replyView.latestReply || snapshot.parsed.plainText || source.snippet || '(No body)',
@@ -340,4 +381,3 @@ export function buildKeyInfoPrompt(source: EmailAiPromptSource, targetLang = 'En
     maxTokens: 500,
   };
 }
-

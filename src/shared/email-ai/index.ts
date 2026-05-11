@@ -16,6 +16,15 @@ export { translateHtmlPreservingMarkup } from './translateHtmlPreservingMarkup';
 export { normalizeEmailText } from './normalizeEmailText';
 export { splitEmailBlocks } from './splitEmailBlocks';
 export { buildSummaryView, buildActionView, buildReplyView, buildProfileView } from './views';
+export {
+  deriveEmailAIContext,
+  normalizeEmailAIHeaders,
+  type EmailAIActionIntent,
+  type EmailAIContext,
+  type EmailAIContextSource,
+  type EmailAIQuickReplyIntent,
+  type EmailAISenderType,
+} from './aiContext';
 export { scanEmailLightweight } from './lightweightScanner';
 export { evaluateForceUpgradeRules } from './scanUpgradeRules';
 export {

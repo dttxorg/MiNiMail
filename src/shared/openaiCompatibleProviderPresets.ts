@@ -18,6 +18,7 @@ export interface OpenAICompatibleProviderPreset {
   label: string;
   baseUrl: string;
   defaultModel: string;
+  defaultEmbeddingModel?: string;
   alternativeModel?: string;
   note?: string;
   isLocal?: boolean;
@@ -30,12 +31,14 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
+    defaultEmbeddingModel: 'text-embedding-3-small',
   },
   {
     id: 'gemini',
     label: 'Gemini',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     defaultModel: 'gemini-2.5-flash',
+    defaultEmbeddingModel: 'text-embedding-004',
     note: "Gemini uses Google's OpenAI-compatible endpoint. Keep /v1beta/openai in the Base URL.",
   },
   {
@@ -43,6 +46,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'SiliconFlow',
     baseUrl: 'https://api.siliconflow.cn/v1',
     defaultModel: 'Pro/zai-org/GLM-4.7',
+    defaultEmbeddingModel: 'BAAI/bge-m3',
     alternativeModel: 'Qwen/Qwen3.6-35B-A3B',
   },
   {
@@ -57,6 +61,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'Qwen / DashScope',
     baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-plus',
+    defaultEmbeddingModel: 'text-embedding-v4',
     note: 'Regional DashScope endpoints may differ.',
   },
   {
@@ -92,6 +97,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'Ollama',
     baseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.1',
+    defaultEmbeddingModel: 'nomic-embed-text',
     note: 'Local provider. API key may be ignored.',
     isLocal: true,
   },
@@ -100,6 +106,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'LM Studio',
     baseUrl: 'http://localhost:1234/v1',
     defaultModel: 'local-model',
+    defaultEmbeddingModel: 'text-embedding-nomic-embed-text-v1.5',
     note: 'Local provider. Use the loaded model id from LM Studio.',
     isLocal: true,
   },
@@ -108,6 +115,7 @@ export const OPENAI_COMPATIBLE_PROVIDER_PRESETS: OpenAICompatibleProviderPreset[
     label: 'vLLM',
     baseUrl: 'http://localhost:8000/v1',
     defaultModel: 'local-model',
+    defaultEmbeddingModel: 'BAAI/bge-m3',
     note: 'Local/self-hosted provider. Use the served model name.',
     isLocal: true,
   },
@@ -132,6 +140,10 @@ export function findOpenAICompatiblePresetByBaseUrl(baseUrl: string): OpenAIComp
     OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => !preset.isCustom && preset.baseUrl === trimmedBaseUrl) ??
     OPENAI_COMPATIBLE_PROVIDER_PRESETS[OPENAI_COMPATIBLE_PROVIDER_PRESETS.length - 1]
   );
+}
+
+export function getDefaultEmbeddingModelForPreset(presetId: OpenAICompatibleProviderPresetId): string {
+  return OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === presetId)?.defaultEmbeddingModel || '';
 }
 
 export function normalizeOpenAICompatibleChatEndpoint(input: string): string {
@@ -160,6 +172,22 @@ export function normalizeOpenAICompatibleModelsEndpoint(input: string): string {
     .replace(/\/models$/i, '');
 
   parsed.pathname = `${basePath}/models`.replace(/\/{2,}/g, '/');
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+export function normalizeOpenAICompatibleEmbeddingsEndpoint(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) throw new Error('API base URL not configured.');
+
+  const parsed = new URL(trimmed);
+  const basePath = parsed.pathname
+    .replace(/\/+$/, '')
+    .replace(/\/chat\/completions$/i, '')
+    .replace(/\/models$/i, '')
+    .replace(/\/embeddings$/i, '');
+
+  parsed.pathname = `${basePath}/embeddings`.replace(/\/{2,}/g, '/');
   parsed.hash = '';
   return parsed.toString();
 }

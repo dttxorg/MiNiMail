@@ -42,6 +42,16 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/ai-prompts.test.ts'],
   },
   {
+    name: 'AI classification context regression',
+    command: process.execPath,
+    args: ['scripts/ai-classification-context.test.cjs'],
+  },
+  {
+    name: 'AI redaction restore regression',
+    command: process.execPath,
+    args: ['scripts/ai-redaction-restore.test.cjs'],
+  },
+  {
     name: 'project rename compatibility regression',
     command: process.execPath,
     args: ['--import', tsLoaderImport, 'scripts/project-rename-compat.test.ts'],
@@ -70,6 +80,16 @@ const checks = [
     name: 'OpenAI-compatible provider regression',
     command: process.execPath,
     args: ['scripts/openai-compatible-provider.test.cjs'],
+  },
+  {
+    name: 'contact knowledge service regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/contact-knowledge-service.test.ts'],
+  },
+  {
+    name: 'contact knowledge IPC regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/contact-knowledge-ipc.test.ts'],
   },
   {
     name: 'GitHub priority classifier and redaction regression',

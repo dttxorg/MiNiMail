@@ -129,7 +129,7 @@ export function closeMailCacheDb(): void {
 
 app.once('before-quit', closeMailCacheDb);
 
-function getMailCacheDb(): Database.Database {
+export function getMailCacheDb(): Database.Database {
   if (!mailCacheDb) {
     const dbPath = path.join(app.getPath('userData'), 'mail_cache.db');
     mailCacheDb = new Database(dbPath);
@@ -631,6 +631,7 @@ function upsertMailCache(mail: MailSummaryStored): void {
   });
 
   replaceCachedAttachments(db, mail);
+  markContactKnowledgeWikisStaleForMail(db, mail);
 
   if (existingByMessageId && existingByMessageId.uid !== mail.uid) {
     db.prepare(`
@@ -641,6 +642,53 @@ function upsertMailCache(mail: MailSummaryStored): void {
         AND uid != ?
         AND local_draft_id IS NULL
     `).run(mail.accountId, mail.folder, mail.messageId, mail.uid);
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function markContactKnowledgeWikisStaleForMail(db: any, mail: MailSummaryStored): void {
+  try {
+    const table = db.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'contact_knowledge_wikis'
+    `).get();
+    if (!table) return;
+
+    const addresses = new Set(
+      [mail.from, mail.to]
+        .flatMap((value) => (value || '').split(','))
+        .map((part) => {
+          const match = part.match(/<([^>]+)>/);
+          return (match?.[1] || part).trim().toLowerCase();
+        })
+        .filter((address) => /@/.test(address))
+    );
+    if (addresses.size === 0) return;
+
+    const rows = db.prepare(`
+      SELECT contact_email, aliases_json
+      FROM contact_knowledge_wikis
+      WHERE account_id = ?
+    `).all(mail.accountId) as Array<{ contact_email: string; aliases_json?: string | null }>;
+    const update = db.prepare(`
+      UPDATE contact_knowledge_wikis
+      SET stale = 1, stale_reason = ?
+      WHERE account_id = ? AND contact_email = ?
+    `);
+    for (const row of rows) {
+      let aliases: string[] = [];
+      try {
+        const parsed = JSON.parse(row.aliases_json || '[]');
+        aliases = Array.isArray(parsed) ? parsed.map(String) : [];
+      } catch {
+        aliases = [];
+      }
+      const contactAddresses = [row.contact_email, ...aliases].map((value) => value.trim().toLowerCase());
+      if (contactAddresses.some((address) => addresses.has(address))) {
+        update.run('mail_cache_updated', mail.accountId, row.contact_email);
+      }
+    }
+  } catch (error) {
+    log.warn('[mailService] contact knowledge stale marker skipped:', error);
   }
 }
 

@@ -36,7 +36,7 @@ type StoredAIModelProfile = {
   label: string;
   model: string;
   isDefault?: boolean;
-  taskType?: 'summary' | 'reply' | 'classification';
+  taskType?: 'summary' | 'reply' | 'classification' | 'embedding';
   createdAt: string;
   updatedAt: string;
 };
@@ -54,6 +54,19 @@ function createModelProfileId(): string {
 function getOpenAICompatiblePresetById(providerPresetId: AIProviderProfile['providerPresetId']) {
   return OPENAI_COMPATIBLE_PROVIDER_PRESETS.find((preset) => preset.id === providerPresetId)
     || OPENAI_COMPATIBLE_PROVIDER_PRESETS[OPENAI_COMPATIBLE_PROVIDER_PRESETS.length - 1];
+}
+
+function inferEmbeddingModel(account: StoredAIProviderAccount, model: string): string {
+  const preset = getOpenAICompatiblePresetById(account.providerPresetId);
+  if (preset.defaultEmbeddingModel) return preset.defaultEmbeddingModel;
+
+  const signal = `${account.providerPresetId} ${account.baseUrl} ${model}`.toLowerCase();
+  if (signal.includes('gemini') || signal.includes('googleapis')) return 'text-embedding-004';
+  if (signal.includes('openai')) return 'text-embedding-3-small';
+  if (signal.includes('dashscope') || signal.includes('qwen')) return 'text-embedding-v4';
+  if (signal.includes('siliconflow')) return 'BAAI/bge-m3';
+  if (signal.includes('ollama')) return 'nomic-embed-text';
+  return '';
 }
 
 function providerAccountIdFromProviderProfileId(profileId: string): string {
@@ -313,9 +326,17 @@ export function saveModelProfile(input: SaveModelProfileInput): AIModelProfile {
     createdAt: existing?.createdAt || timestamp,
     updatedAt: timestamp,
   };
-  const nextProfiles = existing
+  const nextProfiles = (existing
     ? profiles.map((profile) => profile.modelProfileId === modelProfileId ? nextProfile : profile)
-    : [...profiles, nextProfile];
+    : [...profiles, nextProfile])
+    .map((profile) => {
+      if (input.taskType && profile.modelProfileId !== modelProfileId && profile.taskType === input.taskType) {
+        const profileWithoutTaskType = { ...profile };
+        delete profileWithoutTaskType.taskType;
+        return profileWithoutTaskType;
+      }
+      return profile;
+    });
   persistModelProfiles(nextProfiles);
   if (input.isDefault) {
     setDefaultModelProfileSetting(modelProfileId);
@@ -365,6 +386,36 @@ export function getDefaultAIModelProfileConfig(): AIConfig | null {
   const defaultProfile = profiles.find((profile) => profile.modelProfileId === defaultModelProfileId);
   if (!defaultProfile) return null;
   return getAIModelProfileConfigById(defaultProfile.modelProfileId);
+}
+
+export function getAIModelProfileConfigForTask(
+  taskType: NonNullable<StoredAIModelProfile['taskType']>,
+): AIConfig | null {
+  const profiles = ensureStoredModelProfiles();
+  const profile = profiles.find((item) => item.taskType === taskType);
+  if (profile) return getAIModelProfileConfigById(profile.modelProfileId);
+
+  if (taskType === 'embedding') {
+    const defaultModelProfileId = getFallbackDefaultModelProfileId(profiles);
+    const defaultProfile = profiles.find((item) => item.modelProfileId === defaultModelProfileId) || profiles[0];
+    if (!defaultProfile) return null;
+    const account = ensureStoredProviderAccounts().find((item) => item.providerAccountId === defaultProfile.providerAccountId)
+      || getProviderAccountById(defaultProfile.providerAccountId);
+    if (!account) return null;
+    const embeddingModel = inferEmbeddingModel(account, defaultProfile.model);
+    if (!embeddingModel) return null;
+    const apiKey = getProviderAccountApiKey(account.providerAccountId);
+    const preset = getOpenAICompatiblePresetById(account.providerPresetId);
+    const isLocalProvider = Boolean(account.isLocal || preset.isLocal);
+    if (!account.baseUrl || (!isLocalProvider && !apiKey)) return null;
+    return {
+      baseUrl: account.baseUrl,
+      apiKey,
+      model: embeddingModel,
+    };
+  }
+
+  return null;
 }
 
 export function getFirstAvailableAIModelProfileConfig(): AIConfig | null {

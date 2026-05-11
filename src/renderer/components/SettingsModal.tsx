@@ -314,7 +314,7 @@ type AIModelProfileSnapshotForm = {
   label: string;
   model: string;
   isDefault: boolean;
-  taskType?: 'summary' | 'reply' | 'classification';
+  taskType?: 'summary' | 'reply' | 'classification' | 'embedding';
   createdAt: string;
   updatedAt: string;
 };
@@ -1929,9 +1929,13 @@ export function SettingsModal({
   });
   const [isSavingProviderAccount, setIsSavingProviderAccount] = useState(false);
   const [manualModelId, setManualModelId] = useState('');
+  const [embeddingModelId, setEmbeddingModelId] = useState('');
   const [isSavingModelProfile, setIsSavingModelProfile] = useState(false);
   const [isDeletingModelProfile, setIsDeletingModelProfile] = useState<string | null>(null);
   const [isSettingDefaultModelProfile, setIsSettingDefaultModelProfile] = useState<string | null>(null);
+  const [isSettingEmbeddingModelProfile, setIsSettingEmbeddingModelProfile] = useState<string | null>(null);
+  const [contactKnowledgeEnabled, setContactKnowledgeEnabled] = useState(false);
+  const [contactBehaviorEnabled, setContactBehaviorEnabled] = useState(false);
   const [signatureDrafts, setSignatureDrafts] = useState<Record<string, { enabled: boolean; text: string }>>({});
   const [savingSignatureAccountId, setSavingSignatureAccountId] = useState<number | null>(null);
   const [signatureSaveStatus, setSignatureSaveStatus] = useState<{ accountId: number; success: boolean } | null>(null);
@@ -1972,6 +1976,10 @@ export function SettingsModal({
   const selectedProviderAccountModels = selectedProviderAccount?.modelProfiles ?? [];
   const selectedProviderAccountDefaultModel = selectedProviderAccountModels.find((modelProfile) => modelProfile.isDefault)
     ?? selectedProviderAccountModels[0];
+  const selectedEmbeddingModelProfile = providerAccounts
+    .flatMap((account) => account.modelProfiles)
+    .find((modelProfile) => modelProfile.taskType === 'embedding');
+  const selectedProviderRecommendedEmbeddingModel = selectedProviderAccountPreset.defaultEmbeddingModel || '';
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1986,6 +1994,12 @@ export function SettingsModal({
     setSignatureDrafts(drafts);
     setSignatureSaveStatus(null);
   }, [accounts, composeSignatureSettings, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !selectedProviderAccount) return;
+    const accountEmbeddingModel = selectedProviderAccount.modelProfiles.find((modelProfile) => modelProfile.taskType === 'embedding');
+    setEmbeddingModelId(accountEmbeddingModel?.model || selectedProviderRecommendedEmbeddingModel || '');
+  }, [isOpen, selectedProviderAccount?.providerAccountId, selectedProviderRecommendedEmbeddingModel]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -2350,6 +2364,21 @@ export function SettingsModal({
     if (!isOpen) return;
     void (async () => {
       try {
+        const contactKnowledgeResponse = await window.electronAPI.invoke('ai:getContactKnowledgeSettings') as {
+          success: boolean;
+          data?: { enabled: boolean };
+        };
+        if (contactKnowledgeResponse.success && contactKnowledgeResponse.data) {
+          setContactKnowledgeEnabled(Boolean(contactKnowledgeResponse.data.enabled));
+        }
+        const contactBehaviorResponse = await window.electronAPI.invoke('ai:getContactBehaviorSettings') as {
+          success: boolean;
+          data?: { enabled: boolean };
+        };
+        if (contactBehaviorResponse.success && contactBehaviorResponse.data) {
+          setContactBehaviorEnabled(Boolean(contactBehaviorResponse.data.enabled));
+        }
+
         const providerProfilesResponse = await window.electronAPI.invoke('ai:getProviderProfiles') as {
           success: boolean;
           data?: AIProviderProfileSnapshot;
@@ -2916,6 +2945,82 @@ export function SettingsModal({
     }
   }
 
+  async function handleSetEmbeddingModelProfile(modelProfile: AIModelProfileSnapshotForm) {
+    if (!selectedProviderAccount) return;
+    setIsSettingEmbeddingModelProfile(modelProfile.modelProfileId);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:saveModelProfile', {
+        modelProfileId: modelProfile.modelProfileId,
+        providerAccountId: selectedProviderAccount.providerAccountId,
+        label: modelProfile.label || modelProfile.model,
+        model: modelProfile.model,
+        taskType: 'embedding',
+      }) as {
+        success: boolean;
+        data?: { snapshot?: AIProviderAccountWithModelsSnapshot };
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.addModelFailed);
+        return;
+      }
+      if (response.data?.snapshot) {
+        applyProviderAccountsWithModelsSnapshot(response.data.snapshot);
+      } else {
+        await refreshProviderAccountsWithModels(selectedProviderAccount.providerAccountId);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    } finally {
+      setIsSettingEmbeddingModelProfile(null);
+    }
+  }
+
+  async function handleSaveEmbeddingModelProfile() {
+    if (!selectedProviderAccount) return;
+    const trimmedModel = embeddingModelId.trim();
+    if (!trimmedModel) {
+      setApiSaveError(aiProviderUi.modelRequired);
+      return;
+    }
+    const existingProfile = selectedProviderAccountModels.find((modelProfile) => modelProfile.model === trimmedModel);
+    const pendingId = existingProfile?.modelProfileId || `embedding_${selectedProviderAccount.providerAccountId}`;
+    setIsSettingEmbeddingModelProfile(pendingId);
+    setApiSaveError(null);
+    try {
+      const response = await window.electronAPI.invoke('ai:saveModelProfile', {
+        ...(existingProfile ? { modelProfileId: existingProfile.modelProfileId } : {}),
+        providerAccountId: selectedProviderAccount.providerAccountId,
+        label: existingProfile?.label || `Embedding · ${trimmedModel}`,
+        model: trimmedModel,
+        taskType: 'embedding',
+      }) as {
+        success: boolean;
+        data?: { snapshot?: AIProviderAccountWithModelsSnapshot };
+        error?: string;
+      };
+      if (!response.success) {
+        setApiSaveError(localizeAIProviderError(response.error, aiProviderUi) || aiProviderUi.addModelFailed);
+        return;
+      }
+      if (response.data?.snapshot) {
+        applyProviderAccountsWithModelsSnapshot(response.data.snapshot);
+        setSelectedProviderAccountId(selectedProviderAccount.providerAccountId);
+      } else {
+        await refreshProviderAccountsWithModels(selectedProviderAccount.providerAccountId);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (error) {
+      setApiSaveError((error as Error).message);
+    } finally {
+      setIsSettingEmbeddingModelProfile(null);
+    }
+  }
+
   async function handleDeleteModelProfile(modelProfileId: string) {
     setIsDeletingModelProfile(modelProfileId);
     setApiSaveError(null);
@@ -2950,6 +3055,12 @@ export function SettingsModal({
         scanMode: aiScanMode,
         lookback: aiLookback,
         privacyMode: aiPrivacyMode,
+      });
+      await window.electronAPI.invoke('ai:saveContactKnowledgeSettings', {
+        enabled: contactKnowledgeEnabled,
+      });
+      await window.electronAPI.invoke('ai:saveContactBehaviorSettings', {
+        enabled: contactBehaviorEnabled,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -3217,6 +3328,62 @@ export function SettingsModal({
                     </div>
                   </div>
 
+                  <div className="rounded-lg px-2.5 py-2 mb-2.5" style={{ backgroundColor: '#0d0d0f' }}>
+                    <div className="mb-1.5 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-medium" style={{ color: '#8e8e93' }}>
+                          {appLanguage === 'zh' ? '联系人 Wiki Embedding 模型' : 'Contact Wiki embedding model'}
+                        </div>
+                        <div className="mt-0.5 break-all text-[10px]" style={{ color: '#636366' }}>
+                          {selectedEmbeddingModelProfile
+                            ? `${appLanguage === 'zh' ? '当前：' : 'Current: '}${selectedEmbeddingModelProfile.model}`
+                            : appLanguage === 'zh'
+                              ? '联系人知识库需要一个 Embedding 模型。'
+                              : 'Contact knowledge needs an embedding model.'}
+                        </div>
+                      </div>
+                      {selectedProviderRecommendedEmbeddingModel && (
+                        <button
+                          type="button"
+                          onClick={() => setEmbeddingModelId(selectedProviderRecommendedEmbeddingModel)}
+                          className="shrink-0 rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer"
+                          style={{ backgroundColor: '#1e1e20' }}
+                        >
+                          {appLanguage === 'zh' ? '填入推荐' : 'Use suggested'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={embeddingModelId}
+                        onChange={(event) => {
+                          setEmbeddingModelId(event.target.value);
+                          setApiSaveError(null);
+                        }}
+                        className="min-w-0 flex-1 rounded-md px-2 py-1.5 text-[11px] text-white placeholder-zinc-600 focus:outline-none"
+                        style={{ backgroundColor: '#161618' }}
+                        placeholder={selectedProviderRecommendedEmbeddingModel || 'text-embedding-3-small'}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveEmbeddingModelProfile()}
+                        disabled={isSettingEmbeddingModelProfile !== null || !embeddingModelId.trim()}
+                        className="shrink-0 rounded-md px-2 py-1.5 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                        style={{ backgroundColor: '#1e1e20' }}
+                      >
+                        {isSettingEmbeddingModelProfile !== null
+                          ? aiProviderUi.saving
+                          : appLanguage === 'zh' ? '保存为 Embedding' : 'Save as embedding'}
+                      </button>
+                    </div>
+                    <div className="mt-1.5 text-[10px]" style={{ color: '#636366' }}>
+                      {appLanguage === 'zh'
+                        ? '保存后，联系人 Wiki 构建会调用该账号的 /v1/embeddings 接口。'
+                        : 'After saving, Contact Wiki builds call this account through /v1/embeddings.'}
+                    </div>
+                  </div>
+
                   {modelListResult?.success && (
                     <div className="rounded-lg px-2.5 py-2 mb-2.5" style={{ backgroundColor: '#0d0d0f' }}>
                       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -3280,7 +3447,14 @@ export function SettingsModal({
                         <div key={modelProfile.modelProfileId} className="rounded-lg px-2.5 py-2" style={{ backgroundColor: '#0d0d0f' }}>
                           <div className="flex items-center justify-between gap-2">
                             <span className="min-w-0 truncate text-[11px] font-medium text-white">{modelProfile.label || modelProfile.model}</span>
-                            {modelProfile.isDefault && <span className="shrink-0 text-[10px]" style={{ color: '#64d2ff' }}>{aiProviderUi.defaultBadge}</span>}
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {modelProfile.taskType === 'embedding' && (
+                                <span className="text-[10px]" style={{ color: '#30d158' }}>
+                                  {appLanguage === 'zh' ? 'Embedding' : 'Embedding'}
+                                </span>
+                              )}
+                              {modelProfile.isDefault && <span className="text-[10px]" style={{ color: '#64d2ff' }}>{aiProviderUi.defaultBadge}</span>}
+                            </div>
                           </div>
                           <div className="mt-1 break-all text-[10px]" style={{ color: '#c7c7cc' }}>{modelProfile.model}</div>
                           <div className="mt-2 flex items-center gap-1.5">
@@ -3293,6 +3467,19 @@ export function SettingsModal({
                                 style={{ backgroundColor: '#1e1e20' }}
                               >
                                 {isSettingDefaultModelProfile === modelProfile.modelProfileId ? aiProviderUi.settingDefault : aiProviderUi.setDefault}
+                              </button>
+                            )}
+                            {modelProfile.taskType !== 'embedding' && (
+                              <button
+                                type="button"
+                                onClick={() => void handleSetEmbeddingModelProfile(modelProfile)}
+                                disabled={isSettingEmbeddingModelProfile === modelProfile.modelProfileId}
+                                className="rounded-md px-2 py-1 text-[10px] font-medium text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                                style={{ backgroundColor: '#1e1e20' }}
+                              >
+                                {isSettingEmbeddingModelProfile === modelProfile.modelProfileId
+                                  ? aiProviderUi.saving
+                                  : appLanguage === 'zh' ? '设为 Embedding' : 'Use for embeddings'}
                               </button>
                             )}
                             <button
@@ -4543,6 +4730,7 @@ export function SettingsModal({
                   </p>
                 )}
               </div>
+
               )}
 
               <div className="flex items-center justify-between px-3 py-2.5 mb-3 rounded-xl" style={{ backgroundColor: '#161618' }}>
@@ -4647,6 +4835,56 @@ export function SettingsModal({
                   ))}
                 </select>
                 <p className="text-[10px] mt-2" style={{ color: '#636366' }}>{ui.aiPrivacyHint}</p>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3 h-3" style={{ color: '#30d158' }} />
+                      <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                        {appLanguage === 'zh' ? '联系人历史知识库' : 'Contact history wiki'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>
+                      {appLanguage === 'zh'
+                        ? '开启后，MiNiMail 才会为联系人构建历史邮件向量索引，并按当前 AI Provider 设置处理相关片段。'
+                        : 'When enabled, MiNiMail can build a local vector index for contact history and process relevant excerpts with the current AI provider.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setContactKnowledgeEnabled((enabled) => !enabled)}
+                    className="relative mt-0.5 shrink-0 rounded-full transition-colors cursor-pointer"
+                    style={{ backgroundColor: contactKnowledgeEnabled ? '#0071e3' : '#2a2a2d', height: '18px', width: '32px' }}
+                  >
+                    <span className="absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-[left]" style={{ left: contactKnowledgeEnabled ? '14px' : '2px' }} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3 h-3" style={{ color: '#ff9f0a' }} />
+                      <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                        {appLanguage === 'zh' ? '联系人行为学习' : 'Contact behavior learning'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>
+                      {appLanguage === 'zh'
+                        ? '默认关闭。开启后仅在本设备记录低敏聚合交互，例如打开、停留区间、滚动区间和域名哈希点击；不记录正文、完整 URL、附件路径或邮箱地址，当前不做跨设备同步。'
+                        : 'Off by default. When enabled, MiNiMail records low-sensitivity local aggregates such as open, dwell bucket, scroll bucket, and domain-hash clicks; it does not store body text, full URLs, attachment paths, or email addresses, and does not sync across devices.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setContactBehaviorEnabled((enabled) => !enabled)}
+                    className="relative mt-0.5 shrink-0 rounded-full transition-colors cursor-pointer"
+                    style={{ backgroundColor: contactBehaviorEnabled ? '#0071e3' : '#2a2a2d', height: '18px', width: '32px' }}
+                  >
+                    <span className="absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-[left]" style={{ left: contactBehaviorEnabled ? '14px' : '2px' }} />
+                  </button>
+                </div>
               </div>
 
               <button

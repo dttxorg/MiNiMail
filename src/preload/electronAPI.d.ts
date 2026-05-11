@@ -35,6 +35,22 @@ export interface MailAttachmentActionResult {
 
 export type MailAttachmentIpcChannel = 'mail:downloadAttachment' | 'mail:openAttachment';
 
+export type ContactKnowledgeIpcChannel =
+  | 'ai:getContactKnowledgeSettings'
+  | 'ai:saveContactKnowledgeSettings'
+  | 'ai:buildContactWiki'
+  | 'ai:getContactWiki'
+  | 'ai:reindexContactKnowledge'
+  | 'ai:listContactKnowledgeStats'
+  | 'ai:saveContactWikiFeedback'
+  | 'ai:contactReplySuggestion'
+  | 'ai:getContactBehaviorSettings'
+  | 'ai:saveContactBehaviorSettings'
+  | 'ai:recordContactMailInteraction'
+  | 'ai:listContactBehaviorInsights'
+  | 'ai:exportContactBehaviorSummary'
+  | 'ai:clearContactBehaviorData';
+
 export interface ElectronAPI {
   getVersion: () => Promise<string>;
   getUserDataPath: () => Promise<string>;

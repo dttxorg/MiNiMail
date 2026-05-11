@@ -18,8 +18,11 @@ export interface MailLikeForAi {
   messageId?: string;
   inReplyTo?: string;
   references?: string;
+  headers?: Record<string, string | string[] | undefined>;
   category?: string;
   scanResult?: string;
+  senderType?: string;
+  replyNeeded?: boolean | null;
 }
 
 export interface EmailAiSnapshot {
@@ -71,7 +74,12 @@ export function buildEmailAiSnapshot(mail: MailLikeForAi): EmailAiSnapshot {
     date: mail.date ? new Date(mail.date).toISOString() : undefined,
     inReplyTo: mail.inReplyTo,
     references: parseReferences(mail.references),
-    headers: {},
+    headers: Object.fromEntries(
+      Object.entries(mail.headers || {}).map(([key, value]) => [
+        key.toLowerCase(),
+        Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [],
+      ])
+    ),
     textBody,
     htmlBody,
     rawHtml: htmlBody,

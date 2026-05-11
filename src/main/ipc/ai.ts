@@ -36,6 +36,29 @@ import {
   type SaveProviderAccountInput,
   type SaveProviderProfileInput,
 } from '../services/ai';
+import {
+  buildContactWiki,
+  clearContactBehaviorData,
+  exportContactBehaviorSummary,
+  getContactBehaviorSettings,
+  getContactKnowledgeSettings,
+  getContactWiki,
+  listContactBehaviorInsights,
+  listContactKnowledgeStats,
+  recordContactMailInteraction,
+  reindexContactKnowledge,
+  saveContactBehaviorSettings,
+  saveContactWikiFeedback,
+  saveContactKnowledgeSettings,
+  suggestContactReply,
+  type BuildContactWikiRequest,
+  type ContactBehaviorSettings,
+  type ContactMailInteractionRequest,
+  type ContactWikiFeedbackRequest,
+  type ContactReplySuggestionRequest,
+  type ContactKnowledgeSettings,
+  type ReindexContactKnowledgeRequest,
+} from '../services/contactKnowledgeService';
 
 function sanitizeAIProviderError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -206,6 +229,126 @@ export function registerAIHandlers(): void {
     }
   });
 
+  ipcMain.handle('ai:getContactKnowledgeSettings', async () => {
+    try {
+      return { success: true, data: getContactKnowledgeSettings() };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:saveContactKnowledgeSettings', async (_event, settings: Partial<ContactKnowledgeSettings>) => {
+    try {
+      return { success: true, data: saveContactKnowledgeSettings(settings) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:buildContactWiki', async (_event, request: BuildContactWikiRequest) => {
+    try {
+      return { success: true, data: await buildContactWiki(request) };
+    } catch (err) {
+      log.warn('[ai:buildContactWiki]', sanitizeAIProviderError(err));
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:getContactWiki', async (_event, request: { accountId: number; contactEmail: string }) => {
+    try {
+      return { success: true, data: getContactWiki(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:reindexContactKnowledge', async (_event, request: ReindexContactKnowledgeRequest) => {
+    try {
+      const result = await reindexContactKnowledge(request);
+      return {
+        success: true,
+        data: {
+          sourceMailCount: result.mails.length,
+          chunkCount: result.embedded.length,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:listContactKnowledgeStats', async (_event, request: { accountId: number }) => {
+    try {
+      return { success: true, data: listContactKnowledgeStats(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:saveContactWikiFeedback', async (_event, request: ContactWikiFeedbackRequest) => {
+    try {
+      return { success: true, data: saveContactWikiFeedback(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:contactReplySuggestion', async (_event, request: ContactReplySuggestionRequest) => {
+    try {
+      return await suggestContactReply(request);
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:getContactBehaviorSettings', async () => {
+    try {
+      return { success: true, data: getContactBehaviorSettings() };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:saveContactBehaviorSettings', async (_event, settings: Partial<ContactBehaviorSettings>) => {
+    try {
+      return { success: true, data: saveContactBehaviorSettings(settings) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:recordContactMailInteraction', async (_event, request: ContactMailInteractionRequest) => {
+    try {
+      return { success: true, data: recordContactMailInteraction(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:listContactBehaviorInsights', async (_event, request: { accountId: number; contactEmail?: string; contactEmailHash?: string }) => {
+    try {
+      return { success: true, data: listContactBehaviorInsights(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:exportContactBehaviorSummary', async (_event, request: { accountId: number; contactEmail?: string; contactEmailHash?: string }) => {
+    try {
+      return { success: true, data: exportContactBehaviorSummary(request) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  ipcMain.handle('ai:clearContactBehaviorData', async (_event, request: { accountId?: number; contactEmail?: string; contactEmailHash?: string }) => {
+    try {
+      return { success: true, data: clearContactBehaviorData(request || {}) };
+    } catch (err) {
+      return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
   // Translate text
   ipcMain.handle('ai:translate', async (_event, text: string | AIEmailSource, targetLang: string) => {
     try {
@@ -271,7 +414,7 @@ export function registerAIHandlers(): void {
     async (
       _event,
       text: string,
-      style: 'formal' | 'friendly' | 'shorter' | 'longer',
+      style: 'formal' | 'friendly' | 'shorter' | 'longer' | 'proofread' | 'simplify' | 'bullet_points',
       targetLang?: string,
     ) => {
     try {
@@ -283,7 +426,7 @@ export function registerAIHandlers(): void {
 
   // Batch classify emails — accepts scanMode in payload
   ipcMain.handle('ai:classifyBatch', async (_event, payload: {
-    emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; body_html?: string; body_text?: string; snippet: string }>;
+    emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; headers?: Record<string, string | string[] | undefined>; body_html?: string; body_text?: string; snippet: string }>;
     scanMode: ScanMode;
   }) => {
     try {

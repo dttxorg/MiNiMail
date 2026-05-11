@@ -340,7 +340,7 @@ interface MailFolderInfo {
 
 type BatchClassifyResponse = {
   success: boolean;
-  results?: Array<{ id: string; category: string }>;
+  results?: Array<{ id: string; category: string; senderType?: string; replyNeeded?: boolean; confidence?: number; source?: string }>;
   routingResults?: MailRoutingResultEntry[];
   failedIds?: string[];
 };
@@ -2116,7 +2116,7 @@ function App() {
 
       for (let i = 0; i < eligible.length; i += batchSize) {
         const batch = eligible.slice(i, i + batchSize);
-        const deepBodyById = new Map<string, { bodyText?: string; bodyHtml?: string }>();
+        const deepBodyById = new Map<string, { bodyText?: string; bodyHtml?: string; headers?: Record<string, string> }>();
 
         if (aiScanMode === 'deep') {
           for (const mail of batch) {
@@ -2125,6 +2125,7 @@ function App() {
               deepBodyById.set(mail.id, {
                 bodyText: bodyResult.bodyText,
                 bodyHtml: bodyResult.bodyHtml,
+                headers: bodyResult.detail?.headers ?? {},
               });
             } catch {
             }
@@ -2137,6 +2138,7 @@ function App() {
           from: mail.from,
           from_name: mail.fromName,
           has_attachment: mail.hasAttachments,
+          headers: deepBodyById.get(mail.id)?.headers,
           body_text: aiScanMode === 'deep'
             ? (deepBodyById.get(mail.id)?.bodyText ||
               deepBodyById.get(mail.id)?.bodyHtml ||
@@ -2625,6 +2627,7 @@ function App() {
           has_attachment: target.hasAttachments,
           body_text: 'bodyText' in targetMail ? targetMail.bodyText : undefined,
           body_html: 'bodyHtml' in targetMail ? targetMail.bodyHtml : undefined,
+          headers: 'headers' in targetMail ? targetMail.headers : undefined,
           snippet: target.snippet,
         }],
         scanMode: aiScanMode,

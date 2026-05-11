@@ -54,7 +54,7 @@ export interface AIModelProfile {
   label: string;
   model: string;
   isDefault: boolean;
-  taskType?: 'summary' | 'reply' | 'classification';
+  taskType?: 'summary' | 'reply' | 'classification' | 'embedding';
   createdAt: string;
   updatedAt: string;
 }
@@ -92,7 +92,7 @@ export type SaveModelProfileInput = {
   label: string;
   model: string;
   isDefault?: boolean;
-  taskType?: 'summary' | 'reply' | 'classification';
+  taskType?: 'summary' | 'reply' | 'classification' | 'embedding';
 };
 
 export type SaveProviderProfileInput = {
@@ -116,6 +116,42 @@ export interface AIResponse {
   success: boolean;
   content?: string;
   error?: string;
+  metadata?: AIResponseMetadata;
+}
+
+export interface AISummaryMetadata {
+  what: string;
+  impact: string | null;
+  action: string | null;
+  keyFacts: string[];
+  urgency: 'now' | 'today' | 'later' | 'none';
+}
+
+export interface AIActionSuggestionMetadata {
+  label: string;
+  type: 'primary' | 'secondary' | 'dismiss';
+  intent: 'reply' | 'archive' | 'unsubscribe' | 'read' | 'external_link' | 'none';
+  evidence: string;
+}
+
+export interface AIReplyCandidateMetadata {
+  style: 'short' | 'formal' | 'best';
+  body: string;
+}
+
+export interface AIResponseMetadata {
+  senderType?: string;
+  replyNeeded?: boolean | null;
+  replyNeededReason?: string;
+  noReplyMessage?: string;
+  parseStatus?: 'parsed' | 'fallback';
+  summary?: AISummaryMetadata;
+  actions?: AIActionSuggestionMetadata[];
+  urgency?: 'now' | 'today' | 'later' | 'none';
+  quickReplies?: string[];
+  replyCandidates?: AIReplyCandidateMetadata[];
+  classificationSource?: string;
+  confidence?: number;
 }
 
 export interface AITranslateSegmentsResponse {
@@ -131,11 +167,17 @@ export interface AIEmailSource {
   to?: string;
   cc?: string;
   date?: string | Date;
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string;
+  headers?: Record<string, string | string[] | undefined>;
   body_html?: string;
   body_text?: string;
   snippet?: string;
   category?: string;
   scan_result?: string;
+  senderType?: string;
+  replyNeeded?: boolean | null;
 }
 
 export type OpenAICompatibleMessage = {

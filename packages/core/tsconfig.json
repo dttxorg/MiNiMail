@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "rootDir": "../..",
+    "types": []
+  },
+  "include": [
+    "src/**/*",
+    "../../src/shared/**/*",
+    "../../src/renderer/types.ts"
+  ]
+}

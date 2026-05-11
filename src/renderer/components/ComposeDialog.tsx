@@ -116,6 +116,7 @@ type ComposeUiLabels = {
   cancelTemplateLabel: string;
   polishFailed: string;
   translateFailed: string;
+  polishModes: Record<'formal' | 'friendly' | 'shorter' | 'longer' | 'proofread' | 'simplify' | 'bullet_points', string>;
 };
 
 type ComposeTranslator = (key: string, options?: Record<string, unknown>) => string;
@@ -292,6 +293,15 @@ function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
     cancelTemplateLabel: t('composeDialog.cancelTemplateLabel'),
     polishFailed: t('composeDialog.polishFailed'),
     translateFailed: t('composeDialog.translateFailed'),
+    polishModes: {
+      formal: labelWithFallback(t, 'composeDialog.polishFormal', appLanguage, { zh: '正式', en: 'Formal', ja: 'フォーマル', ko: '격식 있게', es: 'Formal', fr: 'Formel', de: 'Formell', ru: 'Формально' }),
+      friendly: labelWithFallback(t, 'composeDialog.polishFriendly', appLanguage, { zh: '友好', en: 'Friendly', ja: '親しみやすく', ko: '친근하게', es: 'Amable', fr: 'Amical', de: 'Freundlich', ru: 'Дружелюбно' }),
+      shorter: labelWithFallback(t, 'composeDialog.polishShorter', appLanguage, { zh: '更短', en: 'Shorter', ja: '短く', ko: '더 짧게', es: 'Más corto', fr: 'Plus court', de: 'Kürzer', ru: 'Короче' }),
+      longer: labelWithFallback(t, 'composeDialog.polishLonger', appLanguage, { zh: '扩写', en: 'Longer', ja: '詳しく', ko: '더 길게', es: 'Más largo', fr: 'Plus long', de: 'Länger', ru: 'Подробнее' }),
+      proofread: labelWithFallback(t, 'composeDialog.polishProofread', appLanguage, { zh: '校对', en: 'Proofread', ja: '校正', ko: '교정', es: 'Corregir', fr: 'Relire', de: 'Korrektur', ru: 'Вычитка' }),
+      simplify: labelWithFallback(t, 'composeDialog.polishSimplify', appLanguage, { zh: '简化', en: 'Simplify', ja: '簡潔に', ko: '단순화', es: 'Simplificar', fr: 'Simplifier', de: 'Vereinfachen', ru: 'Упростить' }),
+      bullet_points: labelWithFallback(t, 'composeDialog.polishBullets', appLanguage, { zh: '要点', en: 'Bullets', ja: '箇条書き', ko: '요점', es: 'Viñetas', fr: 'Puces', de: 'Stichpunkte', ru: 'Пункты' }),
+    },
   };
 }
 
@@ -931,7 +941,9 @@ export function ComposeDialog({
     return merged;
   };
 
-  const handlePolish = async () => {
+  const handlePolish = async (
+    style: 'formal' | 'friendly' | 'shorter' | 'longer' | 'proofread' | 'simplify' | 'bullet_points' = 'formal',
+  ) => {
     if (!body.trim()) return;
 
     setAiLoading(true);
@@ -941,7 +953,7 @@ export function ComposeDialog({
       const res = await window.electronAPI.invoke(
         'ai:polish',
         body,
-        'formal',
+        style,
         normalizeAiLanguage(aiTargetLanguage),
       ) as {
         success: boolean;
@@ -1451,13 +1463,25 @@ export function ComposeDialog({
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={handlePolish}
+                  onClick={() => void handlePolish('formal')}
                   disabled={aiLoading || !body.trim()}
                   className="flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
                   style={{ backgroundColor: 'rgba(255,255,255,0.06)', border: `1px solid ${uiColor.borderSubtle}` }}
                 >
                   {composeUi.aiPolishLabel}
                 </button>
+                {(['proofread', 'simplify', 'shorter', 'longer', 'bullet_points'] as const).map((style) => (
+                  <button
+                    key={style}
+                    type="button"
+                    onClick={() => void handlePolish(style)}
+                    disabled={aiLoading || !body.trim()}
+                    className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs text-zinc-300 transition-colors hover:text-zinc-100 disabled:opacity-50 cursor-pointer"
+                    style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: `1px solid ${uiColor.borderSubtle}` }}
+                  >
+                    {composeUi.polishModes[style]}
+                  </button>
+                ))}
 
                 <button
                   type="button"

@@ -10,6 +10,7 @@ import {
   getAIConfig,
   getAIConfigSnapshot,
   getAIModelProfileConfigById,
+  getAIModelProfileConfigForTask,
   getAIModelProfileSnapshot,
   getAIProviderAccountSnapshot,
   getAIProviderProfileSnapshot,
@@ -17,6 +18,7 @@ import {
   getProviderFriendlyMessage,
   initializeAISecretStorage,
   normalizeOpenAICompatibleEndpoint,
+  normalizeOpenAICompatibleEmbeddingEndpoint,
   normalizeOpenAICompatibleModelListEndpoint,
   parseOpenAICompatibleModelList,
   parseOpenAICompatibleResponse,
@@ -49,6 +51,10 @@ import {
   type AIProviderProfileSnapshot,
   type AIRequest,
   type AIResponse,
+  type AIResponseMetadata,
+  type AIActionSuggestionMetadata,
+  type AIReplyCandidateMetadata,
+  type AISummaryMetadata,
   type AITranslateSegmentsResponse,
   type SafeProviderDiagnostics,
   type SaveModelProfileInput,
@@ -64,6 +70,10 @@ import {
   buildReplyPrompt,
   buildSummarizePrompt,
   buildTranslatePrompt,
+  deriveEmailAIContext,
+  type EmailAIContext,
+  type EmailAIContextSource,
+  type EmailAISenderType,
   resolveIntelligentScanMode,
   type RequestedScanMode,
   type ScanPipelineResult,
@@ -84,6 +94,7 @@ export {
   getAIConfig,
   getAIConfigSnapshot,
   getAIModelProfileConfigById,
+  getAIModelProfileConfigForTask,
   getAIModelProfileSnapshot,
   getAIProviderAccountSnapshot,
   getAIProviderProfileSnapshot,
@@ -91,6 +102,7 @@ export {
   getProviderFriendlyMessage,
   initializeAISecretStorage,
   normalizeOpenAICompatibleEndpoint,
+  normalizeOpenAICompatibleEmbeddingEndpoint,
   normalizeOpenAICompatibleModelListEndpoint,
   parseOpenAICompatibleModelList,
   parseOpenAICompatibleResponse,
@@ -296,13 +308,25 @@ function prepareCloudPromptInput(value: string | AIEmailSource): { value: string
 }
 
 function restoreCloudAiResponse(response: AIResponse, redactionMap: RedactionMapEntry[]): AIResponse {
-  if (!response.success || !response.content || redactionMap.length === 0) {
+  if (!response.success || redactionMap.length === 0) {
     return response;
   }
 
+  const restoreValue = (value: unknown): unknown => {
+    if (typeof value === 'string') return restoreSensitiveEntities(value, redactionMap);
+    if (Array.isArray(value)) return value.map(restoreValue);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, restoreValue(item)])
+      );
+    }
+    return value;
+  };
+
   return {
     ...response,
-    content: restoreSensitiveEntities(response.content, redactionMap),
+    content: response.content ? restoreSensitiveEntities(response.content, redactionMap) : response.content,
+    metadata: response.metadata ? restoreValue(response.metadata) as AIResponseMetadata : response.metadata,
   };
 }
 
@@ -315,6 +339,207 @@ function removeAssistantAnalysisFromReply(response: AIResponse): AIResponse {
     .filter((line) => !forbiddenHeading.test(line.trim()));
   const content = lines.join('\n').trim();
   return content ? { ...response, content } : response;
+}
+
+function stripJsonFence(raw: string): string {
+  return raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+function extractJsonObjectPayload(raw: string): string {
+  const cleaned = stripJsonFence(raw);
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) return cleaned.slice(start, end + 1);
+  return cleaned;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(extractJsonObjectPayload(raw));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function coerceUrgency(value: unknown): 'now' | 'today' | 'later' | 'none' {
+  return value === 'now' || value === 'today' || value === 'later' || value === 'none'
+    ? value
+    : 'none';
+}
+
+function localizedNoReplyMessage(targetLang = 'English'): string {
+  const messages: Record<string, string> = {
+    Chinese: '无需回复',
+    English: 'No reply needed',
+    Japanese: '返信は不要です',
+    Korean: '답장이 필요하지 않습니다',
+    Spanish: 'No hace falta responder',
+    French: 'Aucune réponse nécessaire',
+    German: 'Keine Antwort erforderlich',
+    Russian: 'Ответ не требуется',
+  };
+  return messages[targetLang] || messages.English;
+}
+
+function noReplyAIResponse(context: EmailAIContext, targetLang = 'English'): AIResponse {
+  const message = localizedNoReplyMessage(targetLang);
+  return {
+    success: true,
+    content: message,
+    metadata: {
+      senderType: context.senderType,
+      replyNeeded: false,
+      replyNeededReason: context.replyNeededReason,
+      noReplyMessage: message,
+      quickReplies: [],
+      replyCandidates: [],
+    },
+  };
+}
+
+function localizedNoActionSuggestionMessage(targetLang = 'English'): string {
+  const messages: Record<string, string> = {
+    Chinese: '暂无明确行动建议',
+    English: 'No clear action suggestions',
+    Japanese: '明確なアクション提案はありません',
+    Korean: '명확한 작업 제안이 없습니다',
+    Spanish: 'No hay sugerencias de acción claras',
+    French: 'Aucune suggestion d’action claire',
+    German: 'Keine klaren Handlungsvorschläge',
+    Russian: 'Нет четких рекомендаций к действию',
+  };
+  return messages[targetLang] || messages.English;
+}
+
+function parseSummaryMetadata(raw: string): AISummaryMetadata {
+  const parsed = parseJsonObject(raw);
+  const keyFacts = Array.isArray(parsed?.keyFacts)
+    ? parsed.keyFacts.map((item) => String(item).trim()).filter(Boolean).slice(0, 6)
+    : [];
+  return {
+    what: String(parsed?.what || raw).trim().slice(0, 800),
+    impact: typeof parsed?.impact === 'string' && parsed.impact.trim() ? parsed.impact.trim().slice(0, 600) : null,
+    action: typeof parsed?.action === 'string' && parsed.action.trim() ? parsed.action.trim().slice(0, 500) : null,
+    keyFacts,
+    urgency: coerceUrgency(parsed?.urgency),
+  };
+}
+
+function formatSummaryMetadata(summary: AISummaryMetadata, targetLang = 'English'): string {
+  const labels: Record<string, { what: string; impact: string; action: string; keyFacts: string }> = {
+    Chinese: { what: '邮件内容', impact: '对我的意义', action: '建议动作', keyFacts: '关键信息' },
+    English: { what: 'What', impact: 'Impact', action: 'Action', keyFacts: 'Key facts' },
+    Japanese: { what: '内容', impact: '自分への影響', action: '推奨対応', keyFacts: '重要情報' },
+    Korean: { what: '내용', impact: '나에게 미치는 영향', action: '권장 조치', keyFacts: '핵심 정보' },
+    Spanish: { what: 'Qué dice', impact: 'Impacto', action: 'Acción', keyFacts: 'Datos clave' },
+    French: { what: 'Contenu', impact: 'Impact', action: 'Action', keyFacts: 'Infos clés' },
+    German: { what: 'Inhalt', impact: 'Auswirkung', action: 'Aktion', keyFacts: 'Wichtige Fakten' },
+    Russian: { what: 'Суть', impact: 'Значение', action: 'Действие', keyFacts: 'Ключевые факты' },
+  };
+  const label = labels[targetLang] || labels.English;
+  return [
+    `${label.what}: ${summary.what}`,
+    summary.impact ? `${label.impact}: ${summary.impact}` : '',
+    summary.action ? `${label.action}: ${summary.action}` : '',
+    summary.keyFacts.length > 0 ? `${label.keyFacts}: ${summary.keyFacts.join('; ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function parseActionMetadata(raw: string, context: EmailAIContext): { actions: AIActionSuggestionMetadata[]; urgency: 'now' | 'today' | 'later' | 'none'; parseStatus: 'parsed' | 'fallback' } {
+  const parsed = parseJsonObject(raw);
+  const allowed = new Set(context.allowedActionIntents);
+  const actions = Array.isArray(parsed?.actions)
+    ? parsed.actions
+        .map((item): AIActionSuggestionMetadata | null => {
+          if (!item || typeof item !== 'object') return null;
+          const record = item as Record<string, unknown>;
+          const intent = typeof record.intent === 'string' && allowed.has(record.intent as AIActionSuggestionMetadata['intent'])
+            ? record.intent as AIActionSuggestionMetadata['intent']
+            : null;
+          const type = record.type === 'primary' || record.type === 'secondary' || record.type === 'dismiss'
+            ? record.type
+            : 'secondary';
+          const label = String(record.label || '').trim();
+          if (!label || !intent) return null;
+          return {
+            label: label.slice(0, 160),
+            type,
+            intent,
+            evidence: String(record.evidence || '').trim().slice(0, 240),
+          };
+        })
+        .filter((item): item is AIActionSuggestionMetadata => Boolean(item))
+        .slice(0, 4)
+    : [];
+  return {
+    actions,
+    urgency: coerceUrgency(parsed?.urgency),
+    parseStatus: parsed && Array.isArray(parsed.actions) && actions.length > 0 ? 'parsed' : 'fallback',
+  };
+}
+
+function formatActionMetadata(actions: AIActionSuggestionMetadata[], fallback: string): string {
+  if (actions.length === 0) return fallback.trim();
+  return actions.map((action) => {
+    const detail = action.evidence ? ` — ${action.evidence}` : '';
+    return `${action.label}${detail}`;
+  }).join('\n');
+}
+
+function parseReplyCandidates(raw: string): { replyNeeded: boolean; candidates: AIReplyCandidateMetadata[] } {
+  const parsed = parseJsonObject(raw);
+  const replyNeeded = parsed?.replyNeeded !== false;
+  const candidates = Array.isArray(parsed?.candidates)
+    ? parsed.candidates
+        .map((item): AIReplyCandidateMetadata | null => {
+          if (!item || typeof item !== 'object') return null;
+          const record = item as Record<string, unknown>;
+          const style = record.style === 'short' || record.style === 'formal' || record.style === 'best'
+            ? record.style
+            : 'best';
+          const body = String(record.body || '').trim();
+          if (!body) return null;
+          return { style, body };
+        })
+        .filter((item): item is AIReplyCandidateMetadata => Boolean(item))
+        .slice(0, 3)
+    : [];
+  if (candidates.length === 0 && raw.trim() && replyNeeded) {
+    candidates.push({ style: 'best', body: stripJsonFence(raw).trim() });
+  }
+  return { replyNeeded, candidates };
+}
+
+function parseQuickReplyArray(raw: string): string[] {
+  const cleaned = extractJsonArrayPayload(raw);
+  const normalizeItem = (item: unknown): string => {
+    if (typeof item === 'string') return item.trim();
+    if (item && typeof item === 'object') {
+      const record = item as Record<string, unknown>;
+      const value = record.text ?? record.reply ?? record.body ?? record.content ?? record.label ?? record.value;
+      return typeof value === 'string' ? value.trim() : '';
+    }
+    return '';
+  };
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalizeItem).filter(Boolean).slice(0, 3);
+    }
+  } catch {
+    // Fall back to the previous plain-line behavior.
+  }
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function buildClassificationBodyPreview(email: {
@@ -417,11 +642,76 @@ function parseCategory(raw: string): Category {
 export interface BatchClassifyResult {
   id: string;
   category: Category;
+  senderType?: EmailAISenderType;
+  replyNeeded?: boolean;
+  confidence?: number;
+  source?: 'local_rule' | 'llm' | 'github';
 }
 
 export interface BatchScanRoutingResult {
   id: string;
   routing: ScanPipelineResult;
+}
+
+function categoryFromSenderType(senderType: EmailAISenderType, fallback: Category = '通知类'): Category {
+  switch (senderType) {
+    case 'marketing':
+    case 'newsletter':
+      return '广告/营销类';
+    case 'personal':
+      return '社交/个人类';
+    case 'work_contact':
+      return '工作/业务类';
+    case 'vendor':
+      return /invoice|billing|payment|账单|财务|发票/i.test(fallback) ? '账单/财务类' : '通知类';
+    case 'system_notification':
+      return '通知类';
+    default:
+      return fallback;
+  }
+}
+
+function localPreClassifyEmail(email: {
+  id: string;
+  subject: string;
+  from: string;
+  from_name: string;
+  headers?: Record<string, string | string[] | undefined>;
+  body_text?: string;
+  body_html?: string;
+  snippet: string;
+}): BatchClassifyResult | null {
+  const context = deriveEmailAIContext({
+    subject: email.subject,
+    from: email.from,
+    fromName: email.from_name,
+    headers: email.headers,
+    bodyText: email.body_text || email.snippet,
+    bodyHtml: email.body_html,
+    snippet: email.snippet,
+  });
+  const fromBlob = `${email.from_name || ''} ${email.from || ''}`;
+  const headerBlob = Object.entries(email.headers || {})
+    .map(([key, value]) => `${key}:${Array.isArray(value) ? value.join(',') : value || ''}`)
+    .join('\n');
+  const strongLocalSignal =
+    /\bno-?reply\b|mailer-daemon|postmaster/i.test(fromBlob) ||
+    /list-unsubscribe|list-id/i.test(headerBlob) ||
+    ((context.senderType === 'marketing' || context.senderType === 'newsletter') &&
+      (context.senderTypeSource === 'address' || context.senderTypeSource === 'headers')) ||
+    (context.senderType === 'system_notification' &&
+      context.senderTypeSource === 'address' &&
+      context.senderTypeConfidence >= 0.72);
+
+  if (!strongLocalSignal) return null;
+  return {
+    id: email.id,
+    category: categoryFromSenderType(context.senderType),
+    senderType: context.senderType,
+    replyNeeded: context.replyNeeded,
+    confidence: context.senderTypeConfidence,
+    source: 'local_rule',
+  };
 }
 
 const CLASSIFY_SYSTEM = `You are an email classification assistant. Classify each email into EXACTLY ONE of the following 6 categories ONLY:
@@ -433,18 +723,21 @@ const CLASSIFY_SYSTEM = `You are an email classification assistant. Classify eac
 - 工作/业务类: Project updates, contract signing, client inquiries, internal approvals
 - 安全/风险类: Suspected phishing, abnormal login alerts, scam risk warnings
 
-You MUST return ONLY a valid JSON array. No markdown formatting, no explanations, no conversational text. Example: [{"id":"1","category":"工作/业务类"},{"id":"2","category":"通知类"}]`;
+Also return senderType and replyNeeded when the evidence is clear. senderType must be one of: personal, work_contact, marketing, newsletter, vendor, system_notification, unknown.
+Set replyNeeded=false for no-reply, marketing, newsletter, bulk list, and pure system notifications. Do not create a polite-reply need for those messages.
 
-const CLASSIFY_USER_LIGHT = (emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean }>) => {
+You MUST return ONLY a valid JSON array. No markdown formatting, no explanations, no conversational text. Example: [{"id":"1","category":"工作/业务类","senderType":"work_contact","replyNeeded":true,"confidence":0.72},{"id":"2","category":"通知类","senderType":"system_notification","replyNeeded":false,"confidence":0.84}]`;
+
+const CLASSIFY_USER_LIGHT = (emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; header_signals?: string }>) => {
   const list = emails.map(e =>
-    `id: ${e.id} | Subject: ${e.subject} | From: ${e.from_name} <${e.from}> | Attachment: ${e.has_attachment ? 'Yes' : 'No'}`
+    `id: ${e.id} | Subject: ${e.subject} | From: ${e.from_name} <${e.from}> | Attachment: ${e.has_attachment ? 'Yes' : 'No'} | Header signals: ${e.header_signals || 'None'}`
   ).join('\n');
   return `Classify each email below into one of the 6 categories. Return a JSON array with id and category fields:\n${list}`;
 };
 
-const CLASSIFY_USER_DEEP = (emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; body: string }>) => {
+const CLASSIFY_USER_DEEP = (emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; header_signals?: string; body: string }>) => {
   const list = emails.map(e =>
-    `id: ${e.id} | Subject: ${e.subject} | From: ${e.from_name} <${e.from}> | Attachment: ${e.has_attachment ? 'Yes' : 'No'}\nBody preview: ${e.body}`
+    `id: ${e.id} | Subject: ${e.subject} | From: ${e.from_name} <${e.from}> | Attachment: ${e.has_attachment ? 'Yes' : 'No'} | Header signals: ${e.header_signals || 'None'}\nBody preview: ${e.body}`
   ).join('\n\n---\n\n');
   return `Classify each email below into one of the 6 categories. Return a JSON array with id and category fields:\n${list}`;
 };
@@ -456,6 +749,7 @@ export async function batchClassifyMails(
     from: string;
     from_name: string;
     has_attachment: boolean;
+    headers?: Record<string, string | string[] | undefined>;
     body_html?: string;
     body_text?: string;
     snippet: string;
@@ -467,6 +761,7 @@ export async function batchClassifyMails(
   const routingResults: BatchScanRoutingResult[] = [];
 
   const githubCompatibilityResults: BatchClassifyResult[] = [];
+  const localRuleResults: BatchClassifyResult[] = [];
   const genericEmails = emails.filter((email) => {
     const routing = runScanPipeline({
       subject: email.subject,
@@ -476,10 +771,16 @@ export async function batchClassifyMails(
       bodyHtml: email.body_html,
       bodyText: email.body_text,
       hasAttachments: email.has_attachment,
+      headers: email.headers,
     });
 
     routingResults.push({ id: email.id, routing });
     if (routing.kind !== 'github') {
+      const local = localPreClassifyEmail(email);
+      if (local) {
+        localRuleResults.push(local);
+        return false;
+      }
       return true;
     }
 
@@ -501,16 +802,20 @@ export async function batchClassifyMails(
     githubCompatibilityResults.push({
       id: email.id,
       category,
+      senderType: 'system_notification',
+      replyNeeded: false,
+      confidence: 0.9,
+      source: 'github',
     });
     return false;
   });
 
   if (genericEmails.length === 0) {
-    return { success: true, results: githubCompatibilityResults, routingResults };
+    return { success: true, results: [...githubCompatibilityResults, ...localRuleResults], routingResults };
   }
 
   const privacyMode = getAiPrivacyMode();
-  const allResults: BatchClassifyResult[] = [...githubCompatibilityResults];
+  const allResults: BatchClassifyResult[] = [...githubCompatibilityResults, ...localRuleResults];
   const failedIds: string[] = [];
 
   const genericEmailModes = genericEmails.map((email) => {
@@ -550,6 +855,12 @@ export async function batchClassifyMails(
       from: redactedSource?.from || e.from,
       from_name: redactedSource?.from_name || e.from_name,
       has_attachment: e.has_attachment,
+      header_signals: [
+        e.headers?.['list-unsubscribe'] || e.headers?.['List-Unsubscribe'] ? 'list-unsubscribe' : '',
+        e.headers?.['list-id'] || e.headers?.['List-ID'] ? 'list-id' : '',
+        e.headers?.precedence || e.headers?.Precedence ? `precedence=${e.headers?.precedence || e.headers?.Precedence}` : '',
+        e.headers?.['reply-to'] || e.headers?.['Reply-To'] ? 'reply-to' : '',
+      ].filter(Boolean).join(', '),
       body: mode === 'deep' ? (redactedSource?.body_text || body) : '',
     };
   });
@@ -620,11 +931,30 @@ export async function batchClassifyMails(
 function extractCategoryResults(raw: string, expectedIds: string[]): { results: BatchClassifyResult[]; missingIds: string[] } {
   const results: BatchClassifyResult[] = [];
   const foundIds = new Set<string>();
-  const pushResult = (idValue: unknown, categoryValue: unknown) => {
+  const normalizeSenderType = (value: unknown): EmailAISenderType | undefined => {
+    const raw = String(value || '').trim();
+    return raw === 'personal' || raw === 'work_contact' || raw === 'marketing' || raw === 'newsletter' ||
+      raw === 'vendor' || raw === 'system_notification' || raw === 'unknown'
+      ? raw
+      : undefined;
+  };
+  const pushResult = (idValue: unknown, categoryValue: unknown, item?: Record<string, unknown>) => {
     if (!idValue || !categoryValue) return;
     const id = String(idValue).trim();
     if (!id || foundIds.has(id)) return;
-    results.push({ id, category: parseCategory(String(categoryValue)) });
+    const senderType = normalizeSenderType(item?.senderType ?? item?.sender_type);
+    results.push({
+      id,
+      category: parseCategory(String(categoryValue)),
+      senderType,
+      replyNeeded: typeof item?.replyNeeded === 'boolean'
+        ? item.replyNeeded
+        : typeof item?.reply_needed === 'boolean'
+          ? item.reply_needed
+          : undefined,
+      confidence: typeof item?.confidence === 'number' ? Math.max(0, Math.min(1, item.confidence)) : undefined,
+      source: 'llm',
+    });
     foundIds.add(id);
   };
 
@@ -639,7 +969,7 @@ function extractCategoryResults(raw: string, expectedIds: string[]): { results: 
     for (const collection of collections) {
       for (const item of collection as Array<{ id?: unknown; category?: unknown; label?: unknown }>) {
         if (!item || typeof item !== 'object') continue;
-        pushResult(item.id, item.category ?? item.label);
+        pushResult(item.id, item.category ?? item.label, item as Record<string, unknown>);
       }
     }
 
@@ -669,7 +999,11 @@ function extractCategoryResults(raw: string, expectedIds: string[]): { results: 
 export async function translateText(text: string, targetLang: string): Promise<AIResponse> {
   const prepared = prepareCloudPromptInput(text);
   const response = await callAI({
-    system: 'You are a professional translator. Translate the following text to ' + targetLang + '. Only provide the translation.',
+    system: [
+      `You are a professional translator. Translate the following text to ${targetLang}.`,
+      'Do not translate brand names, product names, company names, order/ticket/invoice/reference numbers, URLs, code, email addresses, phone numbers, or placeholders.',
+      'Preserve tone and register. Only provide the translation.',
+    ].join(' '),
     prompt: typeof prepared.value === 'string' ? prepared.value : text,
     temperature: 0.3,
     maxTokens: 2000,
@@ -689,11 +1023,42 @@ function toPromptSource(value: AIEmailSource) {
     to: value.to,
     cc: value.cc,
     date: value.date,
+    messageId: value.messageId,
+    inReplyTo: value.inReplyTo,
+    references: value.references,
+    headers: value.headers,
     bodyHtml: value.body_html,
     bodyText: value.body_text,
     snippet: value.snippet || '',
     category: value.category,
     scanResult: value.scan_result,
+    senderType: value.senderType,
+    replyNeeded: value.replyNeeded,
+  };
+}
+
+function plainTextToEmailSource(text: string): AIEmailSource {
+  return {
+    subject: '',
+    from: '',
+    from_name: '',
+    body_text: text,
+    snippet: text.slice(0, 240),
+  };
+}
+
+function deriveContextFromEmailSource(value: AIEmailSource): EmailAIContext {
+  return deriveEmailAIContext(toPromptSource(value) as EmailAIContextSource);
+}
+
+function withDerivedContext(
+  source: ReturnType<typeof toPromptSource>,
+  context: EmailAIContext,
+): ReturnType<typeof toPromptSource> {
+  return {
+    ...source,
+    senderType: context.senderType,
+    replyNeeded: context.replyNeeded,
   };
 }
 
@@ -732,6 +1097,8 @@ export async function translateTextSegments(segments: string[], targetLang: stri
       `You are a professional translator. Translate each item in the JSON array into ${targetLang}.`,
       'Return ONLY a valid JSON array of translated strings in the exact same order and same length.',
       'Preserve placeholders such as [LINK_1], [URL_1], [EMAIL_1], [PHONE_1], [NAME_1] exactly as-is.',
+      'Do not translate brand names, product names, company names, order/ticket/invoice/reference numbers, URLs, code, email addresses, or phone numbers.',
+      'Preserve the tone and register of each segment.',
       'Do not output markdown, explanations, or code fences.',
     ].join(' '),
     prompt: typeof prepared.value === 'string' ? prepared.value : serialized,
@@ -767,70 +1134,111 @@ export async function translateTextSegments(segments: string[], targetLang: stri
 
 export async function summarizeText(text: string | AIEmailSource, targetLang = 'English'): Promise<AIResponse> {
   if (!isStructuredEmailSource(text)) {
-    const prepared = prepareCloudPromptInput(text);
-    const response = await callAI({
-      system: `You are a professional summarizer. Provide a concise summary of the following text in 3-5 sentences in ${targetLang}. Only output the summary in ${targetLang}.`,
-      prompt: typeof prepared.value === 'string' ? prepared.value : text,
-      temperature: 0.3,
-      maxTokens: 500,
-    });
-    return restoreCloudAiResponse(response, prepared.redactionMap);
+    return summarizeText(plainTextToEmailSource(text), targetLang);
   }
 
+  const context = deriveContextFromEmailSource(text);
   const prepared = prepareCloudPromptInput(text);
-  const response = await callAI(buildSummarizePrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
-  return restoreCloudAiResponse(response, prepared.redactionMap);
+  const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
+  const response = await callAI(buildSummarizePrompt(promptSource, targetLang));
+  if (!response.success || !response.content) return restoreCloudAiResponse(response, prepared.redactionMap);
+  const summary = parseSummaryMetadata(response.content);
+  return restoreCloudAiResponse({
+    ...response,
+    content: formatSummaryMetadata(summary, targetLang),
+    metadata: {
+      ...response.metadata,
+      senderType: context.senderType,
+      replyNeeded: context.replyNeeded,
+      replyNeededReason: context.replyNeededReason,
+      summary,
+    },
+  }, prepared.redactionMap);
 }
 
 export async function suggestReply(emailContent: string | AIEmailSource, targetLang = 'English'): Promise<AIResponse> {
   if (!isStructuredEmailSource(emailContent)) {
-    const prepared = prepareCloudPromptInput(emailContent);
-    const response = await callAI({
-      system: `You are an AI assistant helping to compose email replies in ${targetLang}. Only output the sendable reply body in ${targetLang}. Do not include summaries, action suggestions, priority, reason, timing, headings, or analysis notes.`,
-      prompt: `Received email:\n${typeof prepared.value === 'string' ? prepared.value : emailContent}\n\nSuggested reply in ${targetLang}:`,
-      temperature: 0.7,
-      maxTokens: 1000,
-    });
-    return removeAssistantAnalysisFromReply(restoreCloudAiResponse(response, prepared.redactionMap));
+    return suggestReply(plainTextToEmailSource(emailContent), targetLang);
   }
 
+  const context = deriveContextFromEmailSource(emailContent);
   const prepared = prepareCloudPromptInput(emailContent);
-  const response = await callAI(buildReplyPrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
-  return removeAssistantAnalysisFromReply(restoreCloudAiResponse(response, prepared.redactionMap));
+  if (!context.replyNeeded) {
+    return noReplyAIResponse(context, targetLang);
+  }
+  const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
+  const response = await callAI(buildReplyPrompt(promptSource, targetLang));
+  if (!response.success || !response.content) return restoreCloudAiResponse(response, prepared.redactionMap);
+  const parsed = parseReplyCandidates(response.content);
+  if (!parsed.replyNeeded || parsed.candidates.length === 0) {
+    return noReplyAIResponse({ ...context, replyNeeded: false, replyNeededReason: 'model returned no reply needed' }, targetLang);
+  }
+  const preferred = parsed.candidates.find((candidate) => candidate.style === 'best') || parsed.candidates[0];
+  return removeAssistantAnalysisFromReply(restoreCloudAiResponse({
+    ...response,
+    content: preferred.body,
+    metadata: {
+      ...response.metadata,
+      senderType: context.senderType,
+      replyNeeded: true,
+      replyNeededReason: context.replyNeededReason,
+      replyCandidates: parsed.candidates,
+    },
+  }, prepared.redactionMap));
 }
 
 export async function suggestEmailActions(emailContent: string | AIEmailSource, targetLang = 'English'): Promise<AIResponse> {
   if (!isStructuredEmailSource(emailContent)) {
-    const prepared = prepareCloudPromptInput(emailContent);
-    const response = await callAI({
-      system: `You are an email triage assistant. Extract practical action suggestions in ${targetLang}. Return 1-4 concise bullet lines only.`,
-      prompt: typeof prepared.value === 'string' ? prepared.value : emailContent,
-      temperature: 0.25,
-      maxTokens: 500,
-    });
-    return restoreCloudAiResponse(response, prepared.redactionMap);
+    return suggestEmailActions(plainTextToEmailSource(emailContent), targetLang);
   }
 
+  const context = deriveContextFromEmailSource(emailContent);
   const prepared = prepareCloudPromptInput(emailContent);
-  const response = await callAI(buildActionSuggestionsPrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
-  return restoreCloudAiResponse(response, prepared.redactionMap);
+  const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
+  const response = await callAI(buildActionSuggestionsPrompt(promptSource, targetLang));
+  if (!response.success || !response.content) return restoreCloudAiResponse(response, prepared.redactionMap);
+  const parsed = parseActionMetadata(response.content, context);
+  const fallback = localizedNoActionSuggestionMessage(targetLang);
+  return restoreCloudAiResponse({
+    ...response,
+    content: formatActionMetadata(parsed.actions, fallback),
+    metadata: {
+      ...response.metadata,
+      senderType: context.senderType,
+      replyNeeded: context.replyNeeded,
+      replyNeededReason: context.replyNeededReason,
+      actions: parsed.actions,
+      urgency: parsed.urgency,
+      parseStatus: parsed.parseStatus,
+    },
+  }, prepared.redactionMap);
 }
 
 export async function suggestQuickReplies(emailContent: string | AIEmailSource, targetLang = 'English'): Promise<AIResponse> {
   if (!isStructuredEmailSource(emailContent)) {
-    const prepared = prepareCloudPromptInput(emailContent);
-    const response = await callAI({
-      system: `Generate exactly 3 short email quick replies in ${targetLang}. Each option must be one line, ready to send, without numbering or markdown.`,
-      prompt: typeof prepared.value === 'string' ? prepared.value : emailContent,
-      temperature: 0.55,
-      maxTokens: 500,
-    });
-    return restoreCloudAiResponse(response, prepared.redactionMap);
+    return suggestQuickReplies(plainTextToEmailSource(emailContent), targetLang);
   }
 
+  const context = deriveContextFromEmailSource(emailContent);
   const prepared = prepareCloudPromptInput(emailContent);
-  const response = await callAI(buildQuickRepliesPrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
-  return restoreCloudAiResponse(response, prepared.redactionMap);
+  if (!context.replyNeeded || context.allowedQuickReplyIntents.length === 0) {
+    return noReplyAIResponse(context, targetLang);
+  }
+  const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
+  const response = await callAI(buildQuickRepliesPrompt(promptSource, targetLang));
+  if (!response.success || !response.content) return restoreCloudAiResponse(response, prepared.redactionMap);
+  const quickReplies = parseQuickReplyArray(response.content);
+  return restoreCloudAiResponse({
+    ...response,
+    content: quickReplies.join('\n'),
+    metadata: {
+      ...response.metadata,
+      senderType: context.senderType,
+      replyNeeded: context.replyNeeded,
+      replyNeededReason: context.replyNeededReason,
+      quickReplies,
+    },
+  }, prepared.redactionMap);
 }
 
 function keyInfoJsonSystemInstruction(targetLang: string): string {
@@ -898,14 +1306,17 @@ export async function extractKeyInfo(emailContent: string | AIEmailSource, targe
 
 export async function polishText(
   text: string,
-  style: 'formal' | 'friendly' | 'shorter' | 'longer',
+  style: 'formal' | 'friendly' | 'shorter' | 'longer' | 'proofread' | 'simplify' | 'bullet_points',
   targetLang?: string,
 ): Promise<AIResponse> {
   const map: Record<string, string> = {
     formal: 'Make this text formal and professional.',
     friendly: 'Make this text friendly and casual.',
     shorter: 'Rewrite shorter and more concise.',
-    longer: 'Expand with more relevant details.',
+    longer: 'Expand only using information already present in the text. Do not add new facts, assumptions, examples, dates, names, or commitments.',
+    proofread: 'Proofread only: fix spelling, grammar, punctuation, and obvious typos without changing meaning, tone, structure, or facts.',
+    simplify: 'Simplify the wording and reduce sentence complexity while preserving all facts, tone, and commitments.',
+    bullet_points: 'Rewrite the text as clear bullet points while preserving all facts and not adding new information.',
   };
   const languageInstruction = targetLang
     ? `Write the rewritten email in ${targetLang}.`

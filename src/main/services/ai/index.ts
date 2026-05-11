@@ -5,6 +5,7 @@ export type {
   AIConfigSnapshot,
   AIConfigSaveInput,
   AIEmailSource,
+  AIActionSuggestionMetadata,
   AIProviderTestConnectionRequest,
   AIProviderTestConnectionResult,
   AIProviderModelListRequest,
@@ -19,6 +20,9 @@ export type {
   AIProviderProfileSnapshot,
   AIRequest,
   AIResponse,
+  AIResponseMetadata,
+  AIReplyCandidateMetadata,
+  AISummaryMetadata,
   AITranslateSegmentsResponse,
   OpenAICompatibleMessage,
   OpenAICompatibleRequestBody,
@@ -37,6 +41,7 @@ export {
 } from './aiConfigStore';
 export {
   deleteModelProfile,
+  getAIModelProfileConfigForTask,
   getAIModelProfileConfigById,
   getAIModelProfileSnapshot,
   getAIProviderAccountSnapshot,
@@ -55,6 +60,7 @@ export {
   setDefaultAIProviderProfile,
 } from './aiProviderProfileStore';
 export { normalizeOpenAICompatibleEndpoint } from './endpointNormalizer';
+export { normalizeOpenAICompatibleEmbeddingEndpoint } from './endpointNormalizer';
 export { normalizeOpenAICompatibleModelListEndpoint } from './endpointNormalizer';
 export { buildOpenAICompatibleRequestBody } from './requestSanitizer';
 export {
