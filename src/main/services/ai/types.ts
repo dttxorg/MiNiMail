@@ -178,6 +178,7 @@ export interface AIEmailSource {
   scan_result?: string;
   senderType?: string;
   replyNeeded?: boolean | null;
+  contactWikiContext?: string;
 }
 
 export type OpenAICompatibleMessage = {

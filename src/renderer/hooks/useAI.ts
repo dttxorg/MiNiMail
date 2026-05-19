@@ -78,6 +78,7 @@ export interface AIEmailSourcePayload {
   scan_result?: string;
   senderType?: string;
   replyNeeded?: boolean | null;
+  contactWikiContext?: string;
 }
 
 export type PolishStyle = 'formal' | 'friendly' | 'shorter' | 'longer' | 'proofread' | 'simplify' | 'bullet_points';

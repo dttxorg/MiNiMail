@@ -45,6 +45,7 @@ async function run() {
   };
 
   let fetchCalls = 0;
+  let lastSummarizeSource = null;
   global.fetch = async () => {
     fetchCalls += 1;
     return {
@@ -106,7 +107,10 @@ async function run() {
         parsed: { plainText: '' },
       }),
       buildReplyPrompt: () => ({ system: 'reply', prompt: 'reply prompt' }),
-      buildSummarizePrompt: () => ({ system: 'summarize', prompt: 'summarize prompt' }),
+      buildSummarizePrompt: (source) => {
+        lastSummarizeSource = source;
+        return { system: 'summarize', prompt: 'summarize prompt' };
+      },
       buildTranslatePrompt: () => ({ system: 'translate', prompt: 'translate prompt' }),
       deriveEmailAIContext: aiContextModule.deriveEmailAIContext,
       redactGithubMailEntities: ({ plainText }) => ({ redactedText: plainText, redactionMap: [], entities: [], preservedGithubSemantics: {} }),
@@ -121,6 +125,18 @@ async function run() {
   assert(response.content.includes('alice@example.com'), 'Expected summary content email placeholder to be restored');
   assert(response.metadata.summary.what.includes('Alice Brown'), 'Expected summary metadata placeholders to be restored');
   assert(response.metadata.summary.keyFacts.some((item) => item.includes('alice@example.com')), 'Expected summary metadata arrays to be restored');
+
+  await aiService.summarizeText({
+    subject: 'Follow up',
+    from: 'alice@example.com',
+    from_name: 'Alice Brown',
+    body_text: 'Please follow up.',
+    contactWikiContext: 'Role summary: Alice Brown works with alice@example.com on Project Falcon.',
+  }, 'English');
+  assert(lastSummarizeSource, 'Expected summarize prompt builder to receive a structured source');
+  assert(!lastSummarizeSource.contactWikiContext.includes('alice@example.com'), 'Expected Wiki context email to be redacted before prompt building');
+  assert(!lastSummarizeSource.contactWikiContext.includes('Alice Brown'), 'Expected Wiki context name to be redacted before prompt building');
+  assert(/\[(?:EMAIL_\d+|PERSON(?:_FROM)?_\d+)\]/.test(lastSummarizeSource.contactWikiContext), 'Expected Wiki context placeholders in redacted prompt source');
 
   const callsBeforeNoReply = fetchCalls;
   const noReply = await aiService.suggestReply({

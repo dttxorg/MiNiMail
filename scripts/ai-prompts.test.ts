@@ -125,6 +125,44 @@ function testAssistantPromptsExposeStructuredAssistantSections() {
   assert(keyInfo.prompt.includes('Detected links:'), 'Expected key info prompt to include link context');
 }
 
+function testContactWikiContextFeedsAssistantPromptsAsBackground() {
+  const source = {
+    subject: 'Verify a login attempt from a new location',
+    from: 'hello@example-app.test',
+    fromName: 'Example App Team',
+    snippet: 'Your account tried to login from this location. If this was not you, reset your password.',
+    bodyText: [
+      'Sign-In From a New Location',
+      'Your account tried to login from this location:',
+      'If you did not attempt to login from a new place, reset your password.',
+    ].join('\n'),
+    contactWikiContext: [
+      'Sender type: system_notification',
+      'Role summary: Example App account-security notification channel; usually sends login alerts.',
+      'User action pattern: verify whether the login was yours; reset password only if abnormal.',
+      'Risk alert: new-location login attempt.',
+    ].join('\n'),
+  };
+
+  const summary = buildSummarizePrompt(source, 'Chinese');
+  assert(summary.system.includes('Contact Wiki context'), 'Expected summary prompt to know how to use Wiki context');
+  assert(summary.system.includes('current email evidence has priority'), 'Expected Wiki context to remain subordinate to current email');
+  assert(summary.prompt.includes('Contact Wiki context'), 'Expected summary prompt to include Wiki context section');
+  assert(summary.prompt.includes('account-security notification channel'), 'Expected summary prompt to include the Wiki role summary');
+
+  const actions = buildActionSuggestionsPrompt(source, 'Chinese');
+  assert(actions.prompt.includes('Contact Wiki context'), 'Expected action prompt to include Wiki context section');
+  assert(actions.prompt.includes('new-location login attempt'), 'Expected action prompt to include Wiki risk context');
+
+  const quickReplies = buildQuickRepliesPrompt(source, 'Chinese');
+  assert(quickReplies.prompt.includes('Contact Wiki context'), 'Expected quick replies prompt to include Wiki context section');
+
+  const keyInfo = buildKeyInfoPrompt(source, 'Chinese');
+  assert(keyInfo.system.includes('For system/security senders'), 'Expected key info prompt to include scenario-specific Wiki guidance');
+  assert(keyInfo.prompt.includes('Contact Wiki context'), 'Expected key info prompt to include Wiki context section');
+  assert(keyInfo.prompt.includes('User action pattern'), 'Expected key info prompt to include Wiki action pattern');
+}
+
 function testJapaneseAssistantPromptsForbidEnglishLabels() {
   const source = {
     subject: 'Security alert',
@@ -288,6 +326,7 @@ function run() {
   testSummarizePromptIncludesActionSignals();
   testReplyPromptKeepsQuotedContextSeparate();
   testAssistantPromptsExposeStructuredAssistantSections();
+  testContactWikiContextFeedsAssistantPromptsAsBackground();
   testJapaneseAssistantPromptsForbidEnglishLabels();
   testKeyInfoPromptHandlesBounceRecipientsSafely();
   testActionSuggestionsUseAiCategoryAndStableScoringForMarketing();

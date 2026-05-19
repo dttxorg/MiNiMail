@@ -215,11 +215,27 @@ function mergeRedactionMaps(...maps: RedactionMapEntry[][]): RedactionMapEntry[]
   return merged;
 }
 
+function applyRedactionMapToText(text: string, redactionMap: RedactionMapEntry[]): string {
+  return redactionMap
+    .filter((entry) => entry.original)
+    .sort((a, b) => b.original.length - a.original.length)
+    .reduce((value, entry) => value.split(entry.original).join(entry.placeholder), text);
+}
+
 function redactCloudTextDetailed(text: string): { text: string; redactionMap: RedactionMapEntry[] } {
   const result = redactSensitiveEntities(text);
   return {
     text: result.redactedText,
     redactionMap: result.redactionMap,
+  };
+}
+
+function redactCloudDisplayNameDetailed(text: string): { text: string; redactionMap: RedactionMapEntry[] } {
+  const result = redactCloudTextDetailed(text);
+  if (!text.trim() || result.text !== text || result.redactionMap.length > 0) return result;
+  return {
+    text: '[PERSON_FROM_1]',
+    redactionMap: [{ type: 'PERSON', original: text, placeholder: '[PERSON_FROM_1]' }],
   };
 }
 
@@ -239,7 +255,16 @@ function redactCloudEmailSourceDetailed(value: AIEmailSource): { value: AIEmailS
 
     const subjectResult = value.subject ? redactCloudTextDetailed(value.subject) : null;
     const fromResult = value.from ? redactCloudTextDetailed(value.from) : null;
-    const fromNameResult = value.from_name ? redactCloudTextDetailed(value.from_name) : null;
+    const fromNameResult = value.from_name ? redactCloudDisplayNameDetailed(value.from_name) : null;
+    const baseRedactionMap = mergeRedactionMaps(
+      subjectResult?.redactionMap ?? [],
+      fromResult?.redactionMap ?? [],
+      fromNameResult?.redactionMap ?? [],
+      githubResult.redactionMap,
+    );
+    const contactWikiContextResult = value.contactWikiContext
+      ? redactCloudTextDetailed(applyRedactionMapToText(value.contactWikiContext, baseRedactionMap))
+      : null;
 
     return {
       value: {
@@ -250,21 +275,27 @@ function redactCloudEmailSourceDetailed(value: AIEmailSource): { value: AIEmailS
         body_html: undefined,
         body_text: githubResult.redactedText,
         snippet: githubResult.redactedText.slice(0, 240),
+        contactWikiContext: contactWikiContextResult?.text ?? value.contactWikiContext,
       },
-      redactionMap: mergeRedactionMaps(
-        subjectResult?.redactionMap ?? [],
-        fromResult?.redactionMap ?? [],
-        fromNameResult?.redactionMap ?? [],
-        githubResult.redactionMap,
-      ),
+      redactionMap: mergeRedactionMaps(baseRedactionMap, contactWikiContextResult?.redactionMap ?? []),
     };
   }
 
   const subjectResult = value.subject ? redactCloudTextDetailed(value.subject) : null;
   const fromResult = value.from ? redactCloudTextDetailed(value.from) : null;
-  const fromNameResult = value.from_name ? redactCloudTextDetailed(value.from_name) : null;
+  const fromNameResult = value.from_name ? redactCloudDisplayNameDetailed(value.from_name) : null;
   const bodyResult = mergedBody ? redactCloudTextDetailed(mergedBody) : null;
   const snippetResult = value.snippet ? redactCloudTextDetailed(value.snippet) : null;
+  const baseRedactionMap = mergeRedactionMaps(
+    subjectResult?.redactionMap ?? [],
+    fromResult?.redactionMap ?? [],
+    fromNameResult?.redactionMap ?? [],
+    bodyResult?.redactionMap ?? [],
+    snippetResult?.redactionMap ?? [],
+  );
+  const contactWikiContextResult = value.contactWikiContext
+    ? redactCloudTextDetailed(applyRedactionMapToText(value.contactWikiContext, baseRedactionMap))
+    : null;
 
   return {
     value: {
@@ -275,14 +306,9 @@ function redactCloudEmailSourceDetailed(value: AIEmailSource): { value: AIEmailS
       body_html: undefined,
       body_text: bodyResult?.text ?? value.body_text,
       snippet: snippetResult?.text ?? value.snippet,
+      contactWikiContext: contactWikiContextResult?.text ?? value.contactWikiContext,
     },
-    redactionMap: mergeRedactionMaps(
-      subjectResult?.redactionMap ?? [],
-      fromResult?.redactionMap ?? [],
-      fromNameResult?.redactionMap ?? [],
-      bodyResult?.redactionMap ?? [],
-      snippetResult?.redactionMap ?? [],
-    ),
+    redactionMap: mergeRedactionMaps(baseRedactionMap, contactWikiContextResult?.redactionMap ?? []),
   };
 }
 
@@ -1034,6 +1060,7 @@ function toPromptSource(value: AIEmailSource) {
     scanResult: value.scan_result,
     senderType: value.senderType,
     replyNeeded: value.replyNeeded,
+    contactWikiContext: value.contactWikiContext,
   };
 }
 
@@ -1298,8 +1325,10 @@ export async function extractKeyInfo(emailContent: string | AIEmailSource, targe
     return restoreCloudAiResponse(corrected, prepared.redactionMap);
   }
 
+  const context = deriveContextFromEmailSource(emailContent);
   const prepared = prepareCloudPromptInput(emailContent);
-  const response = await callAI(buildKeyInfoPrompt(toPromptSource(prepared.value as AIEmailSource), targetLang));
+  const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
+  const response = await callAI(buildKeyInfoPrompt(promptSource, targetLang));
   const corrected = await correctKeyInfoLanguageIfNeeded(response, targetLang);
   return restoreCloudAiResponse(corrected, prepared.redactionMap);
 }

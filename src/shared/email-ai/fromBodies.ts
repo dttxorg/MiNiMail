@@ -23,6 +23,7 @@ export interface MailLikeForAi {
   scanResult?: string;
   senderType?: string;
   replyNeeded?: boolean | null;
+  contactWikiContext?: string;
 }
 
 export interface EmailAiSnapshot {

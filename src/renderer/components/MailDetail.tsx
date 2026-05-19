@@ -72,8 +72,8 @@ const ASSISTANT_RESULT_TTL_MS = 10 * 60 * 1000;
 const ASSISTANT_ERROR_COOLDOWN_MS = 45 * 1000;
 const assistantResultCache = new Map<string, { state: MailAssistantState; expiresAt: number }>();
 
-function getAssistantCacheKey(emailId: string, language: string): string {
-  return `${emailId}:${language}`;
+function getAssistantCacheKey(emailId: string, language: string, contactWikiKey = 'no-wiki'): string {
+  return `${emailId}:${language}:${contactWikiKey}`;
 }
 
 function rememberAssistantState(key: string, state: MailAssistantState, ttlMs: number) {
@@ -119,6 +119,44 @@ function normalizeQuickReplyItems(value: unknown, maxItems = 3): string[] {
     })
     .filter(Boolean)
     .slice(0, maxItems);
+}
+
+function compactWikiList(items: Array<string | undefined | null> | undefined, limit = 3): string {
+  return (items || [])
+    .map((item) => (item || '').trim())
+    .filter(Boolean)
+    .slice(0, limit)
+    .join('; ');
+}
+
+function buildContactWikiAiContext(wiki?: ContactWiki | null): string | undefined {
+  if (!wiki) return undefined;
+  const supportsRelationship = wiki.senderType === 'personal' || wiki.senderType === 'work_contact';
+  const rows = [
+    wiki.senderType ? `Sender type: ${wiki.senderType}` : '',
+    wiki.confidence ? `Wiki confidence: ${wiki.confidence.level} (${wiki.confidence.score})` : '',
+    wiki.summary ? `Role summary: ${wiki.summary}` : '',
+    compactWikiList(wiki.recentContext) ? `Recent sender pattern: ${compactWikiList(wiki.recentContext, 4)}` : '',
+    wiki.subscriptionValue ? `Subscription value: ${wiki.subscriptionValue}` : '',
+    wiki.promotionPattern ? `Promotion pattern: ${wiki.promotionPattern}` : '',
+    wiki.actionAdvice ? `Action advice: ${wiki.actionAdvice}` : '',
+    wiki.readingValue ? `Reading value: ${wiki.readingValue}` : '',
+    wiki.frequency ? `Frequency: ${wiki.frequency}` : '',
+    wiki.serviceType ? `Service type: ${wiki.serviceType}` : '',
+    wiki.userAction ? `User action pattern: ${wiki.userAction}` : '',
+    wiki.riskAlert ? `Risk alert: ${wiki.riskAlert}` : '',
+    compactWikiList(wiki.feedbackThemes) ? `Community feedback themes: ${compactWikiList(wiki.feedbackThemes)}` : '',
+    compactWikiList(wiki.featureRequests) ? `Feature requests: ${compactWikiList(wiki.featureRequests)}` : '',
+    compactWikiList(wiki.criticisms) ? `Criticisms: ${compactWikiList(wiki.criticisms)}` : '',
+    compactWikiList(wiki.suggestedNextActions) ? `Suggested next actions: ${compactWikiList(wiki.suggestedNextActions)}` : '',
+    wiki.replyEntry ? `Reply entry note: ${wiki.replyEntry}` : '',
+    supportsRelationship && compactWikiList(wiki.openLoops) ? `Open loops: ${compactWikiList(wiki.openLoops)}` : '',
+    supportsRelationship && compactWikiList(wiki.replyStyle) ? `Reply style: ${compactWikiList(wiki.replyStyle)}` : '',
+    supportsRelationship && compactWikiList(wiki.commitments) ? `Commitments: ${compactWikiList(wiki.commitments)}` : '',
+    supportsRelationship && compactWikiList(wiki.unresolvedQuestions) ? `Unresolved questions: ${compactWikiList(wiki.unresolvedQuestions)}` : '',
+    supportsRelationship && wiki.relationshipProfile ? `Relationship profile: ${wiki.relationshipProfile}` : '',
+  ].filter(Boolean);
+  return rows.join('\n').slice(0, 1800) || undefined;
 }
 
 function parseAiLines(value: string, maxItems: number): string[] {
@@ -625,6 +663,7 @@ function ConversationMessageCard({
   const [quickReplyDraft, setQuickReplyDraft] = useState('');
   const [attachmentDownloadStates, setAttachmentDownloadStates] = useState<Record<string, { status: AttachmentActionStatus; error?: string }>>({});
   const detailRequestRef = useRef<Promise<MailEmail> | null>(null);
+  const contactWikiAiContext = useMemo(() => buildContactWikiAiContext(contactWiki), [contactWiki]);
 
   useEffect(() => {
     setExpanded(defaultExpanded);
@@ -1053,6 +1092,7 @@ function ConversationMessageCard({
       snippet: source.snippet,
       category: source.category,
       scan_result: source.scanResult,
+      contactWikiContext: contactWikiAiContext,
     };
   };
 
@@ -1162,7 +1202,8 @@ function ConversationMessageCard({
 
   const loadAssistant = useCallback(async (force = false) => {
     const normalizedLanguage = normalizeAiLanguage(aiTargetLanguage);
-    const cacheKey = getAssistantCacheKey(email.id, normalizedLanguage);
+    const wikiCacheKey = contactWiki ? `${contactWiki.lastIndexedAt}:${contactWiki.stale ? 'stale' : 'ready'}` : 'no-wiki';
+    const cacheKey = getAssistantCacheKey(email.id, normalizedLanguage, wikiCacheKey);
 
     if (!force) {
       const cached = readAssistantStateCache(cacheKey);
@@ -1225,6 +1266,8 @@ function ConversationMessageCard({
     aiTargetLanguage,
     assistantState.loadedForId,
     assistantState.status,
+    contactWiki,
+    contactWikiAiContext,
     email.id,
     ensureDetailLoaded,
     extractKeyInfo,
