@@ -415,17 +415,37 @@ function localizedNoReplyMessage(targetLang = 'English'): string {
 
 function noReplyAIResponse(context: EmailAIContext, targetLang = 'English'): AIResponse {
   const message = localizedNoReplyMessage(targetLang);
+  const noReplyContext: EmailAIContext = {
+    ...context,
+    replyNeeded: false,
+    overlays: {
+      ...context.overlays,
+      replyNeeded: false,
+    },
+  };
   return {
     success: true,
     content: message,
     metadata: {
-      senderType: context.senderType,
+      ...contextMetadata(noReplyContext),
+      senderType: noReplyContext.senderType,
       replyNeeded: false,
-      replyNeededReason: context.replyNeededReason,
+      replyNeededReason: noReplyContext.replyNeededReason,
       noReplyMessage: message,
       quickReplies: [],
       replyCandidates: [],
     },
+  };
+}
+
+function contextMetadata(context: EmailAIContext): Pick<AIResponseMetadata, 'senderType' | 'inboxClass' | 'messageScenario' | 'overlays' | 'replyNeeded' | 'replyNeededReason'> {
+  return {
+    senderType: context.senderType,
+    inboxClass: context.inboxClass,
+    messageScenario: context.messageScenario,
+    overlays: context.overlays,
+    replyNeeded: context.replyNeeded,
+    replyNeededReason: context.replyNeededReason,
   };
 }
 
@@ -669,6 +689,8 @@ export interface BatchClassifyResult {
   id: string;
   category: Category;
   senderType?: EmailAISenderType;
+  inboxClass?: string;
+  messageScenario?: string;
   replyNeeded?: boolean;
   confidence?: number;
   source?: 'local_rule' | 'llm' | 'github';
@@ -684,6 +706,8 @@ function categoryFromSenderType(senderType: EmailAISenderType, fallback: Categor
     case 'marketing':
     case 'newsletter':
       return '广告/营销类';
+    case 'community_feedback':
+      return '通知类';
     case 'personal':
       return '社交/个人类';
     case 'work_contact':
@@ -734,6 +758,8 @@ function localPreClassifyEmail(email: {
     id: email.id,
     category: categoryFromSenderType(context.senderType),
     senderType: context.senderType,
+    inboxClass: context.inboxClass,
+    messageScenario: context.messageScenario,
     replyNeeded: context.replyNeeded,
     confidence: context.senderTypeConfidence,
     source: 'local_rule',
@@ -750,9 +776,10 @@ const CLASSIFY_SYSTEM = `You are an email classification assistant. Classify eac
 - 安全/风险类: Suspected phishing, abnormal login alerts, scam risk warnings
 
 Also return senderType and replyNeeded when the evidence is clear. senderType must be one of: personal, work_contact, marketing, newsletter, vendor, system_notification, unknown.
-Set replyNeeded=false for no-reply, marketing, newsletter, bulk list, and pure system notifications. Do not create a polite-reply need for those messages.
+Set replyNeeded=false for no-reply, marketing, newsletter, community/forum relays, bulk list, delivery failures, and pure system notifications. Do not create a polite-reply need for those messages.
+When useful, also return inboxClass and messageScenario. inboxClass must be one of: primary, transactions, updates, promotions, community, other. messageScenario must be one of: human_request, security_alert, verification, billing_statement, receipt_or_order, shipping_or_travel, calendar_scheduling, promotion_deal, newsletter_update, community_feedback, delivery_failure, dev_notification, generic_update.
 
-You MUST return ONLY a valid JSON array. No markdown formatting, no explanations, no conversational text. Example: [{"id":"1","category":"工作/业务类","senderType":"work_contact","replyNeeded":true,"confidence":0.72},{"id":"2","category":"通知类","senderType":"system_notification","replyNeeded":false,"confidence":0.84}]`;
+You MUST return ONLY a valid JSON array. No markdown formatting, no explanations, no conversational text. Example: [{"id":"1","category":"工作/业务类","senderType":"work_contact","replyNeeded":true,"confidence":0.72,"inboxClass":"primary","messageScenario":"human_request"},{"id":"2","category":"通知类","senderType":"system_notification","replyNeeded":false,"confidence":0.84,"inboxClass":"transactions","messageScenario":"security_alert"}]`;
 
 const CLASSIFY_USER_LIGHT = (emails: Array<{ id: string; subject: string; from: string; from_name: string; has_attachment: boolean; header_signals?: string }>) => {
   const list = emails.map(e =>
@@ -829,6 +856,8 @@ export async function batchClassifyMails(
       id: email.id,
       category,
       senderType: 'system_notification',
+      inboxClass: 'updates',
+      messageScenario: routing.github.event_type === 'security_alert' ? 'security_alert' : 'dev_notification',
       replyNeeded: false,
       confidence: 0.9,
       source: 'github',
@@ -960,7 +989,22 @@ function extractCategoryResults(raw: string, expectedIds: string[]): { results: 
   const normalizeSenderType = (value: unknown): EmailAISenderType | undefined => {
     const raw = String(value || '').trim();
     return raw === 'personal' || raw === 'work_contact' || raw === 'marketing' || raw === 'newsletter' ||
-      raw === 'vendor' || raw === 'system_notification' || raw === 'unknown'
+      raw === 'vendor' || raw === 'system_notification' || raw === 'community_feedback' || raw === 'unknown'
+      ? raw
+      : undefined;
+  };
+  const normalizeInboxClass = (value: unknown): string | undefined => {
+    const raw = String(value || '').trim();
+    return raw === 'primary' || raw === 'transactions' || raw === 'updates' || raw === 'promotions' || raw === 'community' || raw === 'other'
+      ? raw
+      : undefined;
+  };
+  const normalizeMessageScenario = (value: unknown): string | undefined => {
+    const raw = String(value || '').trim();
+    return raw === 'human_request' || raw === 'security_alert' || raw === 'verification' || raw === 'billing_statement' ||
+      raw === 'receipt_or_order' || raw === 'shipping_or_travel' || raw === 'calendar_scheduling' ||
+      raw === 'promotion_deal' || raw === 'newsletter_update' || raw === 'community_feedback' ||
+      raw === 'delivery_failure' || raw === 'dev_notification' || raw === 'generic_update'
       ? raw
       : undefined;
   };
@@ -973,6 +1017,8 @@ function extractCategoryResults(raw: string, expectedIds: string[]): { results: 
       id,
       category: parseCategory(String(categoryValue)),
       senderType,
+      inboxClass: normalizeInboxClass(item?.inboxClass ?? item?.inbox_class),
+      messageScenario: normalizeMessageScenario(item?.messageScenario ?? item?.message_scenario),
       replyNeeded: typeof item?.replyNeeded === 'boolean'
         ? item.replyNeeded
         : typeof item?.reply_needed === 'boolean'
@@ -1175,9 +1221,7 @@ export async function summarizeText(text: string | AIEmailSource, targetLang = '
     content: formatSummaryMetadata(summary, targetLang),
     metadata: {
       ...response.metadata,
-      senderType: context.senderType,
-      replyNeeded: context.replyNeeded,
-      replyNeededReason: context.replyNeededReason,
+      ...contextMetadata(context),
       summary,
     },
   }, prepared.redactionMap);
@@ -1206,9 +1250,7 @@ export async function suggestReply(emailContent: string | AIEmailSource, targetL
     content: preferred.body,
     metadata: {
       ...response.metadata,
-      senderType: context.senderType,
-      replyNeeded: true,
-      replyNeededReason: context.replyNeededReason,
+      ...contextMetadata({ ...context, replyNeeded: true, overlays: { ...context.overlays, replyNeeded: true } }),
       replyCandidates: parsed.candidates,
     },
   }, prepared.redactionMap));
@@ -1231,9 +1273,7 @@ export async function suggestEmailActions(emailContent: string | AIEmailSource, 
     content: formatActionMetadata(parsed.actions, fallback),
     metadata: {
       ...response.metadata,
-      senderType: context.senderType,
-      replyNeeded: context.replyNeeded,
-      replyNeededReason: context.replyNeededReason,
+      ...contextMetadata(context),
       actions: parsed.actions,
       urgency: parsed.urgency,
       parseStatus: parsed.parseStatus,
@@ -1260,9 +1300,7 @@ export async function suggestQuickReplies(emailContent: string | AIEmailSource, 
     content: quickReplies.join('\n'),
     metadata: {
       ...response.metadata,
-      senderType: context.senderType,
-      replyNeeded: context.replyNeeded,
-      replyNeededReason: context.replyNeededReason,
+      ...contextMetadata(context),
       quickReplies,
     },
   }, prepared.redactionMap);
@@ -1330,7 +1368,13 @@ export async function extractKeyInfo(emailContent: string | AIEmailSource, targe
   const promptSource = withDerivedContext(toPromptSource(prepared.value as AIEmailSource), context);
   const response = await callAI(buildKeyInfoPrompt(promptSource, targetLang));
   const corrected = await correctKeyInfoLanguageIfNeeded(response, targetLang);
-  return restoreCloudAiResponse(corrected, prepared.redactionMap);
+  return restoreCloudAiResponse({
+    ...corrected,
+    metadata: {
+      ...corrected.metadata,
+      ...contextMetadata(context),
+    },
+  }, prepared.redactionMap);
 }
 
 export async function polishText(

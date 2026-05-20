@@ -22,6 +22,40 @@ function contactWikiSystemInstruction(): string {
   return 'Contact Wiki context, when supplied, is private background memory about the sender relationship and past patterns. The current email evidence has priority: never use Wiki context to override the current email, invent missing facts, or decide that an action exists when the current email does not support it.';
 }
 
+function scenarioSystemInstruction(context: EmailAIContext): string {
+  const rules: Record<string, string> = {
+    human_request: 'For human_request, identify the actual ask, owner, deadline, and whether a reply should commit, defer, or ask a clarifying question.',
+    security_alert: 'For security_alert, focus on affected account/service, whether the action was user-initiated, safe verification path, and risk. Do not suggest replying unless the current email has a strong trusted support thread.',
+    verification: 'For verification, focus on what is being verified, time sensitivity, safe action, and whether the user initiated it. Do not draft reply text.',
+    billing_statement: 'For billing_statement, extract amount, period, due date, download/payment action, and account impact.',
+    receipt_or_order: 'For receipt_or_order, extract order/receipt identity, status, amount, next step, and support route if needed.',
+    shipping_or_travel: 'For shipping_or_travel, extract itinerary/tracking/status, time/place, required check-in or pickup action, and risk.',
+    calendar_scheduling: 'For calendar_scheduling, extract meeting time, organizer, RSVP/reschedule need, location/link, and conflict-sensitive next action.',
+    promotion_deal: 'For promotion_deal, judge whether the deal is worth reading, price/discount/deadline if present, and archive/unsubscribe/read actions only.',
+    newsletter_update: 'For newsletter_update, extract reading value, frequency/recency, major updates only, and do not turn content into user preferences.',
+    community_feedback: 'For community_feedback, extract feedback theme, feature requests, criticism/praise, and suggested next product action. Treat forum reply routes as optional links, not required email replies.',
+    delivery_failure: 'For delivery_failure, extract failed recipient, diagnostic code/reason, whether the original message should be resent, and do not reply to the daemon.',
+    dev_notification: 'For dev_notification, extract repo/project, PR/issue/build/deployment event, owner, failure/risk, and concrete developer next action.',
+    generic_update: 'For generic_update, keep the answer conservative: summarize the service update and only suggest action if directly supported by current evidence.',
+  };
+  return [
+    `Scenario-specific rules: ${rules[context.messageScenario] || rules.generic_update}`,
+    `Inbox class: ${context.inboxClass}. Message scenario: ${context.messageScenario}.`,
+    `Overlays: replyNeeded=${context.replyNeeded ? 'yes' : 'no'}, timeSensitive=${context.overlays.timeSensitive ? 'yes' : 'no'}, securitySensitive=${context.overlays.securitySensitive ? 'yes' : 'no'}, externalAction=${context.overlays.hasExternalAction ? 'yes' : 'no'}, urgency=${context.overlays.actionUrgency}.`,
+  ].join(' ');
+}
+
+function formatScenarioContext(context: EmailAIContext): string {
+  return [
+    `Inbox class: ${context.inboxClass}`,
+    `Message scenario: ${context.messageScenario}`,
+    `Security sensitive: ${context.overlays.securitySensitive ? 'yes' : 'no'}`,
+    `Time sensitive: ${context.overlays.timeSensitive ? 'yes' : 'no'}`,
+    `External action: ${context.overlays.hasExternalAction ? 'yes' : 'no'}`,
+    `Action urgency: ${context.overlays.actionUrgency}`,
+  ].join('\n');
+}
+
 function formatContactWikiContext(source: EmailAiPromptSource): string {
   return (source.contactWikiContext || '')
     .replace(/\r/g, '')
@@ -187,6 +221,7 @@ export function buildSummarizePrompt(source: EmailAiPromptSource, targetLang = '
       `You are a professional email summarizer. Return one strict JSON object only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
       contactWikiSystemInstruction(),
+      scenarioSystemInstruction(context),
       'Use stable English JSON keys only: what, impact, action, keyFacts, urgency.',
       'Schema: { "what": string, "impact": string|null, "action": string|null, "keyFacts": string[] <=6, "urgency": "now"|"today"|"later"|"none" }.',
       'For long threads, summarize the latest progress first instead of retelling the whole thread.',
@@ -199,6 +234,7 @@ export function buildSummarizePrompt(source: EmailAiPromptSource, targetLang = '
       `Subject: ${source.subject || '(No subject)'}`,
       `Sender type: ${context.senderType}`,
       `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
+      formatScenarioContext(context),
       '',
       'Contact Wiki context (background, not current email evidence):',
       formatContactWikiContext(source),
@@ -235,6 +271,7 @@ export function buildReplyPrompt(source: EmailAiPromptSource, targetLang = 'Engl
       `You are an AI assistant helping draft email replies. Return one strict JSON object only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
       contactWikiSystemInstruction(),
+      scenarioSystemInstruction(context),
       'Use stable English JSON keys only: replyNeeded, candidates.',
       'Schema: { "replyNeeded": boolean, "candidates": [{ "style": "short"|"formal"|"best", "body": string }] }.',
       'Generate exactly 3 candidate reply drafts only when replyNeeded=true: short/direct (<=60 characters when possible), formal/complete, and best-fit for the sender type and scene.',
@@ -249,6 +286,7 @@ export function buildReplyPrompt(source: EmailAiPromptSource, targetLang = 'Engl
       `From: ${source.fromName || source.from || '(Unknown sender)'}`,
       `Sender type: ${context.senderType}`,
       `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
+      formatScenarioContext(context),
       '',
       'Contact Wiki context (background, not current email evidence):',
       formatContactWikiContext(source),
@@ -280,6 +318,7 @@ export function buildActionSuggestionsPrompt(source: EmailAiPromptSource, target
       `You are a senior email triage assistant. Return one strict JSON object only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
       contactWikiSystemInstruction(),
+      scenarioSystemInstruction(context),
       'Use the supplied deterministic Action score and handling level. Stable mapping: 0-2 no action, 3-5 optional later, 6-8 follow up, 9-10 act soon.',
       'Use stable English JSON keys only: actions, urgency.',
       'Schema: { "actions": [{ "label": string, "type": "primary"|"secondary"|"dismiss", "intent": "reply"|"archive"|"unsubscribe"|"read"|"external_link"|"none", "evidence": string }], "urgency": "now"|"today"|"later"|"none" }.',
@@ -299,6 +338,7 @@ export function buildActionSuggestionsPrompt(source: EmailAiPromptSource, target
       `Stored scan result: ${actionContext.scanResult}`,
       `Sender type: ${context.senderType}`,
       `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
+      formatScenarioContext(context),
       `Action score: ${actionContext.score}/10`,
       `Handling level: ${actionContext.level}`,
       '',
@@ -341,6 +381,7 @@ export function buildQuickRepliesPrompt(source: EmailAiPromptSource, targetLang 
       `You are an email assistant. Return one strict JSON array only in ${targetLang}. No markdown.`,
       strictTargetLanguageInstruction(targetLang),
       contactWikiSystemInstruction(),
+      scenarioSystemInstruction(context),
       'Each item must be one ready-to-send quick reply string, without numbering or markdown.',
       'Generate exactly 3 distinct options only when quick replies are allowed.',
       intentInstruction,
@@ -353,6 +394,7 @@ export function buildQuickRepliesPrompt(source: EmailAiPromptSource, targetLang 
       source.date ? `Date: ${new Date(source.date).toISOString()}` : '',
       `Sender type: ${context.senderType}`,
       `Reply needed: ${context.replyNeeded ? 'yes' : 'no'} (${context.replyNeededReason})`,
+      formatScenarioContext(context),
       '',
       'Contact Wiki context (background, not current email evidence):',
       formatContactWikiContext(source),
@@ -379,12 +421,14 @@ export function buildQuickRepliesPrompt(source: EmailAiPromptSource, targetLang 
 
 export function buildKeyInfoPrompt(source: EmailAiPromptSource, targetLang = 'English'): BuiltAiPrompt {
   const snapshot = buildSnapshot(source);
+  const context = buildContext(source);
 
   return {
     system: [
       `You extract high-signal key information from emails.`,
       keyInfoJsonInstruction(targetLang),
       contactWikiSystemInstruction(),
+      scenarioSystemInstruction(context),
       'Prioritize actionable facts: required action, deadline, account or service affected, security/billing risk, amount, order/reference id, link purpose, project/repo, assignee, or decision needed.',
       'Use Contact Wiki context only to interpret sender role and recurring patterns. For system/security senders, extract the affected account/service, risk, required verification, and safe next action. For community feedback senders, extract feedback theme, missing feature, criticism/praise, and suggested next action from the current email body. For marketing/newsletter senders, extract deal/deadline/reading value only when present, and do not turn sender copy into user preference.',
       'Do not fill the output with obvious metadata like subject or received time unless it is the actual key event. If there is no meaningful key information, set keyInfo to a natural-language "no meaningful key information" message in the target language and keep other unavailable fields empty.',
@@ -396,6 +440,7 @@ export function buildKeyInfoPrompt(source: EmailAiPromptSource, targetLang = 'En
       `From: ${source.fromName || source.from || '(Unknown sender)'}`,
       source.to ? `To: ${source.to}` : '',
       source.date ? `Date: ${new Date(source.date).toISOString()}` : '',
+      formatScenarioContext(context),
       '',
       'Contact Wiki context (background, not current email evidence):',
       formatContactWikiContext(source),

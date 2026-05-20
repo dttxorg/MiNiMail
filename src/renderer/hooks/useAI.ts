@@ -41,6 +41,15 @@ export interface AIReplyCandidateMetadata {
 
 export interface AIResponseMetadata {
   senderType?: string;
+  inboxClass?: string;
+  messageScenario?: string;
+  overlays?: {
+    replyNeeded: boolean;
+    timeSensitive: boolean;
+    securitySensitive: boolean;
+    hasExternalAction: boolean;
+    actionUrgency: 'now' | 'today' | 'later' | 'none';
+  };
   replyNeeded?: boolean | null;
   replyNeededReason?: string;
   noReplyMessage?: string;

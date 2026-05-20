@@ -234,6 +234,8 @@ function testEmailAiContextGatesBulkReplies() {
     snippet: 'Limited discount. Unsubscribe here.',
   });
   assert(marketing.senderType === 'marketing', 'Expected ESP/list mail to be marketing');
+  assert(marketing.inboxClass === 'promotions', 'Expected marketing mail to map to promotions inbox class');
+  assert(marketing.messageScenario === 'promotion_deal', 'Expected discount/list mail to use promotion_deal scenario');
   assert(marketing.replyNeeded === false, 'Expected marketing mail to be no-reply');
   assert(marketing.allowedQuickReplyIntents.length === 0, 'Expected marketing mail to disable quick replies');
 
@@ -245,6 +247,8 @@ function testEmailAiContextGatesBulkReplies() {
     snippet: 'Can you confirm the rollout by Friday?',
   });
   assert(work.replyNeeded === true, 'Expected work request to need a reply');
+  assert(work.inboxClass === 'primary', 'Expected work request to map to primary inbox class');
+  assert(work.messageScenario === 'human_request', 'Expected work request to use human_request scenario');
   assert(work.allowedQuickReplyIntents.includes('clarify'), 'Expected work request to allow clarification quick replies');
 }
 
@@ -287,9 +291,11 @@ function testForumNoReplyRelayCanStillBeReplyable() {
     snippet: 'Visit the topic or reply to this email to respond.',
     bodyText: 'A community member left feedback. Visit the topic or reply to this email to respond.',
   });
-  assert(forum.senderType === 'vendor', 'Expected forum mail relay to be treated as a service/community notification');
-  assert(forum.replyNeeded === true, 'Expected reply-by-email forum notification not to be hard no-reply');
-  assert(forum.allowedQuickReplyIntents.length > 0, 'Expected forum notification to allow quick replies when reply is supported');
+  assert(forum.senderType === 'community_feedback', 'Expected forum mail relay to use community_feedback sender type');
+  assert(forum.inboxClass === 'community', 'Expected forum relay to map to community inbox class');
+  assert(forum.messageScenario === 'community_feedback', 'Expected forum relay to use community_feedback scenario');
+  assert(forum.replyNeeded === false, 'Expected forum relay route not to force quick replies by itself');
+  assert(forum.allowedQuickReplyIntents.length === 0, 'Expected community relay to avoid sendable quick replies by default');
 }
 
 function testSecurityReplyToEmailDoesNotBecomeForumReply() {
@@ -306,6 +312,8 @@ function testSecurityReplyToEmailDoesNotBecomeForumReply() {
     ].join('\n'),
   });
   assert(security.senderType === 'vendor' || security.senderType === 'system_notification', 'Expected login verification to stay account/security oriented');
+  assert(security.messageScenario === 'security_alert', 'Expected login verification to use security_alert scenario');
+  assert(security.overlays.securitySensitive === true, 'Expected login verification to be security sensitive');
   assert(security.replyNeeded === false, 'Expected account-security verification to avoid quick replies');
   assert(security.replyNeededReason !== 'forum notification supports reply', 'Expected reply-to-email wording not to trigger forum reply logic');
   assert(security.allowedQuickReplyIntents.length === 0, 'Expected security notification to disable quick replies');
@@ -319,6 +327,67 @@ function testSecurityReplyToEmailDoesNotBecomeForumReply() {
   });
   assert(projectThread.senderType === 'work_contact', 'Expected ordinary work thread wording to stay work_contact');
   assert(projectThread.replyNeeded === true, 'Expected ordinary work thread request to remain replyable');
+}
+
+function testEmailAiContextDerivesMainstreamScenarioRules() {
+  const bounce = deriveEmailAIContext({
+    subject: 'Undelivered Mail Returned to Sender',
+    from: 'mailer-daemon@example.test',
+    fromName: 'MAILER-DAEMON',
+    snippet: 'Final-Recipient: rfc822; teammate@example.test Diagnostic-Code: 550 rejected',
+    bodyText: 'This is an automatically generated Delivery Status Notification. Delivery to the following recipient failed permanently.',
+  });
+  assert(bounce.messageScenario === 'delivery_failure', 'Expected mailer-daemon mail to use delivery_failure scenario');
+  assert(bounce.inboxClass === 'transactions', 'Expected delivery failure to map to transactions inbox class');
+  assert(bounce.replyNeeded === false, 'Expected delivery failure not to need a reply');
+
+  const calendar = deriveEmailAIContext({
+    subject: 'Invitation: Product review @ Thu May 21',
+    from: 'calendar@example.test',
+    fromName: 'Calendar',
+    headers: { 'content-class': 'urn:content-classes:calendarmessage' },
+    snippet: 'Please RSVP to this meeting invitation.',
+    bodyText: 'When: Thu May 21 10:00 AM. Please accept or decline.',
+  });
+  assert(calendar.messageScenario === 'calendar_scheduling', 'Expected calendar invite to use calendar_scheduling scenario');
+  assert(calendar.overlays.timeSensitive === true, 'Expected calendar invite to be time sensitive');
+
+  const newsletter = deriveEmailAIContext({
+    subject: 'Weekly product updates',
+    from: 'digest@example.test',
+    fromName: 'Example Digest',
+    headers: { 'list-id': 'digest.example.test' },
+    snippet: 'This week: new integrations and product updates.',
+  });
+  assert(newsletter.messageScenario === 'newsletter_update', 'Expected list digest without deal language to use newsletter_update scenario');
+  assert(newsletter.inboxClass === 'updates', 'Expected digest newsletter to map to updates inbox class');
+  assert(newsletter.replyNeeded === false, 'Expected digest newsletter not to need replies');
+}
+
+function testScenarioGuidanceIsIncludedInPrompts() {
+  const source = {
+    subject: 'Verify a login attempt from a new location',
+    from: 'hello@example-app.test',
+    fromName: 'Example App Team',
+    snippet: 'Your account tried to login from this location. If this was not you, reset your password.',
+    bodyText: [
+      'Sign-In From a New Location',
+      'Your account tried to login from this location:',
+      'If you did not attempt to login from a new place, reply to this email to let us know, and reset your password.',
+    ].join('\n'),
+  };
+  const summary = buildSummarizePrompt(source, 'Chinese');
+  assert(summary.prompt.includes('Message scenario: security_alert'), 'Expected summary prompt to include message scenario');
+  assert(summary.prompt.includes('Inbox class: transactions'), 'Expected summary prompt to include inbox class');
+  assert(summary.system.includes('Scenario-specific rules'), 'Expected summary prompt to include scenario-specific rules');
+
+  const actions = buildActionSuggestionsPrompt(source, 'Chinese');
+  assert(actions.prompt.includes('Security sensitive: yes'), 'Expected action prompt to expose security overlay');
+  assert(actions.system.includes('For security_alert'), 'Expected action prompt to include security-specific action guidance');
+
+  const keyInfo = buildKeyInfoPrompt(source, 'Chinese');
+  assert(keyInfo.prompt.includes('Message scenario: security_alert'), 'Expected key info prompt to include scenario');
+  assert(keyInfo.system.includes('For security_alert'), 'Expected key info prompt to include scenario-specific extraction guidance');
 }
 
 function run() {
@@ -335,6 +404,8 @@ function run() {
   testContentOnlyMarketingSignalsDoNotHardGateReplies();
   testForumNoReplyRelayCanStillBeReplyable();
   testSecurityReplyToEmailDoesNotBecomeForumReply();
+  testEmailAiContextDerivesMainstreamScenarioRules();
+  testScenarioGuidanceIsIncludedInPrompts();
   console.log('ai-prompts tests passed');
 }
 

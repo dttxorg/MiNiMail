@@ -153,6 +153,7 @@ async function run() {
   assert.strictEqual(noReply.success, true, 'Expected no-reply response to succeed');
   assert.strictEqual(llmCalls, 0, 'Expected cloud-redacted noreply context to be decided before LLM');
   assert.strictEqual(noReply.metadata.replyNeeded, false, 'Expected noreply metadata to be false');
+  assert.strictEqual(noReply.metadata.overlays.replyNeeded, false, 'Expected noreply overlay metadata to stay consistent');
 
   llmCalls = 0;
   const replyService = loadAiService({

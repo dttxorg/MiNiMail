@@ -22,6 +22,9 @@ export {
   type EmailAIActionIntent,
   type EmailAIContext,
   type EmailAIContextSource,
+  type EmailAIInboxClass,
+  type EmailAIMessageScenario,
+  type EmailAIOverlays,
   type EmailAIQuickReplyIntent,
   type EmailAISenderType,
 } from './aiContext';
