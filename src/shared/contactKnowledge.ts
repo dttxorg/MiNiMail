@@ -204,7 +204,16 @@ export function cleanContactKnowledgeText(mail: Pick<ContactKnowledgeMailLike, '
   for (const line of lines) {
     if (/^>/.test(line)) continue;
     if (/^on .+ wrote:$/i.test(line)) break;
+    if (/^-----Original Message-----$/i.test(line)) break;
+    if (/^Begin forwarded message:/i.test(line)) break;
+    if (/^---------- Forwarded message ---------$/i.test(line)) break;
+    if (/^(转发的邮件|轉寄的郵件)/i.test(line)) break;
+    if (/^在 .+ (写道|寫道)[:：]$/i.test(line)) break;
+    if (/^.+ 于 .+ 写道[:：]$/i.test(line)) break;
+    if (/^--\s*$/.test(line)) break;
     if (/^from:\s|^sent:\s|^to:\s|^subject:\s/i.test(line)) continue;
+    if (/^(发件人|寄件者|收件人|发送时间|寄送時間|主旨|主题)[:：]/i.test(line)) continue;
+    if (/^(sent from my iphone|sent from my ipad|从我的 iphone 发送|從我的 iphone 傳送)$/i.test(line)) continue;
     if (/unsubscribe|manage preferences|confidentiality notice|this email and any attachments/i.test(line)) continue;
     kept.push(line);
   }

@@ -393,6 +393,11 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+function looksLikeJsonPayload(raw: string): boolean {
+  const cleaned = stripJsonFence(raw).trim();
+  return /^[{[]/.test(cleaned) || /"?(?:replyNeeded|candidates|actions|quickReplies|text|reply|body)"?\s*:/.test(cleaned);
+}
+
 function coerceUrgency(value: unknown): 'now' | 'today' | 'later' | 'none' {
   return value === 'now' || value === 'today' || value === 'later' || value === 'none'
     ? value
@@ -556,7 +561,7 @@ function parseReplyCandidates(raw: string): { replyNeeded: boolean; candidates: 
         .filter((item): item is AIReplyCandidateMetadata => Boolean(item))
         .slice(0, 3)
     : [];
-  if (candidates.length === 0 && raw.trim() && replyNeeded) {
+  if (candidates.length === 0 && raw.trim() && replyNeeded && !looksLikeJsonPayload(raw)) {
     candidates.push({ style: 'best', body: stripJsonFence(raw).trim() });
   }
   return { replyNeeded, candidates };
@@ -579,7 +584,7 @@ function parseQuickReplyArray(raw: string): string[] {
       return parsed.map(normalizeItem).filter(Boolean).slice(0, 3);
     }
   } catch {
-    // Fall back to the previous plain-line behavior.
+    if (looksLikeJsonPayload(raw)) return [];
   }
   return raw
     .split(/\r?\n/)
@@ -775,7 +780,7 @@ const CLASSIFY_SYSTEM = `You are an email classification assistant. Classify eac
 - 工作/业务类: Project updates, contract signing, client inquiries, internal approvals
 - 安全/风险类: Suspected phishing, abnormal login alerts, scam risk warnings
 
-Also return senderType and replyNeeded when the evidence is clear. senderType must be one of: personal, work_contact, marketing, newsletter, vendor, system_notification, unknown.
+Also return senderType and replyNeeded when the evidence is clear. senderType must be one of: personal, work_contact, marketing, newsletter, vendor, system_notification, community_feedback, unknown.
 Set replyNeeded=false for no-reply, marketing, newsletter, community/forum relays, bulk list, delivery failures, and pure system notifications. Do not create a polite-reply need for those messages.
 When useful, also return inboxClass and messageScenario. inboxClass must be one of: primary, transactions, updates, promotions, community, other. messageScenario must be one of: human_request, security_alert, verification, billing_statement, receipt_or_order, shipping_or_travel, calendar_scheduling, promotion_deal, newsletter_update, community_feedback, delivery_failure, dev_notification, generic_update.
 

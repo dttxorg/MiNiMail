@@ -67,6 +67,45 @@ function testCleanAndChunkKnowledgeText() {
   });
   assert.equal(cleaned, 'Please review the timeline.');
 
+  assert.equal(cleanContactKnowledgeText({
+    bodyText: [
+      'Current answer only.',
+      '-----Original Message-----',
+      'From: Alice <alice@example.test>',
+      'Old thread content.',
+    ].join('\n'),
+  }), 'Current answer only.');
+  assert.equal(cleanContactKnowledgeText({
+    bodyText: [
+      'Please see my latest note.',
+      'Begin forwarded message:',
+      'Forwarded content.',
+    ].join('\n'),
+  }), 'Please see my latest note.');
+  assert.equal(cleanContactKnowledgeText({
+    bodyText: [
+      '我会更新方案。',
+      '在 Alice <alice@example.test> 写道：',
+      '旧邮件内容',
+    ].join('\n'),
+  }), '我会更新方案。');
+  assert.equal(cleanContactKnowledgeText({
+    bodyText: [
+      '当前反馈。',
+      '转发的邮件',
+      '发件人：Alice',
+      '旧邮件内容',
+    ].join('\n'),
+  }), '当前反馈。');
+  assert.equal(cleanContactKnowledgeText({
+    bodyText: [
+      'I will review it.',
+      '-- ',
+      'Signature',
+      'Phone number',
+    ].join('\n'),
+  }), 'I will review it.');
+
   const chunks = buildContactKnowledgeChunks([
     {
       mailId: 'mail-1',

@@ -134,6 +134,35 @@ async function run() {
   assert.strictEqual(llmCalls, 1, 'Expected content-only discount wording to use LLM fallback instead of local marketing rule');
   assert.strictEqual(contentOnlyMarketing.results.find((item) => item.id === 'm3').source, 'llm', 'Expected LLM source for content-only discount wording');
   assert.strictEqual(contentOnlyMarketing.results.find((item) => item.id === 'm3').senderType, 'work_contact', 'Expected LLM sender type to be preserved');
+  assert(
+    fs.readFileSync(path.join(process.cwd(), 'src', 'main', 'services', 'ai.ts'), 'utf8').includes('community_feedback, unknown'),
+    'Expected classification prompt senderType enum to mention community_feedback',
+  );
+
+  llmCalls = 0;
+  const classifyCommunity = loadAiService({
+    privacyMode: 'off',
+    callAI: async () => {
+      llmCalls += 1;
+      return {
+        success: true,
+        content: JSON.stringify([{ id: 'm4', category: '通知类', senderType: 'community_feedback', replyNeeded: false, confidence: 0.8, inboxClass: 'community', messageScenario: 'community_feedback' }]),
+      };
+    },
+  });
+  const communityResult = await classifyCommunity.batchClassifyMails([
+    {
+      id: 'm4',
+      subject: '[Example Forum] New reply',
+      from: 'updates@example.test',
+      from_name: 'Example Forum',
+      has_attachment: false,
+      snippet: 'A forum member replied with product feedback.',
+    },
+  ], 'light');
+  assert.strictEqual(llmCalls, 1, 'Expected community fixture to use LLM fallback');
+  assert.strictEqual(communityResult.results.find((item) => item.id === 'm4').senderType, 'community_feedback', 'Expected community_feedback sender type to survive parsing');
+  assert.strictEqual(communityResult.results.find((item) => item.id === 'm4').messageScenario, 'community_feedback', 'Expected community_feedback scenario to survive parsing');
 
   llmCalls = 0;
   const redactedReplyService = loadAiService({
@@ -173,6 +202,21 @@ async function run() {
   assert.strictEqual(llmCalls, 1, 'Expected unknown non-bulk request to reach reply LLM');
   assert.strictEqual(unknownReply.metadata.replyNeeded, true, 'Expected reply metadata to remain true');
 
+  const malformedReplyService = loadAiService({
+    privacyMode: 'off',
+    callAI: async () => ({ success: true, content: '{"replyNeeded":true,"candidates":[' }),
+  });
+  const malformedReply = await malformedReplyService.suggestReply({
+    subject: 'Question',
+    from: 'person@example.com',
+    from_name: 'Person',
+    snippet: 'Can you check this when you have a moment?',
+    body_text: 'Can you check this when you have a moment?',
+  }, 'English');
+  assert.strictEqual(malformedReply.success, true, 'Expected malformed reply JSON to produce safe response');
+  assert(!String(malformedReply.content || '').includes('candidates'), 'Expected malformed reply JSON not to be displayed as sendable text');
+  assert.strictEqual(malformedReply.metadata.replyNeeded, false, 'Expected malformed reply JSON to degrade to no-reply metadata');
+
   const quickReplyObjectService = loadAiService({
     privacyMode: 'off',
     callAI: async () => ({
@@ -197,6 +241,20 @@ async function run() {
     ['I will check this.', 'I will get back to you tomorrow.', 'Can you share one more detail?'],
     'Expected object-shaped quick replies to normalize into strings',
   );
+
+  const malformedQuickReplyService = loadAiService({
+    privacyMode: 'off',
+    callAI: async () => ({ success: true, content: '[{"text":"I will check this."' }),
+  });
+  const malformedQuickReplies = await malformedQuickReplyService.suggestQuickReplies({
+    subject: 'Question',
+    from: 'person@example.com',
+    from_name: 'Person',
+    snippet: 'Can you check this when you have a moment?',
+    body_text: 'Can you check this when you have a moment?',
+  }, 'English');
+  assert(!String(malformedQuickReplies.content || '').includes('"text"'), 'Expected malformed quick reply JSON not to be displayed');
+  assert.deepStrictEqual(malformedQuickReplies.metadata.quickReplies, [], 'Expected malformed quick reply JSON to return no quick replies');
 
   const malformedActionService = loadAiService({
     privacyMode: 'off',
