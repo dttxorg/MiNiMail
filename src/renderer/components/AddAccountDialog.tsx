@@ -1,4 +1,4 @@
-import React, { useState, useEffect, forwardRef, useImperativeHandle, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, forwardRef, useImperativeHandle, useCallback, useMemo, useRef } from 'react';
 import { X, Loader2, ExternalLink, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
 import type { CreateAccountInput } from '../types';
 import type { AppLanguage } from '../utils/aiLanguages';
@@ -119,7 +119,7 @@ function getAutoConfigNotice(language: AppLanguage, oauthPreferred: boolean): st
 function normalizeAccountFormForDirtyCheck(formData: FormData): string {
   return JSON.stringify({
     email: formData.email.trim(),
-    display_name: formData.display_name.trim(),
+    display_name: (formData.display_name ?? '').trim(),
     provider: formData.provider,
     auth_type: formData.auth_type,
     imap_host: formData.imap_host.trim(),
@@ -338,7 +338,7 @@ export const AddAccountDialog = forwardRef<AddAccountDialogHandle, Props>(
 
   const handleEmailChange = (email: string) => {
     setForm(prev => {
-      const nextDomain = getEmailDomain(email);
+      getEmailDomain(email); // computed; reserved for future per-domain affordances
       const autoResult = applyEmailProviderAutoConfig(
         prev,
         email,

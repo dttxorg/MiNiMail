@@ -1,7 +1,7 @@
 export type AccountSelection = {
   id: number;
   email: string;
-  name?: string;
+  name: string;
   avatar?: string;
 };
 

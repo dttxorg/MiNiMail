@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { getSenderAvatarBranding } from '../utils/senderAvatarBranding';
 
 const AVATAR_COLORS = [
@@ -7,7 +7,7 @@ const AVATAR_COLORS = [
   '#ffd60a', '#ff6b35',
 ];
 
-function getAvatarColor(name: string): string {
+export function getAvatarColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) {
     hash = (hash * 31 + name.charCodeAt(i)) & 0xffffff;

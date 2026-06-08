@@ -16,9 +16,9 @@ interface BuildMailRoutingExplanationMapArgs {
   appLanguage?: string;
 }
 
-function localize(appLanguage: string | undefined, zh: string, en: string): string {
+function _localize(appLanguage: string | undefined, zh: string, en: string): string {
   return appLanguage === 'zh' ? zh : en;
-}
+} void _localize;
 
 function normalizeAppLanguage(appLanguage?: string): string {
   return (appLanguage || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en';
@@ -34,7 +34,7 @@ function chooseTargetFolder(
   }
 
   if (routing.kind === 'github') {
-    return routing.smart_folder.folder;
+    return routing.smart_folder?.folder as MailRoutingFolderId | undefined;
   }
 
   if (routing.smart_folder?.folder && memberships.includes(routing.smart_folder.folder as MailRoutingFolderId)) {

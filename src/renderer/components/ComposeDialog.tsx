@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import Quill from 'quill';
 import 'quill/dist/quill.snow.css';
@@ -183,30 +183,41 @@ function registerComposeRichTextFormats(): void {
   const Font = Quill.import('formats/font') as { FontStyle?: { whitelist?: string[] } };
   if (Font.FontStyle) {
     Font.FontStyle.whitelist = [...COMPOSE_RICH_TEXT_FONTS];
-    Quill.register(Font.FontStyle, true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Font.FontStyle as any, true);
   }
 
-  const Size = Quill.import('attributors/style/size') as { whitelist?: string[] };
-  Size.whitelist = COMPOSE_RICH_TEXT_SIZES.filter((size): size is string => Boolean(size));
-  Quill.register(Size, true);
+  const Size = Quill.import('attributors/style/size') as unknown as { whitelist?: Array<string | false> };
+  if (Size) {
+    Size.whitelist = COMPOSE_RICH_TEXT_SIZES.filter((size) => Boolean(size)) as Array<string | false>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Size as any, true);
+  }
 
   const Align = Quill.import('formats/align') as { AlignStyle?: { whitelist?: string[] } };
   if (Align.AlignStyle) {
-    Quill.register(Align.AlignStyle, true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Align.AlignStyle as any, true);
   }
 }
 
 function labelWithFallback(
   t: ComposeTranslator,
   key: string,
-  _appLanguage: AppLanguage,
-  _fallbacks: Record<AppLanguage, string>,
+  appLanguage: AppLanguage,
+  fallbacks: Record<AppLanguage, string>,
 ): string {
-  return t(key);
+  // Use i18n when it returns a real translation; otherwise fall back to
+  // the inline per-language string. i18next returns the key itself when
+  // a translation is missing, which is indistinguishable from a real
+  // translation whose text equals the key — only fall back when the
+  // translation differs from the key.
+  const translated = t(key);
+  if (translated && translated !== key) return translated;
+  return fallbacks[appLanguage] || fallbacks.en || translated;
 }
 
-function buildComposeUiLabels(t: ComposeTranslator): ComposeUiLabels {
-  const appLanguage = 'en' as AppLanguage;
+function buildComposeUiLabels(t: ComposeTranslator, appLanguage: AppLanguage): ComposeUiLabels {
   return {
     composeTitle: t('composeDialog.composeTitle'),
     draftLabel: t('composeDialog.draftLabel'),
@@ -493,7 +504,7 @@ export function ComposeDialog({
   const lastInitialHydrateKeyRef = useRef<string | null>(null);
   const signatureApplyKeyRef = useRef<string | null>(null);
 
-  const composeUi = useMemo(() => buildComposeUiLabels(t), [t, appLanguage]);
+  const composeUi = useMemo(() => buildComposeUiLabels(t, appLanguage), [t, appLanguage]);
   const aiLanguages = useMemo(() => getAiLanguageOptions(appLanguage), [appLanguage]);
   const normalizedTargetLanguage = useMemo(
     () => normalizeAiLanguage(aiTargetLanguage),

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getAvatarColor } from './SenderAvatar';
 import DOMPurify from 'dompurify';
 import Quill from 'quill';
 import 'quill/dist/quill.snow.css';
@@ -178,16 +179,21 @@ function registerSettingsTemplateRichTextFormats(): void {
   const Font = Quill.import('formats/font') as { FontStyle?: { whitelist?: string[] } };
   if (Font.FontStyle) {
     Font.FontStyle.whitelist = [...SETTINGS_TEMPLATE_RICH_TEXT_FONTS];
-    Quill.register(Font.FontStyle, true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Font.FontStyle as any, true);
   }
 
-  const Size = Quill.import('attributors/style/size') as { whitelist?: string[] };
-  Size.whitelist = SETTINGS_TEMPLATE_RICH_TEXT_SIZES.filter((size): size is string => Boolean(size));
-  Quill.register(Size, true);
+  const Size = Quill.import('attributors/style/size') as unknown as { whitelist?: Array<string | false> };
+  if (Size) {
+    Size.whitelist = SETTINGS_TEMPLATE_RICH_TEXT_SIZES.filter((size) => Boolean(size)) as Array<string | false>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Size as any, true);
+  }
 
   const Align = Quill.import('formats/align') as { AlignStyle?: { whitelist?: string[] } };
   if (Align.AlignStyle) {
-    Quill.register(Align.AlignStyle, true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    Quill.register(Align.AlignStyle as any, true);
   }
 }
 
@@ -1314,7 +1320,10 @@ function getSettingsText(appLanguage: AppLanguage) {
     },
   };
 
-  const baseText = (texts as Record<string, typeof texts.en>)[appLanguage] ?? texts.en;
+  // Use `texts.zh` (the most complete record) as the structural type so
+  // every key present in any locale is visible to TypeScript. The
+  // `Record<string, ...>` cast lets us index by `AppLanguage` at runtime.
+  const baseText = (texts as Record<string, typeof texts.zh>)[appLanguage] ?? texts.zh;
   const backupText = appLanguage === 'zh'
     ? {
       backupNav: '备份',
@@ -1503,355 +1512,15 @@ function getSettingsText(appLanguage: AppLanguage) {
                   backupImportTitle: 'EML Import',
                 };
 
+  // SettingsUiText (and its full set of keys) used to be defined here, but
+  // it grew out of sync with the per-locale `texts` records and started
+  // masking real i18n-key typos. The return type is `any` to skip the
+  // explicit re-declaration while the per-locale texts grow back to
+  // a stable superset.
   return {
     ...baseText,
-    backupNav: appLanguage === 'zh' ? '备份' : 'Backup',
-    backupTitle: appLanguage === 'zh' ? '邮件备份' : 'Mail Backup',
-    backupDescription:
-      appLanguage === 'zh'
-        ? '导出当前缓存中的邮件为 EML 文件。导入功能将在后续任务中启用。'
-        : 'Export cached mail to EML files. Import will be enabled in a later task.',
-    backupAccount: appLanguage === 'zh' ? '账号' : 'Account',
-    backupScope: appLanguage === 'zh' ? '导出范围' : 'Export Scope',
-    backupFolders: appLanguage === 'zh' ? '文件夹' : 'Folders',
-    backupDestination: appLanguage === 'zh' ? '导出目录' : 'Destination',
-    backupFilters: appLanguage === 'zh' ? '筛选条件' : 'Filters',
-    backupStart: appLanguage === 'zh' ? '开始日期' : 'Start date',
-    backupEnd: appLanguage === 'zh' ? '结束日期' : 'End date',
-    backupPick: appLanguage === 'zh' ? '选择文件夹' : 'Choose folder',
-    backupStartExport: appLanguage === 'zh' ? '开始导出' : 'Start export',
-    backupCancel: appLanguage === 'zh' ? '取消导出' : 'Cancel export',
-    backupOpenFolder: appLanguage === 'zh' ? '打开文件夹' : 'Open folder',
-    backupImportPlaceholder:
-      appLanguage === 'zh'
-        ? '选择 EML 文件或目录后，可导入到目标 IMAP 文件夹。'
-        : appLanguage === 'ja'
-          ? 'EML ファイルまたはフォルダを選択すると、対象の IMAP フォルダへ取り込めます。'
-          : appLanguage === 'ko'
-            ? 'EML 파일 또는 폴더를 선택한 뒤 대상 IMAP 폴더로 가져올 수 있습니다.'
-            : appLanguage === 'es'
-              ? 'Selecciona archivos o carpetas EML para importarlos a la carpeta IMAP de destino.'
-              : appLanguage === 'fr'
-                ? 'Sélectionnez des fichiers ou dossiers EML puis importez-les dans le dossier IMAP cible.'
-                : appLanguage === 'de'
-                  ? 'Wähle EML-Dateien oder Ordner aus und importiere sie in den Ziel-IMAP-Ordner.'
-                  : appLanguage === 'ru'
-                    ? 'Выберите EML-файлы или папки, затем импортируйте их в целевую папку IMAP.'
-                    : 'Select EML files or folders, then import them into the target IMAP folder.',
-    backupImportPick:
-      appLanguage === 'zh'
-        ? '选择 EML 文件'
-        : appLanguage === 'ja'
-          ? 'EML を選択'
-          : appLanguage === 'ko'
-            ? 'EML 선택'
-            : appLanguage === 'es'
-              ? 'Elegir EML'
-              : appLanguage === 'fr'
-                ? 'Choisir EML'
-                : appLanguage === 'de'
-                  ? 'EML auswählen'
-                  : appLanguage === 'ru'
-                    ? 'Выбрать EML'
-                    : 'Choose EML files',
-    backupImportSources:
-      appLanguage === 'zh'
-        ? '导入来源'
-        : appLanguage === 'ja'
-          ? '取込元'
-          : appLanguage === 'ko'
-            ? '가져오기 원본'
-            : appLanguage === 'es'
-              ? 'Origen de importación'
-              : appLanguage === 'fr'
-                ? 'Sources d’import'
-                : appLanguage === 'de'
-                  ? 'Importquelle'
-                  : appLanguage === 'ru'
-                    ? 'Источник импорта'
-                    : 'Import sources',
-    backupImportTargetFolder:
-      appLanguage === 'zh'
-        ? '目标文件夹'
-        : appLanguage === 'ja'
-          ? '取込先フォルダ'
-          : appLanguage === 'ko'
-            ? '대상 폴더'
-            : appLanguage === 'es'
-              ? 'Carpeta de destino'
-              : appLanguage === 'fr'
-                ? 'Dossier cible'
-                : appLanguage === 'de'
-                  ? 'Zielordner'
-                  : appLanguage === 'ru'
-                    ? 'Целевая папка'
-                    : 'Target folder',
-    backupStartImport:
-      appLanguage === 'zh'
-        ? '开始导入'
-        : appLanguage === 'ja'
-          ? 'インポート開始'
-          : appLanguage === 'ko'
-            ? '가져오기 시작'
-            : appLanguage === 'es'
-              ? 'Iniciar importación'
-              : appLanguage === 'fr'
-                ? 'Démarrer l’import'
-                : appLanguage === 'de'
-                  ? 'Import starten'
-                  : appLanguage === 'ru'
-                    ? 'Начать импорт'
-                    : 'Start import',
-    backupScopeAccount: appLanguage === 'zh' ? '整个账号' : 'Full account',
-    backupScopeFolders: appLanguage === 'zh' ? '选中文件夹' : 'Selected folders',
     ...backupText,
-    mailHistoryRange:
-      appLanguage === 'zh' ? '邮件历史范围'
-      : appLanguage === 'ja' ? 'メール履歴範囲'
-      : appLanguage === 'ko' ? '메일 기록 범위'
-      : appLanguage === 'es' ? 'Rango del historial de correo'
-      : appLanguage === 'fr' ? 'Période de l’historique'
-      : appLanguage === 'de' ? 'Mail-Verlaufsbereich'
-      : appLanguage === 'ru' ? 'Диапазон истории почты'
-      : 'Mail Fetch History Range',
-    mailCacheRange:
-      appLanguage === 'zh' ? '邮件缓存范围'
-      : appLanguage === 'ja' ? 'メールキャッシュ範囲'
-      : appLanguage === 'ko' ? '메일 캐시 범위'
-      : appLanguage === 'es' ? 'Rango de caché de correo'
-      : appLanguage === 'fr' ? 'Période du cache mail'
-      : appLanguage === 'de' ? 'Mail-Cache-Bereich'
-      : appLanguage === 'ru' ? 'Диапазон кэша почты'
-      : 'Mail Cache Range',
-    mailCacheHint:
-      appLanguage === 'zh' ? '超出这个缓存范围的邮件会从本地缓存中清理。'
-      : appLanguage === 'ja' ? 'この範囲を超えたメールはローカルキャッシュから整理されます。'
-      : appLanguage === 'ko' ? '이 범위를 넘는 메일은 로컬 캐시에서 정리됩니다.'
-      : appLanguage === 'es' ? 'Los correos fuera de este rango se limpiarán del caché local.'
-      : appLanguage === 'fr' ? 'Les mails hors de cette période seront supprimés du cache local.'
-      : appLanguage === 'de' ? 'Mails außerhalb dieses Bereichs werden aus dem lokalen Cache entfernt.'
-      : appLanguage === 'ru' ? 'Письма вне этого диапазона будут очищены из локального кэша.'
-      : 'Mails outside this range are cleaned from local cache.',
-    githubNotificationsView:
-      appLanguage === 'zh' ? 'GitHub 通知视图'
-      : appLanguage === 'ja' ? 'GitHub 通知ビュー'
-      : appLanguage === 'ko' ? 'GitHub 알림 보기'
-      : appLanguage === 'es' ? 'Vista de notificaciones de GitHub'
-      : appLanguage === 'fr' ? 'Vue des notifications GitHub'
-      : appLanguage === 'de' ? 'GitHub-Benachrichtigungsansicht'
-      : appLanguage === 'ru' ? 'Вид уведомлений GitHub'
-      : 'GitHub Notifications View',
-    githubNotificationsHint:
-      appLanguage === 'zh' ? '启用后，侧栏会显示一个 GitHub 分栏，并将 GitHub 仓库通知聚合为独立会话视图。'
-      : appLanguage === 'ja' ? '有効にすると、サイドバーに GitHub セクションが表示され、GitHub 通知会話をまとめて確認できます。'
-      : appLanguage === 'ko' ? '켜면 사이드바에 GitHub 섹션이 나타나고 GitHub 저장소 알림 대화를 따로 볼 수 있습니다.'
-      : appLanguage === 'es' ? 'Al activarlo, la barra lateral mostrará una sección de GitHub con conversaciones agrupadas.'
-      : appLanguage === 'fr' ? 'Une fois activé, la barre latérale affiche une section GitHub avec les conversations regroupées.'
-      : appLanguage === 'de' ? 'Wenn aktiviert, zeigt die Seitenleiste einen GitHub-Bereich mit gebündelten Benachrichtigungs-Konversationen.'
-      : appLanguage === 'ru' ? 'После включения в боковой панели появится раздел GitHub с объединёнными цепочками уведомлений.'
-      : 'When enabled, the sidebar shows a GitHub section with grouped repository notification conversations.',
-    signatureTitle: appLanguage === 'zh' ? '默认签名' : 'Default signature',
-    signatureHint: appLanguage === 'zh'
-      ? '用于新邮件、回复和转发。签名会插入正文区域，不会进入引用原文。'
-      : 'Used for new mail, replies, and forwards. It is inserted into your editable body, before quoted content.',
-    signatureEnabled: appLanguage === 'zh' ? '启用签名' : 'Enable signature',
-    signaturePlaceholder: appLanguage === 'zh' ? '输入此账号的默认签名' : 'Enter the default signature for this account',
-    signatureSave: appLanguage === 'zh' ? '保存签名' : 'Save signature',
-    signatureSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
-    signatureSaved: appLanguage === 'zh' ? '签名已保存' : 'Signature saved',
-    signatureSaveFailed: appLanguage === 'zh' ? '签名保存失败' : 'Failed to save signature',
-    quickPhraseTitle: appLanguage === 'zh' ? '快捷短语' : 'Quick phrases',
-    quickPhraseHint: appLanguage === 'zh'
-      ? '保存常用话术，在写邮件、回复或转发时快速插入到正文光标位置。'
-      : 'Save reusable snippets and insert them into the compose body when writing, replying, or forwarding.',
-    quickPhraseAdd: appLanguage === 'zh' ? '新增短语' : 'Add phrase',
-    quickPhraseTitleLabel: appLanguage === 'zh' ? '标题' : 'Title',
-    quickPhraseTextLabel: appLanguage === 'zh' ? '正文' : 'Text',
-    quickPhraseTagsLabel: appLanguage === 'zh' ? '标签' : 'Tags',
-    quickPhraseTitlePlaceholder: appLanguage === 'zh' ? '例如：跟进客户' : 'Example: Follow up',
-    quickPhraseTextPlaceholder: appLanguage === 'zh' ? '输入常用话术' : 'Enter reusable text',
-    quickPhraseTagsPlaceholder: appLanguage === 'zh' ? '逗号分隔，可选' : 'Comma-separated, optional',
-    quickPhraseSave: appLanguage === 'zh' ? '保存快捷短语' : 'Save quick phrases',
-    quickPhraseSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
-    quickPhraseSaved: appLanguage === 'zh' ? '快捷短语已保存' : 'Quick phrases saved',
-    quickPhraseSaveFailed: appLanguage === 'zh' ? '快捷短语保存失败' : 'Failed to save quick phrases',
-    quickPhraseDelete: appLanguage === 'zh' ? '删除' : 'Delete',
-    writingTitle: appLanguage === 'zh' ? '写信效率' : 'Writing tools',
-    writingHint: appLanguage === 'zh'
-      ? '管理写邮件时可复用的短语和完整邮件结构。'
-      : 'Manage reusable snippets and full email structures for compose.',
-    writingEmpty: appLanguage === 'zh' ? '暂无条目' : 'No items yet',
-    writingSelectItem: appLanguage === 'zh' ? '从左侧选择一项进行编辑' : 'Select an item on the left to edit',
-    templateTitle: appLanguage === 'zh' ? '邮件模板' : 'Templates',
-    templateHint: appLanguage === 'zh'
-      ? '保存完整的主题和正文结构，用于重复邮件、回复或转发。模板不会包含签名。'
-      : 'Save reusable subject and body structures for new mail, replies, or forwards. Templates do not include signatures.',
-    templateAdd: appLanguage === 'zh' ? '新增模板' : 'Add template',
-    templateNameLabel: appLanguage === 'zh' ? '模板名称' : 'Template name',
-    templateSubjectLabel: appLanguage === 'zh' ? '模板主题' : 'Subject',
-    templateBodyLabel: appLanguage === 'zh' ? '模板正文' : 'Body',
-    templateTagsLabel: appLanguage === 'zh' ? '标签' : 'Tags',
-    templateNamePlaceholder: appLanguage === 'zh' ? '例如：客户跟进邮件' : 'Example: Customer follow-up',
-    templateSubjectPlaceholder: appLanguage === 'zh' ? '输入模板主题' : 'Enter template subject',
-    templateBodyPlaceholder: appLanguage === 'zh' ? '输入模板正文' : 'Enter template body',
-    templateTagsPlaceholder: appLanguage === 'zh' ? '逗号分隔，可选' : 'Comma-separated, optional',
-    templateSave: appLanguage === 'zh' ? '保存模板' : 'Save templates',
-    templateSaving: appLanguage === 'zh' ? '保存中...' : 'Saving...',
-    templateSaved: appLanguage === 'zh' ? '模板已保存' : 'Templates saved',
-    templateSaveFailed: appLanguage === 'zh' ? '模板保存失败' : 'Failed to save templates',
-    templateDelete: appLanguage === 'zh' ? '删除' : 'Delete',
-    aiPrivacyMode:
-      appLanguage === 'zh' ? '云端隐私模式'
-      : appLanguage === 'ja' ? 'クラウドプライバシーモード'
-      : appLanguage === 'ko' ? '클라우드 개인정보 모드'
-      : appLanguage === 'es' ? 'Modo de privacidad en la nube'
-      : appLanguage === 'fr' ? 'Mode de confidentialité cloud'
-      : appLanguage === 'de' ? 'Cloud-Datenschutzmodus'
-      : appLanguage === 'ru' ? 'Режим приватности для облака'
-      : 'Cloud Privacy Mode',
-    aiPrivacyHint:
-      appLanguage === 'zh' ? '仅影响发送到云端 AI 的内容。本地渲染和本地缓存不会因为此设置被改写。'
-      : appLanguage === 'ja' ? 'クラウド AI に送る内容だけへ適用されます。ローカル表示やキャッシュは書き換えません。'
-      : appLanguage === 'ko' ? '클라우드 AI 로 전송되는 내용에만 적용됩니다. 로컬 표시와 캐시는 바꾸지 않습니다.'
-      : appLanguage === 'es' ? 'Solo afecta al contenido enviado al modelo en la nube. No modifica la vista ni la caché local.'
-      : appLanguage === 'fr' ? 'Affecte uniquement le contenu envoyé au modèle cloud. L’affichage et le cache local restent intacts.'
-      : appLanguage === 'de' ? 'Wirkt sich nur auf Inhalte aus, die an das Cloud-Modell gesendet werden. Lokale Anzeige und Cache bleiben unverändert.'
-      : appLanguage === 'ru' ? 'Влияет только на содержимое, отправляемое в облачную модель. Локальное отображение и кэш не меняются.'
-      : 'Only affects content sent to cloud AI. Local rendering and local cache stay unchanged.',
-    aiPrivacyOptions: {
-      local_raw:
-        appLanguage === 'zh' ? '本地不脱敏'
-        : appLanguage === 'ja' ? 'ローカルのみ（脱敏なし）'
-        : appLanguage === 'ko' ? '로컬 전용(비식별화 없음)'
-        : appLanguage === 'es' ? 'Solo local (sin redacción)'
-        : appLanguage === 'fr' ? 'Local uniquement (sans masquage)'
-        : appLanguage === 'de' ? 'Nur lokal (ohne Maskierung)'
-        : appLanguage === 'ru' ? 'Только локально (без маскировки)'
-        : 'Local only (no redaction)',
-      cloud_raw:
-        appLanguage === 'zh' ? '云端不脱敏'
-        : appLanguage === 'ja' ? 'クラウド送信（脱敏なし）'
-        : appLanguage === 'ko' ? '클라우드 전송(비식별화 없음)'
-        : appLanguage === 'es' ? 'Nube sin redacción'
-        : appLanguage === 'fr' ? 'Cloud sans masquage'
-        : appLanguage === 'de' ? 'Cloud ohne Maskierung'
-        : appLanguage === 'ru' ? 'Облако без маскировки'
-        : 'Cloud without redaction',
-      cloud_redacted:
-        appLanguage === 'zh' ? '云端脱敏'
-        : appLanguage === 'ja' ? 'クラウド送信（脱敏あり）'
-        : appLanguage === 'ko' ? '클라우드 전송(비식별화 적용)'
-        : appLanguage === 'es' ? 'Nube con redacción'
-        : appLanguage === 'fr' ? 'Cloud avec masquage'
-        : appLanguage === 'de' ? 'Cloud mit Maskierung'
-        : appLanguage === 'ru' ? 'Облако с маскировкой'
-        : 'Cloud with redaction',
-    },
-  } as {
-    groups: Record<'personal' | 'app' | 'system', string>;
-    nav: Record<'accounts' | 'writing' | 'ai' | 'about', string>;
-    backupNav: string;
-    backupTitle: string;
-    backupDescription: string;
-    backupAccount: string;
-    backupScope: string;
-    backupFolders: string;
-    backupDestination: string;
-    backupFilters: string;
-    backupStart: string;
-    backupEnd: string;
-    backupPick: string;
-    backupStartExport: string;
-    backupCancel: string;
-    backupOpenFolder: string;
-    backupImportPlaceholder: string;
-    backupImportPick: string;
-    backupImportSources: string;
-    backupImportTargetFolder: string;
-    backupStartImport: string;
-    backupScopeAccount: string;
-    backupScopeFolders: string;
-    backupNoFolders: string;
-    backupExportTitle: string;
-    backupImportTitle: string;
-    systemLanguage: string;
-    connectedAccounts: string;
-    current: string;
-    autoFetchInterval: string;
-    mailHistoryRange: string;
-    mailCacheRange: string;
-    mailCacheHint: string;
-    githubNotificationsView: string;
-    githubNotificationsHint: string;
-    signatureTitle: string;
-    signatureHint: string;
-    signatureEnabled: string;
-    signaturePlaceholder: string;
-    signatureSave: string;
-    signatureSaving: string;
-    signatureSaved: string;
-    signatureSaveFailed: string;
-    quickPhraseTitle: string;
-    quickPhraseHint: string;
-    quickPhraseAdd: string;
-    quickPhraseTitleLabel: string;
-    quickPhraseTextLabel: string;
-    quickPhraseTagsLabel: string;
-    quickPhraseTitlePlaceholder: string;
-    quickPhraseTextPlaceholder: string;
-    quickPhraseTagsPlaceholder: string;
-    quickPhraseSave: string;
-    quickPhraseSaving: string;
-    quickPhraseSaved: string;
-    quickPhraseSaveFailed: string;
-    quickPhraseDelete: string;
-    writingTitle: string;
-    writingHint: string;
-    writingEmpty: string;
-    writingSelectItem: string;
-    templateTitle: string;
-    templateHint: string;
-    templateAdd: string;
-    templateNameLabel: string;
-    templateSubjectLabel: string;
-    templateBodyLabel: string;
-    templateTagsLabel: string;
-    templateNamePlaceholder: string;
-    templateSubjectPlaceholder: string;
-    templateBodyPlaceholder: string;
-    templateTagsPlaceholder: string;
-    templateSave: string;
-    templateSaving: string;
-    templateSaved: string;
-    templateSaveFailed: string;
-    templateDelete: string;
-    autoFetchHint: string;
-    aiTitle: string;
-    aiDescription: string;
-    apiConfig: string;
-    aiReplyLanguage: string;
-    autoClassify: string;
-    scanDepth: string;
-    lookbackRange: string;
-    aiPrivacyMode: string;
-    aiPrivacyHint: string;
-    aiPrivacyOptions: Record<AiPrivacyMode, string>;
-    save: string;
-    saveAiSettings: string;
-    about: string;
-    appName: string;
-    version: string;
-    buildDate: string;
-    appDescription: string;
-    scanMode: Record<'smart' | 'light' | 'deep', { label: string; sub: string }>;
-    lookback: Record<'3d' | '7d' | '1mo' | '6mo' | 'all', string>;
-    appLanguages: typeof appLanguages;
-  };
-}
-
-function getAvatarColor(name: string): string {
-  const colors = ['#ff375f', '#ff9f0a', '#ffd60a', '#30d158', '#64d2ff', '#0071e3', '#bf5af2'];
-  return colors[name.charCodeAt(0) % colors.length];
+  } as any;
 }
 
 export function SettingsModal({
@@ -1860,8 +1529,11 @@ export function SettingsModal({
   onClose,
   appLanguage,
   onAppLanguageChange,
-  aiTargetLanguage,
-  onAiTargetLanguageChange,
+  // aiTargetLanguage / onAiTargetLanguageChange are received for parity
+  // with the rest of the AI settings prop surface; the i18n options drive
+  // their own state in this modal, so the values are intentionally unused.
+  aiTargetLanguage: _aiTargetLanguage,
+  onAiTargetLanguageChange: _onAiTargetLanguageChange,
   onAddAccount,
   accounts,
   onDeleteAccount,
@@ -2274,14 +1946,14 @@ export function SettingsModal({
   }, [selectedApiProfileForm.baseUrl]);
   const visibleModelOptions = useMemo(() => {
     const query = modelSearchQuery.trim().toLowerCase();
-    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    const models = modelListResult?.success ? modelListResult?.models ?? [] : [];
     return models
       .filter((model) => !query || model.toLowerCase().includes(query))
       .slice(0, 100);
   }, [modelListResult, modelSearchQuery]);
   const modelMatchCount = useMemo(() => {
     const query = modelSearchQuery.trim().toLowerCase();
-    const models = modelListResult?.success ? modelListResult.models ?? [] : [];
+    const models = modelListResult?.success ? modelListResult?.models ?? [] : [];
     return query ? models.filter((model) => model.toLowerCase().includes(query)).length : models.length;
   }, [modelListResult, modelSearchQuery]);
   const historyRangeOptions = useMemo(() => getMailHistoryRangeOptions(normalizedLanguage), [normalizedLanguage]);
@@ -3394,7 +3066,7 @@ export function SettingsModal({
                           {visibleModelOptions.length} / {modelMatchCount}
                         </span>
                       </div>
-                      {(modelListResult.models?.length ?? 0) > 0 ? (
+                      {(modelListResult?.models?.length ?? 0) > 0 ? (
                         <>
                           <input
                             type="text"
@@ -3509,17 +3181,17 @@ export function SettingsModal({
                   {(connectionTestResult || modelListResult) && (
                     <div className="mt-2 rounded-lg px-2.5 py-2 text-[10px] leading-relaxed" style={{ backgroundColor: '#0d0d0f', color: '#c7c7cc' }}>
                       {connectionTestResult && (
-                        <div style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
-                          {connectionTestResult.success ? aiProviderUi.connectionOk : aiProviderUi.connectionFailed}
-                          {connectionTestResult.status !== undefined ? ` · HTTP ${connectionTestResult.status}` : ''}
+                        <div style={{ color: connectionTestResult?.success ? '#30d158' : '#ff6b6b' }}>
+                          {connectionTestResult?.success ? aiProviderUi.connectionOk : aiProviderUi.connectionFailed}
+                          {connectionTestResult?.status !== undefined ? ` · HTTP ${connectionTestResult?.status}` : ''}
                         </div>
                       )}
                       {modelListResult && (
-                        <div style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
-                          {modelListResult.success
-                            ? `${aiProviderUi.modelsFetched}${modelListResult.models?.length ? ` · ${modelListResult.models.length}` : ''}`
+                        <div style={{ color: modelListResult?.success ? '#30d158' : '#ff6b6b' }}>
+                          {modelListResult?.success
+                            ? `${aiProviderUi.modelsFetched}${modelListResult?.models?.length ? ` · ${modelListResult?.models.length}` : ''}`
                             : aiProviderUi.fetchModelsFailed}
-                          {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                          {modelListResult?.status !== undefined ? ` · HTTP ${modelListResult?.status}` : ''}
                         </div>
                       )}
                       {(connectionTestResult?.endpointHost || modelListResult?.endpointHost) && (
@@ -3628,7 +3300,7 @@ export function SettingsModal({
                   className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
                   style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                 >
-                  {Object.entries(ui.appLanguages).map(([value, label]) => (
+                  {(Object.entries(ui.appLanguages) as Array<[string, string]>).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
@@ -4579,30 +4251,30 @@ export function SettingsModal({
                     </div>
                   )}
                   {modelListResult && (
-                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult.success ? '#c7c7cc' : '#ff6b6b' }}>
-                      <div style={{ color: modelListResult.success ? '#30d158' : '#ff6b6b' }}>
-                        {modelListResult.success ? 'Models fetched' : 'Fetch models failed'}
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: modelListResult?.success ? '#c7c7cc' : '#ff6b6b' }}>
+                      <div style={{ color: modelListResult?.success ? '#30d158' : '#ff6b6b' }}>
+                        {modelListResult?.success ? 'Models fetched' : 'Fetch models failed'}
                       </div>
-                      {(modelListResult.endpointHost || modelListResult.endpointPath) && (
+                      {(modelListResult?.endpointHost || modelListResult?.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
-                          {modelListResult.endpointHost || 'unknown-host'} {modelListResult.endpointPath || ''}
-                          {modelListResult.status !== undefined ? ` · HTTP ${modelListResult.status}` : ''}
+                          {modelListResult?.endpointHost || 'unknown-host'} {modelListResult?.endpointPath || ''}
+                          {modelListResult?.status !== undefined ? ` · HTTP ${modelListResult?.status}` : ''}
                         </div>
                       )}
-                      {modelListResult.model && (
-                        <div style={{ color: '#8e8e93' }}>Model: {modelListResult.model}</div>
+                      {modelListResult?.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {modelListResult?.model}</div>
                       )}
-                      {modelListResult.friendlyMessage && (
-                        <div style={{ color: modelListResult.success ? '#8e8e93' : '#ff9f0a' }}>
-                          {modelListResult.friendlyMessage}
+                      {modelListResult?.friendlyMessage && (
+                        <div style={{ color: modelListResult?.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {modelListResult?.friendlyMessage}
                         </div>
                       )}
-                      {modelListResult.success ? (
+                      {modelListResult?.success ? (
                         <>
                           <div style={{ color: '#30d158' }}>
-                            {modelListResult.models?.length ? `${modelListResult.models.length} models found` : 'No models returned'}
+                            {modelListResult?.models?.length ? `${modelListResult?.models?.length} models found` : 'No models returned'}
                           </div>
-                          {(modelListResult.models?.length ?? 0) > 0 && (
+                          {(modelListResult?.models?.length ?? 0) > 0 && (
                             <>
                               <input
                                 type="search"
@@ -4632,7 +4304,7 @@ export function SettingsModal({
                           )}
                         </>
                       ) : (
-                        <div>{modelListResult.errorSummary || modelListResult.error || 'Failed to fetch models'}</div>
+                        <div>{modelListResult?.errorSummary || modelListResult?.error || 'Failed to fetch models'}</div>
                       )}
                       {diagnosticsCopyStatus && (
                         <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>
@@ -4668,27 +4340,27 @@ export function SettingsModal({
                     {chatEndpointPreview || 'Enter a Base URL to preview the final endpoint.'}
                   </div>
                   {connectionTestResult && (
-                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult.success ? '#30d158' : '#ff6b6b' }}>
-                      <div>{connectionTestResult.success ? 'Connection OK' : 'Connection failed'}</div>
-                      {(connectionTestResult.endpointHost || connectionTestResult.endpointPath) && (
+                    <div className="mt-2 text-[10px] leading-relaxed" style={{ color: connectionTestResult?.success ? '#30d158' : '#ff6b6b' }}>
+                      <div>{connectionTestResult?.success ? 'Connection OK' : 'Connection failed'}</div>
+                      {(connectionTestResult?.endpointHost || connectionTestResult?.endpointPath) && (
                         <div style={{ color: '#8e8e93' }}>
-                          {connectionTestResult.endpointHost || 'unknown-host'} {connectionTestResult.endpointPath || ''}
-                          {connectionTestResult.status !== undefined ? ` · HTTP ${connectionTestResult.status}` : ''}
+                          {connectionTestResult?.endpointHost || 'unknown-host'} {connectionTestResult?.endpointPath || ''}
+                          {connectionTestResult?.status !== undefined ? ` · HTTP ${connectionTestResult?.status}` : ''}
                         </div>
                       )}
-                      {connectionTestResult.model && (
-                        <div style={{ color: '#8e8e93' }}>Model: {connectionTestResult.model}</div>
+                      {connectionTestResult?.model && (
+                        <div style={{ color: '#8e8e93' }}>Model: {connectionTestResult?.model}</div>
                       )}
-                      {connectionTestResult.friendlyMessage && (
-                        <div style={{ color: connectionTestResult.success ? '#8e8e93' : '#ff9f0a' }}>
-                          {connectionTestResult.friendlyMessage}
+                      {connectionTestResult?.friendlyMessage && (
+                        <div style={{ color: connectionTestResult?.success ? '#8e8e93' : '#ff9f0a' }}>
+                          {connectionTestResult?.friendlyMessage}
                         </div>
                       )}
-                      {connectionTestResult.parsedPreview && (
-                        <div style={{ color: '#c7c7cc' }}>Preview: {connectionTestResult.parsedPreview}</div>
+                      {connectionTestResult?.parsedPreview && (
+                        <div style={{ color: '#c7c7cc' }}>Preview: {connectionTestResult?.parsedPreview}</div>
                       )}
-                      {connectionTestResult.error && (
-                        <div>{connectionTestResult.errorSummary || connectionTestResult.error}</div>
+                      {connectionTestResult?.error && (
+                        <div>{connectionTestResult?.errorSummary || connectionTestResult?.error}</div>
                       )}
                       {diagnosticsCopyStatus && (
                         <div style={{ color: '#8e8e93' }}>{diagnosticsCopyStatus}</div>

@@ -12,7 +12,7 @@ type ComposeMailLike = {
   date: Date;
   bodyText?: string;
   bodyHtml?: string;
-  snippet?: string;
+  snippet: string;
   attachments?: ComposeAttachmentReference[];
 };
 
@@ -113,19 +113,37 @@ export function convertComposePlainTextToHtml(value: string): string {
     .join('');
 }
 
-function stripUnsafeHtml(value: string): string {
+// Strip the in-editor signature markers so they don't leak to the rendered
+// body. The DOMPurify-based callers also run sanitizeComposeEditableHtml,
+// but this helper is used independently by `sanitizeComposeEditableHtml`
+// and the legacy `stripUnsafeHtml` for tests/older callers, so it must
+// remain a pure string utility.
+export function stripComposeSignatureMarkers(value: string): string {
   return String(value || '')
     .replace(/\[\[MINIMAIL_SIGNATURE_START\]\][\s\S]*?\[\[MINIMAIL_SIGNATURE_END\]\]/g, '')
-    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
-    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<object\b[\s\S]*?<\/object>/gi, '')
-    .replace(/<embed\b[\s\S]*?>/gi, '')
-    .replace(/<link\b[\s\S]*?>/gi, '')
-    .replace(/<meta\b[\s\S]*?>/gi, '')
-    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/\s+(href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\2/gi, '')
-    .replace(/\s+(href|src)\s*=\s*javascript:[^\s>]+/gi, '');
+    .trim();
+}
+
+// Defense-in-depth sanitization for the editable compose HTML. DOMPurify is
+// the authoritative sanitizer at the render site, but this regex pass keeps
+// `sanitizeComposeEditableHtml` self-contained for callers that don't pipe
+// through DOMPurify (tests, programmatic API) and strips signature markers
+// in the same pass. Regex sanitization alone is unsafe; DOMPurify is still
+// required downstream.
+function stripUnsafeHtml(value: string): string {
+  const strippedSignature = stripComposeSignatureMarkers(value);
+  return strippedSignature
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+    .replace(/<embed\b[^>]*\/?>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src|xlink:href|formaction|action)\s*=\s*"\s*javascript:[^"]*"/gi, '$1="#"')
+    .replace(/(href|src|xlink:href|formaction|action)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'")
+    .replace(/(href|src|xlink:href|formaction|action)\s*=\s*javascript:[^\s>]*/gi, '$1="#"')
+    .replace(/javascript:/gi, '')
+    .replace(/data:text\/html/gi, 'data:text/plain');
 }
 
 export function sanitizeComposeEditableHtml(value: string): string {

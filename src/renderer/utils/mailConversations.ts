@@ -1,3 +1,5 @@
+import type { MailDeliveryState } from '../../shared/mailDeliveryState';
+
 export { formatQuotedOriginalBody } from './composeDraft';
 
 export type ConversationMail = {
@@ -20,7 +22,7 @@ export type ConversationMail = {
   references?: string;
   bodyText?: string;
   bodyHtml?: string;
-  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  deliveryState?: MailDeliveryState;
   deliveryError?: string;
   localDraftKey?: string;
   localSendId?: string;

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import type { MailHistoryRange } from '../../shared/mailSyncSettings';
 import { MailCacheRefreshQueue } from '../utils/mailCacheRefreshQueue';
 import { sharedMailBodyStore, type SharedMailBodyLoadResult } from '../utils/mailBodyLoader';
+import type { MailDeliveryState } from '../../shared/mailDeliveryState';
 
 export interface RendererMailSummary {
   id: string;
@@ -24,7 +25,7 @@ export interface RendererMailSummary {
   inReplyTo?: string;
   references?: string;
   localSendId?: string;
-  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled' | 'missed';
+  deliveryState?: MailDeliveryState;
   deliveryError?: string;
   localDraftKey?: string;
   scheduledJobId?: string;

@@ -3,6 +3,7 @@ import { simpleParser } from 'mailparser';
 import log from 'electron-log';
 import { getAccountById, getAccountCredentials } from '../database';
 import type { Readable } from 'node:stream';
+import type { MailDeliveryState } from '../../shared/mailDeliveryState';
 
 const OAUTH_FAILURE_COOLDOWN_MS = 2 * 60 * 1000;
 const oauthFailureCooldownUntil = new Map<number, number>();
@@ -27,7 +28,7 @@ export interface MailSummary {
   draftPayload?: string;
   localDraftKey?: string;
   localSendId?: string;
-  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  deliveryState?: MailDeliveryState;
   deliveryError?: string;
   category?: string;
   isScanned?: boolean;
@@ -325,16 +326,21 @@ export function bodyStructureHasDownloadableAttachment(bodyStructure: unknown): 
   return visit(bodyStructure);
 }
 
-async function streamToBuffer(stream: Readable): Promise<Buffer> {
+async function streamToBuffer(stream: Readable, maxBytes?: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (maxBytes != null && total > maxBytes) {
+      throw new Error(`Attachment exceeds maximum allowed size of ${maxBytes} bytes`);
+    }
+    chunks.push(buf);
   }
   return Buffer.concat(chunks);
 }
 
 async function createClient(accountId: number, options: { bypassOAuthCooldown?: boolean } = {}): Promise<ImapFlow> {
-  console.log('[mail.createClient] ENTER accountId=', accountId);
   const account = getAccountById(accountId);
   if (!account) throw new Error('Account not found');
 
@@ -380,7 +386,7 @@ async function createClient(accountId: number, options: { bypassOAuthCooldown?: 
     connectionTimeout: 15000,
   });
 
-  console.log('[mail.createClient] connecting to', `${account.imap_host}:${account.imap_port}`, account.auth_type);
+  log.info(`[mail] creating IMAP client for account ${accountId} (${account.auth_type})`);
   try {
     await client.connect();
     if (account.auth_type === 'oauth') {
@@ -392,7 +398,6 @@ async function createClient(accountId: number, options: { bypassOAuthCooldown?: 
     }
     throw error;
   }
-  console.log('[mail.createClient] connected OK');
   return client;
 }
 
@@ -430,7 +435,6 @@ export async function fetchMailList(
 ): Promise<MailSummary[]> {
   const { limit = 50, offset = 0, historySince = null } = options;
 
-  console.log('[mail.fetchMailList] ENTER accountId=', accountId, 'folder=', folder);
   log.info(`[mail] Fetching mail list for account ${accountId} from ${folder}`);
 
   let client: ImapFlow | null = null;
@@ -635,6 +639,11 @@ export async function fetchMailAttachmentContent(
 ): Promise<MailAttachmentContent> {
   log.info(`[mail] Fetching attachment UID=${messageUid} for account ${accountId}`);
 
+  // Defence-in-depth: a malicious or buggy server could advertise a small
+  // attachment and stream gigabytes. Cap the in-memory buffer size to
+  // prevent OOM and match the SMTP send-side cap.
+  const MAX_ATTACHMENT_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
   let client: ImapFlow | null = null;
   try {
     client = await createClient(accountId, { bypassOAuthCooldown: options.bypassOAuthCooldown });
@@ -648,7 +657,7 @@ export async function fetchMailAttachmentContent(
           if (!downloaded?.content) {
             throw new Error('Attachment part content not found');
           }
-          const content = await streamToBuffer(downloaded.content);
+          const content = await streamToBuffer(downloaded.content, MAX_ATTACHMENT_DOWNLOAD_BYTES);
           return {
             filename: sanitizeAttachmentFilename(targetAttachment.filename || downloaded.meta?.filename),
             contentType: targetAttachment.contentType || downloaded.meta?.contentType || 'application/octet-stream',

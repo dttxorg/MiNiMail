@@ -27,10 +27,10 @@ export function pickBodyPrefetchCandidates<T extends BodyCacheCandidateMail>(
   },
 ): T[] {
   const stages = buildBodyCacheStages(options.historyRange, options.cacheRange);
-  const effectiveStage = stages.at(-1) ?? '3d';
+  const effectiveStage = stages.length > 0 ? stages[stages.length - 1] : '3d';
   const now = options.now ?? Date.now();
   const seenKeys = new Set<string>();
-  const cutoffMs = effectiveStage === 'all' ? null : BODY_CACHE_STAGE_TO_MS[effectiveStage];
+  const cutoffMs = effectiveStage === 'all' ? null : BODY_CACHE_STAGE_TO_MS[effectiveStage as Exclude<BodyCacheStage, 'all'>];
 
   const filtered = [...mails]
     .sort((a, b) => b.date.getTime() - a.date.getTime())

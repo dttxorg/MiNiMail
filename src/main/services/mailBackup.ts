@@ -439,7 +439,11 @@ async function exportMailsToEmlInternal(
 }
 
 async function collectImportFilePaths(entryPath: string): Promise<string[]> {
-  const stat = await fs.stat(entryPath);
+  // Use lstat (not stat) so we don't follow symlinks. Following symlinks
+  // during import would let a malicious file like `evil.eml -> /etc/passwd`
+  // be read and uploaded to the user's IMAP server via appendMessage.
+  const stat = await fs.lstat(entryPath);
+  if (stat.isSymbolicLink()) return [];
   if (stat.isFile()) {
     return entryPath.toLowerCase().endsWith('.eml') ? [entryPath] : [];
   }
@@ -487,18 +491,27 @@ function normalizeReferences(value: unknown): string | undefined {
   return undefined;
 }
 
-export async function parseImportCandidates(sourcePaths: string[]): Promise<ParsedImportCandidate[]> {
+export interface ParsedImportBatch {
+  candidates: ParsedImportCandidate[];
+  /** Raw file buffers keyed by candidate path, so callers don't have to
+   * re-read the file when calling appendMessage. */
+  rawBuffers: Map<string, Buffer>;
+}
+
+export async function parseImportCandidates(sourcePaths: string[]): Promise<ParsedImportBatch> {
   const filePaths = Array.from(new Set((await Promise.all(sourcePaths.map((entry) => collectImportFilePaths(entry)))).flat()));
-  const parsed: ParsedImportCandidate[] = [];
+  const candidates: ParsedImportCandidate[] = [];
+  const rawBuffers = new Map<string, Buffer>();
 
   for (const filePath of filePaths) {
     const buffer = await fs.readFile(filePath);
+    rawBuffers.set(filePath, buffer);
     const mail = await simpleParser(buffer);
     const fromValue = mail.from?.value?.[0];
     const text = mail.text || '';
     const html = typeof mail.html === 'string' ? mail.html : undefined;
 
-    parsed.push({
+    candidates.push({
       path: filePath,
       subject: mail.subject || '(No subject)',
       from: normalizeParsedAddress(fromValue?.address, stringifyAddressObject(mail.from)),
@@ -519,7 +532,7 @@ export async function parseImportCandidates(sourcePaths: string[]): Promise<Pars
     });
   }
 
-  return parsed;
+  return { candidates, rawBuffers };
 }
 
 export async function importMailsFromEml(
@@ -587,7 +600,7 @@ async function importMailsFromEmlInternal(
   }
 
   const warnings: string[] = [];
-  const candidates = await parseImportCandidates(request.sourcePaths);
+  const { candidates, rawBuffers } = await parseImportCandidates(request.sourcePaths);
 
   emitProgress(onProgress, {
     taskId: request.taskId,
@@ -628,7 +641,10 @@ async function importMailsFromEmlInternal(
     });
 
     try {
-      const rawSource = await fs.readFile(candidate.path);
+      const rawSource = rawBuffers.get(candidate.path);
+      if (!rawSource) {
+        throw new Error(`Missing import buffer for ${candidate.path}`);
+      }
       const appendResult = await appendMessage(
         request.targetAccountId,
         request.targetFolder,

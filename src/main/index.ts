@@ -366,9 +366,16 @@ function createWindow() {
     log.error('Main window became unresponsive');
   });
 
-  window.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    if (level >= 2) {
-      log.error(`Renderer console [${level}] ${sourceId}:${line} ${message}`);
+  // Electron 41 passes a single ConsoleMessageEvent object to the handler.
+  // The old (level, message, line, sourceId) signature is deprecated and
+  // returns all-undefined on newer versions, so we read the new shape.
+  window.webContents.on('console-message', (event) => {
+    const level = (event as { level?: string }).level ?? 'log';
+    const message = (event as { message?: string }).message ?? '';
+    const line = (event as { lineNumber?: number }).lineNumber ?? 0;
+    const sourceId = (event as { sourceId?: string }).sourceId ?? '';
+    if (level === 'error' || level === 'warning') {
+      log.warn(`Renderer console [${level}] ${sourceId}:${line} ${message}`);
     }
   });
 

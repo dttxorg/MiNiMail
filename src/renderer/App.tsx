@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+/// <reference path="../preload/electronAPI.d.ts" />
 import { Sidebar } from './components/Sidebar';
 import { MailList } from './components/MailList';
 import { MailDetail } from './components/MailDetail';
@@ -9,7 +10,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
 import { ToastContainer, ToastData } from './components/Toast';
 import { WindowControls } from './components/WindowControls';
-import type { CreateAccountInput } from './types';
+import type { AIMailCategory, CreateAccountInput } from './types';
 import { useAccounts } from './hooks/useAccounts';
 import { useMail, RendererMailAttachment, RendererMailDetail, RendererMailSummary } from './hooks/useMail';
 import {
@@ -58,7 +59,7 @@ import { resolveComposeSelectedAccount } from './utils/composeAccount';
 import { buildMailListViewModel } from './utils/mailListViewModel';
 import { resolveActiveAccountAfterAccountsRefresh, resolveActiveAccountAfterDelete } from './utils/accountSelection';
 import { buildServerMailIdentitySet, filterOutPersistedLocalThreadMails } from './utils/localThreadMailState';
-import { getSyncFoldersForView, isStandardFolder, STANDARD_FOLDERS, type StandardFolderId } from './utils/mailSyncPlanner';
+import { getSyncFoldersForView, STANDARD_FOLDERS, type StandardFolderId } from './utils/mailSyncPlanner';
 import {
   AppLanguage,
   folderMatches,
@@ -67,8 +68,6 @@ import {
 } from '../shared/mailFolders';
 import type { AiPrivacyMode } from '../shared/email-ai';
 import {
-  mailCacheRangeToMs,
-  mailHistoryRangeToMs,
   type MailCacheRange,
   type MailHistoryRange,
 } from '../shared/mailSyncSettings';
@@ -91,7 +90,6 @@ import {
 } from './utils/mailBackupUi';
 import {
   filterMailsForRoutingFolder,
-  GITHUB_SMART_FOLDER_IDS,
   isGitHubSmartFolderId,
   isPriorityFolderId,
   type MailRoutingFolderId,
@@ -221,14 +219,6 @@ function isDraftMailForDisplay(mail: Pick<RendererMailSummary, 'folder' | 'local
   return /^<draft-[^>]+@minimail>$/.test(mail.messageId || '');
 }
 
-function filterDraftsForSelectedFolder<T extends Pick<RendererMailSummary, 'folder' | 'localDraftKey' | 'messageId' | 'deliveryState'>>(
-  mails: T[],
-  selectedFolder: string,
-): T[] {
-  if (selectedFolder === 'drafts') return mails;
-  return mails.filter((mail) => !isDraftMailForDisplay(mail));
-}
-
 function isUnsentDraftMail(mail: Pick<RendererMailSummary, 'folder' | 'localDraftKey' | 'messageId' | 'deliveryState'>): boolean {
   if (!isDraftMailForDisplay(mail)) return false;
   return true;
@@ -351,6 +341,7 @@ interface ComposeContext {
 }
 
 interface ComposeRestoreDraft {
+  draftKey?: string;
   accountId: number;
   recipients: ComposeRecipientOption[];
   subject: string;
@@ -415,14 +406,20 @@ function createEmptyStagedHistorySyncState(): StagedHistoryUiState {
 }
 
 const APP_LANGUAGE_SETTING_KEY = 'app_language';
-const AI_CATEGORY_IDS = [
+export const AI_CATEGORY_IDS = [
   '工作/业务类',
   '账单/财务类',
   '社交/个人类',
   '广告/营销类',
   '安全/风险类',
   '通知类',
-] as const;
+] as const satisfies readonly AIMailCategory[];
+
+export type AiMailCategoryId = (typeof AI_CATEGORY_IDS)[number];
+
+export function isAiCategoryFolder(folder: string): folder is AiMailCategoryId {
+  return (AI_CATEGORY_IDS as readonly string[]).includes(folder);
+}
 
 function lookbackToMs(range: LookbackRange): number {
   if (range === '3d') return 3 * 24 * 60 * 60 * 1000;
@@ -1456,7 +1453,7 @@ function App() {
     [localThreadMails]
   );
 
-  const isAiCategoryView = useMemo(() => AI_CATEGORY_IDS.includes(selectedFolder), [selectedFolder]);
+  const isAiCategoryView = useMemo(() => isAiCategoryFolder(selectedFolder), [selectedFolder]);
   const isGitHubSmartFolderView = useMemo(() => isGitHubSmartFolderId(selectedFolder), [selectedFolder]);
   const isPriorityFolderView = useMemo(() => isPriorityFolderId(selectedFolder), [selectedFolder]);
 
@@ -1484,7 +1481,6 @@ function App() {
 
   const {
     threadMailUniverse,
-    scopedThreadMailUniverse,
     conversationAccountEmails,
     unreadConversationCount,
     mailRoutingAdapter,
@@ -1643,7 +1639,7 @@ function App() {
 
   const githubPriorityById = useMemo(() => Object.fromEntries(
     mailRoutingResults
-      .filter((entry) => entry.routing.kind === 'github')
+      .filter((entry): entry is typeof entry & { routing: Extract<typeof entry.routing, { kind: 'github' }> } => entry.routing.kind === 'github')
       .map((entry) => [
         entry.id,
         getGitHubPriorityBadgeInfo(
@@ -1693,7 +1689,9 @@ function App() {
   }, []);
 
   const bodyPrefetchHistoryRange = useMemo(
-    () => (stagedHistorySync.active ? stagedHistorySync.stageRange : mailFetchHistoryRange),
+    () => (stagedHistorySync.active && stagedHistorySync.stageRange
+      ? stagedHistorySync.stageRange
+      : mailFetchHistoryRange),
     [mailFetchHistoryRange, stagedHistorySync.active, stagedHistorySync.stageRange]
   );
 
@@ -1955,43 +1953,6 @@ function App() {
     }
   };
 
-  const handleDeleteSelected = async (targetIdsInput?: string[]) => {
-    const targetIdSet = new Set(targetIdsInput ?? selectedIds);
-    const targets = mailList.filter((mail) => targetIdSet.has(mail.id));
-    for (const mail of targets) {
-      try {
-        await handleDeleteForMail(mail);
-      } catch (err) {
-        setToasts((prev) => [...prev, {
-          id: Date.now().toString(),
-          type: 'error',
-          message: (err as Error).message || t('delete'),
-        }]);
-      }
-    }
-    setSelectedIds((prev) => prev.filter((id) => !targetIdSet.has(id)));
-  };
-
-  const handleMarkReadSelected = async (read: boolean, targetIdsInput?: string[]) => {
-    const targetIds = new Set(targetIdsInput ?? selectedIds);
-    const targets = mailList.filter((mail) => targetIds.has(mail.id));
-    applyReadUpdateToState(targetIds, read);
-
-    for (const mail of targets) {
-      try {
-        await persistReadChange(mail, read);
-      } catch (err) {
-        console.error('[markReadSelected]', err);
-        applyReadUpdateToState(new Set([mail.id]), !read);
-        setToasts((prev) => [...prev, {
-          id: Date.now().toString(),
-          type: 'error',
-          message: (err as Error).message || (read ? t('markAsRead') : t('markAsUnread')),
-        }]);
-      }
-    }
-  };
-
   const persistStarChange = useCallback(async (mail: RendererMailSummary, nextStarred: boolean) => {
     try {
       if (mail.messageId?.startsWith('<local-') || isLocalSenderMail(mail, conversationAccountEmails)) {
@@ -2023,33 +1984,8 @@ function App() {
     await persistStarChange(target, nextStarred);
   }, [currentMail, persistStarChange, setCurrentMail, setMailList]);
 
-  const handleToggleStarSelected = async (targetIdsInput?: string[]) => {
-    const targetIds = new Set(targetIdsInput ?? selectedIds);
-    const targets = mailList.filter((mail) => targetIds.has(mail.id));
-    const updates = targets.map(async (mail) => {
-      const nextStarred = !mail.isStarred;
-      await persistStarChange(mail, nextStarred);
-      return { id: mail.id, nextStarred };
-    });
-    const results = await Promise.all(updates);
-    const nextMap = new Map(results.map((item) => [item.id, item.nextStarred]));
-    setMailList((prev) =>
-      prev.map((mail) => (nextMap.has(mail.id) ? { ...mail, isStarred: nextMap.get(mail.id)! } : mail))
-    );
-    if (currentMail && nextMap.has(currentMail.id)) {
-      setCurrentMail({ ...currentMail, isStarred: nextMap.get(currentMail.id)! });
-    }
-    setSelectedIds((prev) => prev.filter((id) => !targetIds.has(id)));
-  };
-
-  const handleArchiveSelected = async (targetIdsInput?: string[]) => {
-    const targetIds = new Set(targetIdsInput ?? selectedIds);
-    const targets = mailList.filter((mail) => targetIds.has(mail.id));
-    for (const mail of targets) {
-      await handleArchiveForMail(mail);
-    }
-    setSelectedIds((prev) => prev.filter((id) => !targetIds.has(id)));
-  };
+  // Batch operation handlers removed — they were never wired to the
+  // MailList UI. Restore them as soon as a multi-select toolbar lands.
 
   const autoAnalysisEligibleMails = useMemo(() => {
     const lookbackDate = Date.now() - lookbackToMs(aiLookback);
@@ -2814,8 +2750,14 @@ function App() {
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Synchronous flag shared between cancelScheduledSend and runScheduledSend.
+    // The pending Timer cannot be cancelled once it has fired, so we use this
+    // flag to short-circuit runScheduledSend at every await boundary and
+    // prevent a late cancel from racing the in-flight mail:send IPC.
+    let cancelled = false;
 
     const cancelScheduledSend = async () => {
+      cancelled = true;
       const pendingTimer = scheduledSendTimersRef.current.get(localSendId);
       if (pendingTimer) {
         if (timer) clearTimeout(timer);
@@ -2875,6 +2817,11 @@ function App() {
         console.error('[mail:cacheLocal sending scheduled send]', err);
       }
 
+      // Bail out if the user cancelled while cacheLocalMail was awaiting.
+      // Closing this race window here prevents us from invoking mail:send
+      // when the user has already clicked "撤销发送" / undo.
+      if (cancelled) return;
+
       let result: { success: boolean; message: string; messageId?: string };
       try {
         result = await window.electronAPI.invoke('mail:send', options.accountId, {
@@ -2895,6 +2842,11 @@ function App() {
           message: err instanceof Error ? err.message : appUi.sendFailedFallback,
         };
       }
+
+      // mail:send cannot be aborted once invoked. If the user cancelled
+      // while it was awaiting, keep the cancelled UI state and skip the
+      // deliveredMail / failedMail state update so we don't overwrite it.
+      if (cancelled) return;
 
       if (!result.success) {
         activeScheduledSendsRef.current.delete(localSendId);
@@ -3598,7 +3550,8 @@ function App() {
       }, draftTokens)
       : false;
     const visibleDeletedDraft = sortedFolderEmails.find((mail) => matchesComposeDraftToken(mail, draftTokens));
-    const deletedVisibleDraftId = visibleDeletedDraft?.id ?? (selectedDraftWillBeDeleted ? selectedEmail?.id : draftId);
+    const deletedVisibleDraftId = visibleDeletedDraft?.id
+      ?? (selectedDraftWillBeDeleted ? (selectedEmail?.id ?? draftId) : draftId);
     const nextDraftSelection = selectedFolder === 'drafts' && selectedDraftWillBeDeleted
       ? resolveNextDraftSelectionAfterDelete(sortedFolderEmails, deletedVisibleDraftId, deletedVisibleDraftId)
       : undefined;

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { CalendarClock, Clock, Send, XCircle } from 'lucide-react';
 import { sanitizeMailHtml } from '../utils/mailHtmlSanitizer';
 import { buildPanelStyle, uiColor } from '../utils/uiDesignTokens';

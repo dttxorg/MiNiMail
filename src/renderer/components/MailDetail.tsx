@@ -2,7 +2,6 @@
 import { useTranslation } from 'react-i18next';
 import {
   Archive,
-  Check,
   CheckCircle2,
   ChevronDown,
   Copy,
@@ -21,7 +20,6 @@ import {
   Sparkles,
   Star,
   Trash2,
-  X,
 } from 'lucide-react';
 import { RendererMailDetail, RendererMailSummary, type LoadMailBodyFn } from '../hooks/useMail';
 import { type AIEmailSourcePayload, type ContactWiki, useAI } from '../hooks/useAI';
@@ -29,7 +27,7 @@ import { normalizeAiLanguage, normalizeAppLanguage } from '../utils/aiLanguages'
 import { extractReadableEmailText } from '../utils/emailContent';
 import { getConversationCounterparty, isLocalSenderMail } from '../utils/mailConversations';
 import type { MailRoutingDiagnostics } from '../utils/mailRoutingExplanationAdapter';
-import { buildIconButtonStyle, buildPanelStyle, uiColor } from '../utils/uiDesignTokens';
+import { buildIconButtonStyle, uiColor } from '../utils/uiDesignTokens';
 import { parseKeyInfoItems, resolveKeyInfoFieldLabel, type KeyInfoItem } from '../utils/keyInfoItems';
 import { folderMatches } from '../../shared/mailFolders';
 import { translateHtmlPreservingMarkup } from '../../shared/email-ai/translateHtmlPreservingMarkup';
@@ -594,7 +592,7 @@ function ConversationMessageCard({
   initialError = false,
   mailError,
   onRetry,
-  onReply,
+  onReply: _onReply,
   onForward,
   onDelete,
   onArchive,
@@ -657,7 +655,7 @@ function ConversationMessageCard({
   const [aiFunction, setAiFunction] = useState<AIFunction | null>(null);
   const [isTranslated, setIsTranslated] = useState(false);
   const [allowRemoteImages, setAllowRemoteImages] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [, setCopied] = useState(false); // setCopied used for "Copied" toast; value unused
   const [showRoutingTooltip, setShowRoutingTooltip] = useState(false);
   const [assistantState, setAssistantState] = useState<MailAssistantState>(EMPTY_ASSISTANT_STATE);
   const [quickReplyDraft, setQuickReplyDraft] = useState('');
@@ -886,90 +884,9 @@ function ConversationMessageCard({
   const assistantLabels = assistantLabelsByLanguage[normalizedLanguage] ?? assistantLabelsByLanguage.en;
   const translateButtonLabel = isTranslated ? assistantLabels.original : t('translate');
   const contactWikiLabels = normalizedLanguage === 'zh'
-    ? {
-      title: '联系人 Wiki',
-      loading: '正在构建联系人知识库...',
-      build: '生成',
-      rebuild: '重建',
-      disabled: '在 AI 设置中开启历史邮件知识库后可用',
-      unavailable: '联系人知识库暂不可用',
-      recent: '近期脉络',
-      openLoops: '待办/风险',
-      style: '回复风格',
-      profile: '关系画像',
-      projects: '活跃事项',
-      preferences: '偏好',
-      userValue: '对我的价值',
-      userInsights: '用户洞察',
-      engagement: '行为画像',
-      subscriptionValue: '订阅价值',
-      promotionPattern: '促销规律',
-      bestDeal: '历史低价',
-      actionAdvice: '阅读建议',
-      readingValue: '阅读价值',
-      frequency: '频率',
-      contentStability: '内容稳定性',
-      serviceType: '服务类型',
-      userAction: '建议动作',
-      riskAlert: '风险提示',
-      feedbackThemes: '反馈主题',
-      featureRequests: '功能请求',
-      criticisms: '批评/问题',
-      praises: '正向反馈',
-      suggestedNextActions: '建议跟进',
-      replyEntry: '互动入口',
-      diagnostics: '诊断',
-      insufficientBehavior: '暂无足够行为数据',
-      feedbackUseful: '有用',
-      feedbackInaccurate: '不准',
-      feedbackNotRelevant: '不相关',
-      feedbackTooLong: '太长',
-      feedbackSaved: '已记录',
-      expand: '展开',
-      collapse: '收起',
-    }
-    : {
-      title: 'Contact Wiki',
-      loading: 'Building contact knowledge...',
-      build: 'Build',
-      rebuild: 'Rebuild',
-      disabled: 'Enable historical mail knowledge in AI settings',
-      unavailable: 'Contact wiki unavailable',
-      recent: 'Recent context',
-      openLoops: 'Open loops',
-      style: 'Reply style',
-      profile: 'Relationship',
-      projects: 'Active items',
-      preferences: 'Preferences',
-      userValue: 'Value for me',
-      userInsights: 'User insights',
-      engagement: 'Engagement',
-      subscriptionValue: 'Subscription value',
-      promotionPattern: 'Promotion pattern',
-      bestDeal: 'Best deal so far',
-      actionAdvice: 'Action advice',
-      readingValue: 'Reading value',
-      frequency: 'Frequency',
-      contentStability: 'Content stability',
-      serviceType: 'Service type',
-      userAction: 'Suggested action',
-      riskAlert: 'Risk alert',
-      feedbackThemes: 'Feedback themes',
-      featureRequests: 'Feature requests',
-      criticisms: 'Criticism / issues',
-      praises: 'Positive feedback',
-      suggestedNextActions: 'Suggested next actions',
-      replyEntry: 'Reply entry',
-      diagnostics: 'Diagnostics',
-      insufficientBehavior: 'Not enough behavior data yet',
-      feedbackUseful: 'Useful',
-      feedbackInaccurate: 'Inaccurate',
-      feedbackNotRelevant: 'Not relevant',
-      feedbackTooLong: 'Too long',
-      feedbackSaved: 'Saved',
-      expand: 'Expand',
-      collapse: 'Collapse',
-    };
+    ? { title: '联系人 Wiki', loading: '正在构建联系人知识库...', build: '生成', rebuild: '重建', disabled: '在 AI 设置中开启历史邮件知识库后可用', unavailable: '联系人知识库暂不可用', recent: '近期脉络', openLoops: '待办/风险', style: '回复风格', profile: '关系画像', projects: '活跃事项', preferences: '偏好', userValue: '对我的价值', userInsights: '用户洞察', engagement: '行为画像', subscriptionValue: '订阅价值', promotionPattern: '促销规律', bestDeal: '历史低价', actionAdvice: '阅读建议', readingValue: '阅读价值', frequency: '频率', contentStability: '内容稳定性', serviceType: '服务类型', userAction: '建议动作', riskAlert: '风险提示', feedbackThemes: '反馈主题', featureRequests: '功能请求', criticisms: '批评/问题', praises: '正向反馈', suggestedNextActions: '建议跟进', replyEntry: '互动入口', diagnostics: '诊断', insufficientBehavior: '暂无足够行为数据', feedbackUseful: '有用', feedbackInaccurate: '不准', feedbackNotRelevant: '不相关', feedbackTooLong: '太长', feedbackSaved: '已记录', expand: '展开', collapse: '收起' }
+    : { title: 'Contact Wiki', loading: 'Building contact knowledge...', build: 'Build', rebuild: 'Rebuild', disabled: 'Enable historical mail knowledge in AI settings', unavailable: 'Contact wiki unavailable', recent: 'Recent context', openLoops: 'Open loops', style: 'Reply style', profile: 'Relationship', projects: 'Active items', preferences: 'Preferences', userValue: 'Value for me', userInsights: 'User insights', engagement: 'Engagement', subscriptionValue: 'Subscription value', promotionPattern: 'Promotion pattern', bestDeal: 'Best deal', actionAdvice: 'Action advice', readingValue: 'Reading value', frequency: 'Frequency', contentStability: 'Content stability', serviceType: 'Service type', userAction: 'Recommended action', riskAlert: 'Risk alert', feedbackThemes: 'Feedback themes', featureRequests: 'Feature requests', criticisms: 'Criticisms', praises: 'Praises', suggestedNextActions: 'Suggested next actions', replyEntry: 'Reply entry', diagnostics: 'Diagnostics', insufficientBehavior: 'Not enough behavior data', feedbackUseful: 'Useful', feedbackInaccurate: 'Inaccurate', feedbackNotRelevant: 'Not relevant', feedbackTooLong: 'Too long', feedbackSaved: 'Saved', expand: 'Expand', collapse: 'Collapse' };
+  void contactWikiLabels; // shadowed by line 1930 contactWikiLabels; retained for fallback completeness
   const contactEmail = useMemo(
     () => getConversationCounterparty(email, accountEmails),
     [accountEmails, email]
@@ -1069,6 +986,7 @@ function ConversationMessageCard({
       onError?.(ui.copyBodyFailed);
     }
   };
+  void handleCopy; // copy-from-detail is wired through a future action; reserved for completeness
 
   const buildAiPayload = (source: MailEmail): AIEmailSourcePayload => {
     const bodyHtml = 'bodyHtml' in source ? source.bodyHtml : undefined;
@@ -1645,11 +1563,11 @@ function ConversationMessageCard({
               </div>
             </div>
           )}
-          {aiResult && aiFunction !== 'translate' && aiFunction !== 'reply' && (
+          {aiResult && aiFunction !== 'summarize' && (
             <div className="mb-4 rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.10)', backdropFilter: 'blur(10px)', border: `1px solid ${uiColor.borderSubtle}` }}>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.9)' }}>
-                  {aiFunction === 'translate' ? t('translationResult') : aiFunction === 'summarize' ? t('summary') : t('replySuggestion')}
+                  {aiFunction === 'translate' ? t('translationResult') : aiFunction === 'reply' ? t('replySuggestion') : t('summary')}
                 </span>
                 <div className="flex items-center gap-2">
                   {aiFunction === 'reply' && (

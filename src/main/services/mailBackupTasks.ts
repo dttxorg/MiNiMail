@@ -11,6 +11,11 @@ export function isMailBackupTaskCancelled(taskId: string): boolean {
 }
 
 export async function runMailBackupTaskWithCleanup<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+  // Clear any stale cancel flag before starting, so a reused taskId from a
+  // previous task that was cancelled but whose finally() hasn't run yet
+  // cannot poison the new task. The set only ever holds IDs the user
+  // explicitly cancelled in the current "live" window.
+  if (taskId) cancelledTaskIds.delete(taskId);
   try {
     return await operation();
   } finally {

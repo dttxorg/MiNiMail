@@ -25,9 +25,7 @@ const resources = {
       promotions: '推广',
 
       // Mail Detail
-      reply: '回复',
       forward: '转发',
-      delete: '删除',
       ai: 'AI',
       selectMailToRead: '选择一封邮件查看',
       chooseMailToView: '从列表中选择一封邮件以查看其内容',
@@ -41,7 +39,6 @@ const resources = {
       aiAssistant: 'AI 助手',
       translate: '翻译',
       summarize: '总结',
-      reply: '回复',
       aiProcessing: 'AI 处理中...',
       translationResult: '翻译结果',
       summary: '摘要',
@@ -174,7 +171,6 @@ const resources = {
       selectAll: '全选',
       markAsRead: '标为已读',
       markAsUnread: '标为未读',
-      delete: '删除',
       refresh: '刷新',
       selected: '已选中',
 
@@ -240,9 +236,7 @@ const resources = {
       promotions: 'Promotions',
 
       // Mail Detail
-      reply: 'Reply',
       forward: 'Forward',
-      delete: 'Delete',
       ai: 'AI',
       selectMailToRead: 'Select a message to read',
       chooseMailToView: 'Choose an email from the list to view its contents',
@@ -256,7 +250,6 @@ const resources = {
       aiAssistant: 'AI Assistant',
       translate: 'Translate',
       summarize: 'Summarize',
-      reply: 'Reply',
       aiProcessing: 'AI Processing...',
       translationResult: 'Translation Result',
       summary: 'Summary',
@@ -389,7 +382,6 @@ const resources = {
       selectAll: 'Select All',
       markAsRead: 'Mark as Read',
       markAsUnread: 'Mark as Unread',
-      delete: 'Delete',
       refresh: 'Refresh',
       selected: 'selected',
 
@@ -455,9 +447,7 @@ const resources = {
       promotions: 'プロモーショ',
 
       // Mail Detail
-      reply: '返信',
       forward: '転送',
-      delete: '削除',
       ai: 'AI',
       selectMailToRead: 'メールを選択してください',
       chooseMailToView: 'リストからメールを選択して内容を表示',
@@ -471,7 +461,6 @@ const resources = {
       aiAssistant: 'AIアシスタント',
       translate: '翻訳',
       summarize: '要約',
-      reply: '返信',
       aiProcessing: 'AI処理中...',
       translationResult: '翻訳結果',
       summary: '要約',
@@ -597,7 +586,6 @@ const resources = {
       selectAll: 'すべて選択',
       markAsRead: '既読にする',
       markAsUnread: '未読にする',
-      delete: '削除',
       refresh: '更新',
       selected: '選択中',
 
@@ -663,9 +651,7 @@ const resources = {
       promotions: '프로모션',
 
       // Mail Detail
-      reply: '답장',
       forward: '전달',
-      delete: '삭제',
       ai: 'AI',
       selectMailToRead: '邮件을 선택하세요',
       chooseMailToView: '목록에서邮件을 선택하여 내용을 보기',
@@ -679,7 +665,6 @@ const resources = {
       aiAssistant: 'AI 도우미',
       translate: '번역',
       summarize: '요약',
-      reply: '답장',
       aiProcessing: 'AI 처리 중...',
       translationResult: '번역 결과',
       summary: '요약',
@@ -805,7 +790,6 @@ const resources = {
       selectAll: '전체 선택',
       markAsRead: '읽음으로 표시',
       markAsUnread: '읽지 않음으로 표시',
-      delete: '삭제',
       refresh: '새로고침',
       selected: '선택됨',
 
@@ -871,9 +855,7 @@ const resources = {
       promotions: 'Promociones',
 
       // Mail Detail
-      reply: 'Responder',
       forward: 'Reenviar',
-      delete: 'Eliminar',
       ai: 'IA',
       selectMailToRead: 'Selecciona un email para leer',
       chooseMailToView: 'Elige un email de la lista para ver su contenido',
@@ -887,7 +869,6 @@ const resources = {
       aiAssistant: 'Asistente IA',
       translate: 'Traducir',
       summarize: 'Resumir',
-      reply: 'Responder',
       aiProcessing: 'Procesando IA...',
       translationResult: 'Resultado de traducción',
       summary: 'Resumen',
@@ -1013,7 +994,6 @@ const resources = {
       selectAll: 'Seleccionar todo',
       markAsRead: 'Marcar como leído',
       markAsUnread: 'Marcar como no leído',
-      delete: 'Eliminar',
       refresh: 'Actualizar',
       selected: 'seleccionados',
 
@@ -1079,9 +1059,7 @@ const resources = {
       promotions: 'Promotions',
 
       // Mail Detail
-      reply: 'Répondre',
       forward: 'Transférer',
-      delete: 'Supprimer',
       ai: 'IA',
       selectMailToRead: 'Sélectionnez un email à lire',
       chooseMailToView: 'Choisissez un email dans la liste pour voir son contenu',
@@ -1095,7 +1073,6 @@ const resources = {
       aiAssistant: 'Assistant IA',
       translate: 'Traduire',
       summarize: 'Résumer',
-      reply: 'Répondre',
       aiProcessing: 'Traitement IA...',
       translationResult: 'Résultat de traduction',
       summary: 'Résumé',
@@ -1221,7 +1198,6 @@ const resources = {
       selectAll: 'Tout sélectionner',
       markAsRead: 'Marquer comme lu',
       markAsUnread: 'Marquer comme non lu',
-      delete: 'Supprimer',
       refresh: 'Actualiser',
       selected: 'sélectionnés',
 
@@ -1287,9 +1263,7 @@ const resources = {
       promotions: 'Werbung',
 
       // Mail Detail
-      reply: 'Antworten',
       forward: 'Weiterleiten',
-      delete: 'Löschen',
       ai: 'KI',
       selectMailToRead: 'Wählen Sie eine Email zum Lesen',
       chooseMailToView: 'Wählen Sie eine Email aus der Liste, um deren Inhalt anzuzeigen',
@@ -1303,7 +1277,6 @@ const resources = {
       aiAssistant: 'KI-Assistent',
       translate: 'Übersetzen',
       summarize: 'Zusammenfassen',
-      reply: 'Antworten',
       aiProcessing: 'KI-Verarbeitung...',
       translationResult: 'Übersetzungsergebnis',
       summary: 'Zusammenfassung',
@@ -1429,7 +1402,6 @@ const resources = {
       selectAll: 'Alle auswählen',
       markAsRead: 'Als gelesen markieren',
       markAsUnread: 'Als ungelesen markieren',
-      delete: 'Löschen',
       refresh: 'Aktualisieren',
       selected: 'ausgewählt',
 
@@ -1495,9 +1467,7 @@ const resources = {
       promotions: 'Рекламные',
 
       // Mail Detail
-      reply: 'Ответить',
       forward: 'Переслать',
-      delete: 'Удалить',
       ai: 'ИИ',
       selectMailToRead: 'Выберите письмо для чтения',
       chooseMailToView: 'Выберите письмо из списка, чтобы просмотреть его содержимое',
@@ -1511,7 +1481,6 @@ const resources = {
       aiAssistant: 'ИИ-помощник',
       translate: 'Перевести',
       summarize: 'Резюме',
-      reply: 'Ответить',
       aiProcessing: 'ИИ обрабатывает...',
       translationResult: 'Результат перевода',
       summary: 'Резюме',
@@ -1637,7 +1606,6 @@ const resources = {
       selectAll: 'Выбрать все',
       markAsRead: 'Отметить как прочитанное',
       markAsUnread: 'Отметить как непрочитанное',
-      delete: 'Удалить',
       refresh: 'Обновить',
       selected: 'выбрано',
 

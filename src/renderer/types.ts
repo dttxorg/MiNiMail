@@ -49,3 +49,14 @@ export interface SmtpConnectionResult {
   success: boolean;
   message: string;
 }
+
+// Six-way mail category produced by the AI scan pipeline. Keep in sync
+// with the renderer-side `AI_CATEGORY_IDS` in App.tsx and with the
+// category routing tables in src/shared/email-ai/*.
+export type AIMailCategory =
+  | '工作/业务类'
+  | '账单/财务类'
+  | '社交/个人类'
+  | '广告/营销类'
+  | '安全/风险类'
+  | '通知类';

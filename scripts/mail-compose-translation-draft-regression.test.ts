@@ -14,8 +14,8 @@ function testUnsentDraftsDoNotJoinNormalConversationThread() {
   const viewModel = read('src/renderer/utils/mailListViewModel.ts');
 
   assert(app.includes('function isDraftMailForDisplay'), 'Expected App to define a broad draft display guard');
-  assert(app.includes('function filterDraftsForSelectedFolder'), 'Expected App to define a selected-folder draft filter');
-  assert(app.includes("if (selectedFolder === 'drafts') return mails;"), 'Expected draft folder to keep draft rows visible');
+  assert(viewModel.includes('function filterDraftsForSelectedFolder'), 'Expected consolidated view model to define a selected-folder draft filter');
+  assert(viewModel.includes("if (selectedFolder === 'drafts') return mails;"), 'Expected draft folder to keep draft rows visible');
   assert(viewModel.includes('const visibleNonDraftFolderEmails = filterDraftsForSelectedFolder(visibleFolderEmails, selectedFolder);'), 'Expected normal list source to filter drafts before rendering inside the consolidated view model');
   assert(app.includes('const selectedIsDraft = isUnsentDraftMail(selectedMailForThread);'), 'Expected selected draft state to be detected before building thread siblings');
   assert(app.includes('safeThreadSource'), 'Expected conversation thread source to be filtered through a safe source');

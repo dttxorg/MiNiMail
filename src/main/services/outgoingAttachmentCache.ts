@@ -5,6 +5,10 @@ import { sanitizeSentAttachmentFilename } from './sentAttachmentCache';
 
 const OUTGOING_ATTACHMENT_CACHE_DIR = 'outgoing-attachments';
 const OUTGOING_ATTACHMENT_METADATA_FILE = 'metadata.json';
+// Cap the durable outgoing-attachment cache. Callers should already enforce
+// the live-attach size limit; this is a defence-in-depth check so an
+// external caller (tests, future IPC) cannot exhaust disk.
+const MAX_OUTGOING_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export interface OutgoingAttachmentCacheEntry {
   cacheId: string;
@@ -65,6 +69,9 @@ export async function writeOutgoingAttachmentCacheFromPath(
 ): Promise<OutgoingAttachmentCacheEntry> {
   const stat = await fs.promises.stat(filePath);
   if (!stat.isFile()) throw new Error('Attachment path is not a file');
+  if (stat.size > MAX_OUTGOING_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment is too large: ${stat.size} bytes (max ${MAX_OUTGOING_ATTACHMENT_BYTES})`);
+  }
 
   const cacheId = crypto.randomUUID();
   const filename = sanitizeSentAttachmentFilename(options.filename || path.basename(filePath));

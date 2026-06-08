@@ -83,7 +83,7 @@ function createPriorityFolderMap(): Record<GenericPriorityFolderId, Set<string>>
 
 function toSortedRecord<T extends string>(input: Record<T, Set<string>>): Record<T, string[]> {
   return Object.fromEntries(
-    Object.entries(input).map(([key, value]) => [key, Array.from(value).sort()])
+    Object.entries(input).map(([key, value]) => [key, (Array.isArray(value) ? [...value] : Array.from(value as Iterable<unknown>)).sort()])
   ) as Record<T, string[]>;
 }
 
@@ -197,7 +197,7 @@ export function buildMailRoutingAdapter({
 
     const derivedRouting = deriveLocalGitHubRouting(mail);
     const folder = derivedRouting
-      ? derivedRouting.smart_folder.folder as GitHubSmartFolder
+      ? (derivedRouting.smart_folder?.folder as GitHubSmartFolder | undefined)
       : getPersistedRoutingFolder(mail);
     if (!folder) continue;
 

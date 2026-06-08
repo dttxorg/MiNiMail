@@ -334,7 +334,7 @@ export function Sidebar({
   isAiClassifying = false,
   onAnalysisDone,
   folderUnreadCounts = {},
-  unreadConversationCount = 0,
+  unreadConversationCount: _unreadConversationCount = 0,
   githubNotificationsEnabled = false,
   githubConversationCount = 0,
   githubFolderCounts,
@@ -631,7 +631,7 @@ export function Sidebar({
                     <p className="text-white text-sm truncate">{account.name}</p>
                     <p className="text-xs truncate" style={{ color: uiColor.textSubtle }}>{account.email}</p>
                   </div>
-                  {!isAllAccounts && currentAccount !== 'all' && currentAccount !== null && currentAccount.id === account.id && <span className="w-4 h-4 flex" style={{ color: uiColor.accent }}><Check className="w-4 h-4" strokeWidth={2} /></span>}
+                  {!isAllAccounts && typeof currentAccount === 'object' && currentAccount !== null && currentAccount.id === account.id && <span className="w-4 h-4 flex" style={{ color: uiColor.accent }}><Check className="w-4 h-4" strokeWidth={2} /></span>}
                 </button>
               ))}
 

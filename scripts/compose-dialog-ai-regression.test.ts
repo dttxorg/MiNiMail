@@ -14,7 +14,7 @@ function testComposeDialogUsesAppLanguageForComposeLabels() {
   const i18n = read('src/renderer/i18n.ts');
 
   assert(!compose.includes('const composeUiByLanguage'), 'Expected ComposeDialog not to keep an inline multilingual label table');
-  assert(compose.includes('const composeUi = useMemo(() => buildComposeUiLabels(t), [t, appLanguage]);'), 'Expected ComposeDialog to derive labels from shared i18n translator');
+  assert(compose.includes('const composeUi = useMemo(() => buildComposeUiLabels(t, appLanguage), [t, appLanguage]);'), 'Expected ComposeDialog to derive labels from shared i18n translator');
   assert(i18n.includes("composeTitle: '写邮件'"), 'Expected Chinese compose title label in i18n');
   assert(i18n.includes("composeTitle: 'Compose'"), 'Expected English compose title label in i18n');
   assert(i18n.includes("composeTitle: 'メール作成'"), 'Expected Japanese compose title label in i18n');

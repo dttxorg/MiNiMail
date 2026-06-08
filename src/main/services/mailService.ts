@@ -20,6 +20,8 @@ import {
 import { resolveLocalDraftId } from '../../shared/mailDraftIdentity';
 import { buildCachedMailListQuery } from '../../shared/mailCacheQuery';
 import { folderMatches } from '../../shared/mailFolders';
+import type { MailDeliveryState } from '../../shared/mailDeliveryState';
+import { isMailDeliveryState } from '../../shared/mailDeliveryState';
 
 export interface MailSummaryStored {
   id: string;
@@ -46,7 +48,7 @@ export interface MailSummaryStored {
   draftPayload?: string;
   localDraftKey?: string;
   localSendId?: string;
-  deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+  deliveryState?: MailDeliveryState;
   deliveryError?: string;
   category?: string;
   isScanned?: boolean;
@@ -795,7 +797,7 @@ function getCachedMails(accountId: number, folder: string, options: CachedMailLo
     draftPayload: row.draft_payload != null ? (row.draft_payload as string) : undefined,
     localDraftKey: row.local_draft_id != null ? (row.local_draft_id as string) : undefined,
     localSendId: row.local_send_id != null ? (row.local_send_id as string) : undefined,
-    deliveryState: row.delivery_state != null ? (row.delivery_state as 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled') : undefined,
+    deliveryState: row.delivery_state != null && isMailDeliveryState(row.delivery_state) ? row.delivery_state : undefined,
     deliveryError: row.delivery_error != null ? (row.delivery_error as string) : undefined,
     category: row.category != null ? (row.category as string) : undefined,
     isScanned: Boolean(row.is_scanned),
@@ -850,7 +852,7 @@ function getCachedMailRecordsWithBodies(accountId: number, folder: string): Mail
     draftPayload: row.draft_payload != null ? (row.draft_payload as string) : undefined,
     localDraftKey: row.local_draft_id != null ? (row.local_draft_id as string) : undefined,
     localSendId: row.local_send_id != null ? (row.local_send_id as string) : undefined,
-    deliveryState: row.delivery_state != null ? (row.delivery_state as 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled') : undefined,
+    deliveryState: row.delivery_state != null && isMailDeliveryState(row.delivery_state) ? row.delivery_state : undefined,
     deliveryError: row.delivery_error != null ? (row.delivery_error as string) : undefined,
     category: row.category != null ? (row.category as string) : undefined,
     isScanned: Boolean(row.is_scanned),
@@ -1332,7 +1334,7 @@ export function loadCachedLocalDrafts(accountId?: number): MailSummary[] {
       draftPayload: row.draft_payload != null ? (row.draft_payload as string) : undefined,
       localDraftKey: row.local_draft_id != null ? (row.local_draft_id as string) : undefined,
       localSendId: row.local_send_id != null ? (row.local_send_id as string) : undefined,
-      deliveryState: row.delivery_state != null ? (row.delivery_state as 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled') : undefined,
+      deliveryState: row.delivery_state != null && isMailDeliveryState(row.delivery_state) ? row.delivery_state : undefined,
       bodyText: row.body_text != null ? (row.body_text as string) : undefined,
       category: row.category != null ? (row.category as string) : undefined,
       isScanned: Boolean(row.is_scanned),

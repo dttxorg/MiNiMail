@@ -1089,7 +1089,7 @@ export function registerMailHandlers(): void {
     draftPayload?: string;
     localDraftKey?: string;
     localSendId?: string;
-    deliveryState?: 'scheduled' | 'sending' | 'sent' | 'failed' | 'cancelled';
+    deliveryState?: import('../../shared/mailDeliveryState').MailDeliveryState;
     deliveryError?: string;
     category?: string;
     isScanned?: boolean;

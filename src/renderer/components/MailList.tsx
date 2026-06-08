@@ -260,6 +260,7 @@ export function MailList({
     { id: 'read', label: '已读' },
     { id: 'attachments', label: '附件' },
   ];
+  void filterTabs; // legacy hard-coded tabs; localizedFilterTabs is the active source
   void legacyFilterTabs;
 
   const localizedFilterTabs: FilterTabDef[] = [

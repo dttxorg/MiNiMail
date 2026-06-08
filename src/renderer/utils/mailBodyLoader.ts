@@ -53,6 +53,8 @@ export class SharedMailBodyStore {
       return result;
     }
 
+    // Drop any existing entry first so the new one becomes the most-recent
+    // (i.e. last in the LRU iteration order).
     this.forget(key);
     this.memory.set(key, { result, bytes });
     this.currentBytes += bytes;
@@ -60,6 +62,7 @@ export class SharedMailBodyStore {
     while (this.memory.size > this.maxEntries || this.currentBytes > this.maxBytes) {
       const oldestKey = this.memory.keys().next().value as string | undefined;
       if (!oldestKey) break;
+      if (oldestKey === key) break; // never evict the entry we just inserted
       this.forget(oldestKey);
     }
 
@@ -100,6 +103,10 @@ export class SharedMailBodyStore {
         data?: { bodyHtml?: string; bodyText?: string; attachments?: RendererMailDetail['attachments'] } | null;
       };
 
+      // Bail out if clear() was called while we were awaiting — don't
+      // resurrect a stale entry in the cache.
+      if (!this.inFlight.has(key)) return { source: 'missing' };
+
       if (cachedBody.success && cachedBody.data && (cachedBody.data.bodyHtml || cachedBody.data.bodyText || cachedBody.data.attachments?.length)) {
         return this.remember(key, {
           source: 'cache',
@@ -113,6 +120,8 @@ export class SharedMailBodyStore {
         success: boolean;
         data?: RendererMailDetail;
       };
+
+      if (!this.inFlight.has(key)) return { source: 'missing' };
 
       if (fullResp.success && fullResp.data) {
         return this.remember(key, {

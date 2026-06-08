@@ -238,12 +238,15 @@ async function testImportHelpers() {
     'Hello from an imported EML file.',
   ].join('\r\n'), 'utf8');
 
-  const candidates = await parseImportCandidates([tempDir]);
+  const { candidates, rawBuffers } = await parseImportCandidates([tempDir]);
   assertEqual(candidates.length, 1);
   assertEqual(candidates[0]?.subject, 'Imported mail');
   assertEqual(candidates[0]?.from, 'sender@example.com');
   assertEqual(candidates[0]?.to, '"Receiver" <receiver@example.com>');
   assertEqual(candidates[0]?.messageId, '<sample-import@example.com>');
+  // rawBuffers should hold the source buffer so the importer doesn't re-read.
+  assert.ok(rawBuffers.has(candidates[0]!.path), 'rawBuffers should contain candidate path');
+  assert.ok(rawBuffers.get(candidates[0]!.path)!.length > 0, 'rawBuffers entry should be non-empty');
   assertEqual(canStartBackupImport({
     ...createInitialBackupState(),
     selectedAccountId: 3,

@@ -111,20 +111,3 @@ export function useAccounts() {
     testSmtpConnection,
   };
 }
-
-// Extend window.electronAPI with invoke method
-declare global {
-  interface Window {
-    electronAPI: {
-      getVersion: () => Promise<string>;
-      getUserDataPath: () => Promise<string>;
-      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-      onMessage: (callback: (message: string) => void) => void;
-      onMailSync: (callback: (mail: unknown) => void) => void;
-      minimizeWindow: () => void;
-      maximizeWindow: () => void;
-      closeWindow: () => void;
-      isMaximized: () => Promise<boolean>;
-    };
-  }
-}
