@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:getDetail',
       'mail:downloadAttachment',
       'mail:openAttachment',
+      'mail:fetchAttachmentBytes',
       'mail:selectOutgoingAttachments',
       'mail:setFlags',
       'mail:setRead',

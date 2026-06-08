@@ -459,6 +459,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'メールをアーカイブしました',
       archiveFailed: 'メールをアーカイブできませんでした',
       archiveAction: 'アーカイブ',
+      rendererErrorOccurred: 'インターフェースで予期しないエラーが発生しました',
+      unhandledRejectionOccurred: 'バックグラウンドタスクが失敗しました',
     };
   }
 
@@ -487,6 +489,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'Email archived',
       archiveFailed: 'Failed to archive email',
       archiveAction: 'Archive',
+      rendererErrorOccurred: 'An unexpected error occurred in the interface',
+      unhandledRejectionOccurred: 'A background task failed',
     };
   }
 
@@ -515,6 +519,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: '메일을 보관했습니다',
       archiveFailed: '메일 보관에 실패했습니다',
       archiveAction: '보관',
+      rendererErrorOccurred: '인터페이스에서 예기치 못한 오류가 발생했습니다',
+      unhandledRejectionOccurred: '백그라운드 작업이 실패했습니다',
     };
   }
 
@@ -543,6 +549,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'Correo archivado',
       archiveFailed: 'No se pudo archivar el correo',
       archiveAction: 'Archivar',
+      rendererErrorOccurred: 'Ocurrió un error inesperado en la interfaz',
+      unhandledRejectionOccurred: 'Una tarea en segundo plano falló',
     };
   }
 
@@ -571,6 +579,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'Mail archivé',
       archiveFailed: 'Échec de l’archivage du mail',
       archiveAction: 'Archiver',
+      rendererErrorOccurred: 'Une erreur inattendue s\u2019est produite dans l\u2019interface',
+      unhandledRejectionOccurred: 'Une t\u00e2che en arri\u00e8re-plan a \u00e9chou\u00e9',
     };
   }
 
@@ -599,6 +609,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'Mail archiviert',
       archiveFailed: 'Mail konnte nicht archiviert werden',
       archiveAction: 'Archivieren',
+      rendererErrorOccurred: 'Ein unerwarteter Fehler ist in der Oberfläche aufgetreten',
+      unhandledRejectionOccurred: 'Eine Hintergrundaufgabe ist fehlgeschlagen',
     };
   }
 
@@ -627,6 +639,8 @@ function getAppUi(appLanguage: AppLanguage) {
       archiveSuccess: 'Письмо архивировано',
       archiveFailed: 'Не удалось архивировать письмо',
       archiveAction: 'Архивировать',
+      rendererErrorOccurred: 'В интерфейсе произошла непредвиденная ошибка',
+      unhandledRejectionOccurred: 'Сбой фоновой задачи',
     };
   }
 
@@ -654,6 +668,8 @@ function getAppUi(appLanguage: AppLanguage) {
     archiveSuccess: '已归档邮件',
     archiveFailed: '归档失败',
     archiveAction: '归档',
+    rendererErrorOccurred: '界面层出现了一个错误',
+    unhandledRejectionOccurred: '后台任务执行失败',
   };
 }
 
@@ -815,6 +831,41 @@ function App() {
   );
 
   const appUi = useMemo(() => getAppUi(appLanguage), [appLanguage]);
+
+  // Surface unhandled renderer errors and unhandled promise rejections to the
+  // user as toasts. In production the DevTools are closed, so console.error
+  // output is invisible; this is the only feedback path for the kind of
+  // catastrophic failure that escapes the surrounding try/catch.
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      const message = event.message || (event.error instanceof Error ? event.error.message : 'Unknown error');
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `unhandled-error:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+          type: 'error',
+          message: `${appUi.rendererErrorOccurred}: ${message}`,
+        },
+      ]);
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? 'Unknown reason');
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `unhandled-rejection:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+          type: 'error',
+          message: `${appUi.unhandledRejectionOccurred}: ${reason}`,
+        },
+      ]);
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, [appUi]);
   const stagedHistoryLabel = useMemo(() => {
     if (!stagedHistorySync.active || !stagedHistorySync.stageRange) {
       return null;

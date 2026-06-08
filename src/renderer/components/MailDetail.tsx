@@ -461,6 +461,7 @@ function MailBody({
   onRetry,
   allowRemoteImages = false,
   onAllowRemoteImages,
+  inlineImages,
 }: {
   bodyHtml?: string;
   bodyText?: string;
@@ -472,14 +473,16 @@ function MailBody({
   onRetry?: () => void;
   allowRemoteImages?: boolean;
   onAllowRemoteImages?: () => void;
+  inlineImages?: Record<string, string>;
 }) {
   const sanitizedBody = useMemo(() => {
     if (!bodyHtml) return null;
     return sanitizeMailHtml(bodyHtml, {
       allowRemoteImages,
       remoteImagePlaceholderText: ui.showRemoteImages,
+      inlineImages,
     });
-  }, [allowRemoteImages, bodyHtml, ui.showRemoteImages]);
+  }, [allowRemoteImages, bodyHtml, inlineImages, ui.showRemoteImages]);
   const usePlainTextFallback = shouldRenderPlainTextBodyFallback({
     bodyHtml: sanitizedBody?.html || bodyHtml,
     bodyText,
@@ -652,6 +655,7 @@ function ConversationMessageCard({
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [translatedHtml, setTranslatedHtml] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [inlineImages, setInlineImages] = useState<Record<string, string>>({});
   const [aiFunction, setAiFunction] = useState<AIFunction | null>(null);
   const [isTranslated, setIsTranslated] = useState(false);
   const [allowRemoteImages, setAllowRemoteImages] = useState(false);
@@ -666,6 +670,90 @@ function ConversationMessageCard({
   useEffect(() => {
     setExpanded(defaultExpanded);
   }, [defaultExpanded, email.id]);
+
+  // BUG-18: when the body references `cid:` images, resolve them by fetching
+  // the matching inline attachment bytes and converting to a data: URL. The
+  // resolved map is fed to the sanitizer so the inline <img> renders.
+  useEffect(() => {
+    let cancelled = false;
+    setInlineImages({});
+
+    const bodyHtml = detail?.bodyHtml;
+    if (!bodyHtml || !detail) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Extract unique cid: tokens from the body. Allow both bare and quoted
+    // forms and strip angle brackets that some malformed clients add.
+    const cids = new Set<string>();
+    const cidRe = /<img\b[^>]*\ssrc\s*=\s*(?:"cid:([^"]+)"|'cid:([^']+)'|cid:([^\s>"']+))/gi;
+    let match: RegExpExecArray | null;
+    while ((match = cidRe.exec(bodyHtml))) {
+      const cid = (match[1] ?? match[2] ?? match[3] ?? '').replace(/[<>]/g, '').trim();
+      if (cid) cids.add(cid);
+    }
+    if (cids.size === 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const inlineAttachments = (detail.attachments ?? []).filter((att) => {
+      if (att.inline || att.disposition === 'inline') return true;
+      const candidates = [att.contentId, att.cid].filter(Boolean) as string[];
+      return candidates.some((raw) => {
+        const normalized = raw.replace(/^<|>$/g, '').trim();
+        return cids.has(normalized) || cids.has(normalized.toLowerCase());
+      });
+    });
+
+    if (inlineAttachments.length === 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      const map: Record<string, string> = {};
+      await Promise.all(
+        inlineAttachments.map(async (att) => {
+          const candidates = [att.contentId, att.cid].filter(Boolean) as string[];
+          const matchKey = candidates
+            .map((raw) => raw.replace(/^<|>$/g, '').trim())
+            .find((key) => cids.has(key) || cids.has(key.toLowerCase()));
+          if (!matchKey) return;
+          const cacheId = att.cacheId ?? att.attachmentId;
+          if (cacheId === undefined || cacheId === null) return;
+          try {
+            const result = await window.electronAPI.fetchAttachmentBytes({
+              accountId: detail.accountId,
+              folder: detail.folder,
+              uid: detail.uid,
+              attachmentCacheId: cacheId,
+            });
+            if (cancelled || !result.success || !result.data) return;
+            const dataUrl = `data:${result.data.contentType || 'application/octet-stream'};base64,${result.data.contentBase64}`;
+            map[matchKey] = dataUrl;
+            map[matchKey.toLowerCase()] = dataUrl;
+          } catch (error) {
+            console.warn('[MailDetail] inline image fetch failed', {
+              filename: att.filename,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }),
+      );
+      if (!cancelled && Object.keys(map).length > 0) {
+        setInlineImages(map);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.accountId, detail?.folder, detail?.uid, detail?.bodyHtml, detail?.attachments]);
 
   useEffect(() => {
     detailRequestRef.current = null;
@@ -1597,6 +1685,7 @@ function ConversationMessageCard({
                 ui={ui}
                 allowRemoteImages={allowRemoteImages}
                 onAllowRemoteImages={() => setAllowRemoteImages(true)}
+                inlineImages={inlineImages}
               />
             ) : (
               <MailBody
@@ -1610,6 +1699,7 @@ function ConversationMessageCard({
                 onRetry={onRetry}
                 allowRemoteImages={allowRemoteImages}
                 onAllowRemoteImages={() => setAllowRemoteImages(true)}
+                inlineImages={inlineImages}
               />
             )}
             {onRescan && (

@@ -1523,6 +1523,28 @@ function getSettingsText(appLanguage: AppLanguage) {
   } as any;
 }
 
+function useSavedIndicator(duration = 2000): [boolean, (value: boolean) => void] {
+  const [saved, setSaved] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!saved) return undefined;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+    }
+    timerRef.current = window.setTimeout(() => {
+      setSaved(false);
+      timerRef.current = null;
+    }, duration);
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [saved, duration]);
+  return [saved, setSaved];
+}
+
 export function SettingsModal({
   t,
   isOpen,
@@ -1578,7 +1600,7 @@ export function SettingsModal({
   onOpenBackupFolder,
 }: SettingsModalProps) {
   const [activeNav, setActiveNav] = useState<NavId>('accounts');
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useSavedIndicator();
   const [apiSaveError, setApiSaveError] = useState<string | null>(null);
   const [selectedApiProfile, setSelectedApiProfile] = useState<string>('primary');
   const [activeApiProfile, setActiveApiProfile] = useState<string>('primary');
@@ -2414,7 +2436,6 @@ export function SettingsModal({
         await refreshProviderProfiles(selectedApiProfileForm.id);
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.saveAccountFailed);
     }
@@ -2439,7 +2460,6 @@ export function SettingsModal({
       }
       setSelectedApiProfile(profileId);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.addModelFailed);
     }
@@ -2475,7 +2495,6 @@ export function SettingsModal({
         await refreshProviderProfiles();
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.setDefaultFailed);
     }
@@ -2533,7 +2552,6 @@ export function SettingsModal({
       });
       setIsAddingProviderAccount(false);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError(localizeAIProviderError((error as Error).message, aiProviderUi) || aiProviderUi.deleteModelFailed);
     } finally {
@@ -2582,7 +2600,6 @@ export function SettingsModal({
       }
       setManualModelId('');
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError((error as Error).message);
     } finally {
@@ -2609,7 +2626,6 @@ export function SettingsModal({
         await refreshProviderAccountsWithModels(selectedProviderAccount?.providerAccountId);
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError((error as Error).message);
     } finally {
@@ -2643,7 +2659,6 @@ export function SettingsModal({
         await refreshProviderAccountsWithModels(selectedProviderAccount.providerAccountId);
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError((error as Error).message);
     } finally {
@@ -2685,7 +2700,6 @@ export function SettingsModal({
         await refreshProviderAccountsWithModels(selectedProviderAccount.providerAccountId);
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError((error as Error).message);
     } finally {
@@ -2712,7 +2726,6 @@ export function SettingsModal({
         await refreshProviderAccountsWithModels(selectedProviderAccount?.providerAccountId);
       }
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (error) {
       setApiSaveError((error as Error).message);
     } finally {
@@ -2735,7 +2748,6 @@ export function SettingsModal({
         enabled: contactBehaviorEnabled,
       });
       setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch {
       // Keep silent until explicit error UI is added.
     }

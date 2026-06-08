@@ -33,7 +33,21 @@ export interface MailAttachmentActionResult {
   error?: string;
 }
 
-export type MailAttachmentIpcChannel = 'mail:downloadAttachment' | 'mail:openAttachment';
+export interface MailAttachmentBytesResult {
+  success: boolean;
+  data?: {
+    filename: string;
+    contentType: string;
+    contentBase64: string;
+    size: number;
+  };
+  error?: string;
+}
+
+export type MailAttachmentIpcChannel =
+  | 'mail:downloadAttachment'
+  | 'mail:openAttachment'
+  | 'mail:fetchAttachmentBytes';
 
 export type ContactKnowledgeIpcChannel =
   | 'ai:getContactKnowledgeSettings'
@@ -57,6 +71,7 @@ export interface ElectronAPI {
   openExternal: (target: string) => Promise<{ success: boolean; error?: string }>;
   downloadAttachment: (request: MailAttachmentActionRequest) => Promise<MailAttachmentActionResult>;
   openAttachment: (request: MailAttachmentActionRequest) => Promise<MailAttachmentActionResult>;
+  fetchAttachmentBytes: (request: MailAttachmentActionRequest) => Promise<MailAttachmentBytesResult>;
   invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<T>;
   onMessage: (callback: (message: string) => void) => void;
   onMailSync: (callback: (mail: any) => void) => void;

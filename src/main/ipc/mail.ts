@@ -934,6 +934,34 @@ export function registerMailHandlers(): void {
     }
   });
 
+  // Fetch a single attachment's bytes (base64) and content-type without
+  // triggering a save dialog. Used by the renderer to inline cid: images
+  // inside sanitized email HTML.
+  ipcMain.handle(
+    'mail:fetchAttachmentBytes',
+    async (_event, request: AttachmentActionRequest) => {
+      try {
+        const attachment = await loadAttachmentForAction(request);
+        return {
+          success: true,
+          data: {
+            filename: attachment.filename,
+            contentType: attachment.contentType,
+            contentBase64: attachment.content.toString('base64'),
+            size: attachment.content.length,
+          },
+        };
+      } catch (err) {
+        const error = err as Error;
+        log.warn(
+          '[mail] fetchAttachmentBytes failed:',
+          error.message,
+        );
+        return { success: false, error: error.message };
+      }
+    },
+  );
+
   // Set message flags (mark as read, starred, etc.)
   ipcMain.handle('mail:setFlags', async (_event, accountId: number, messageUid: number, flags: string[], folder: string) => {
     try {
