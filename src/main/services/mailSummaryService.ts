@@ -27,6 +27,15 @@ import type {
   PreheatStatus,
 } from '../../shared/email-ai/mailSummaryTypes';
 import { PREHEAT_DAILY_CAPS } from '../../shared/email-ai/mailSummaryTypes';
+import {
+  getOrBuildThreadId,
+  hashPrompt,
+  normalizeSubjectForThread,
+} from '../../shared/email-ai/mailSummaryThread';
+
+// Re-export so existing main-process callers can keep importing from
+// './mailSummaryService' without depending on the shared module path.
+export { getOrBuildThreadId, hashPrompt, normalizeSubjectForThread };
 
 export type { MailAiSummaryRecord, MailAiThreadSummaryRecord, MailAiSummarySearchHit, MailAiUrgency, PreheatMode, PreheatStatus };
 
@@ -104,37 +113,10 @@ export function ensureMailAiSummarySchema(): void {
   schemaReady = true;
 }
 
-export function normalizeSubjectForThread(subject: string): string {
-  return String(subject || '')
-    .toLowerCase()
-    .replace(/^(re|fw|fwd|回复|转发)[:：\s]+/gi, '')
-    .replace(/[\s\u3000]+/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, '')
-    .trim()
-    .slice(0, 80);
-}
-
-function normalizeParticipants(participants: string[]): string[] {
-  return Array.from(
-    new Set(
-      participants.map((p) => String(p || '').toLowerCase().trim()).filter(Boolean)
-    )
-  ).sort();
-}
-
-export function getOrBuildThreadId(input: { subject: string; from: string; to: string[] }): string {
-  const subject = normalizeSubjectForThread(input.subject);
-  const participants = normalizeParticipants([input.from, ...(input.to || [])]);
-  const seed = `${subject}|${participants.join(',')}`;
-  return createHash('sha1').update(seed).digest('hex').slice(0, 16);
-}
-
-export function hashPrompt(input: { subject: string; body: string }): string {
-  return createHash('sha256')
-    .update(`${input.subject || ''}\n${(input.body || '').slice(0, 4000)}`)
-    .digest('hex')
-    .slice(0, 32);
-}
+// normalizeSubjectForThread / getOrBuildThreadId / hashPrompt are imported
+// from `shared/email-ai/mailSummaryThread` at the top of this file and
+// re-exported so existing main-process callers can keep importing them
+// from './mailSummaryService'.
 
 type MailAiSummaryRow = {
   account_id: number;
