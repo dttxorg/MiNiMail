@@ -252,6 +252,21 @@ const checks = [
     args: ['scripts/electron-sandbox-security.test.cjs'],
   },
   {
+    name: 'mail summary service regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-summary-service.test.ts'],
+  },
+  {
+    name: 'mail summary search regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-summary-search.test.ts'],
+  },
+  {
+    name: 'mail summary renderer regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-summary-renderer.test.ts'],
+  },
+  {
     name: 'macOS native experience regression',
     command: process.execPath,
     args: ['scripts/macos-native-experience.test.cjs'],
