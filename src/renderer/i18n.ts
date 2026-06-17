@@ -212,6 +212,17 @@ const resources = {
       gmailOAuthNote: 'Gmail OAuth 2.0 认证',
       gmailOAuthHint: '您将被重定向到 Google 登录。请在 AI 设置中配置 OAuth 凭据。',
     },
+    // Layer 1 of the knowledge bedrock series: Sidebar "Knowledge Base" panel
+    knowledgeBase: {
+      title: '知识库',
+      searchPlaceholder: '搜索 AI 总结...',
+      empty: '输入关键词搜索所有 AI 总结',
+      mailLevel: '📧 邮件级',
+      threadLevel: '💬 会话级',
+      noResults: '没有找到相关结果',
+      closePanel: '关闭',
+      resultsCount: '{count} 条结果',
+    },
       rendererErrorOccurred: '界面层出现了一个错误',     unhandledRejectionOccurred: '后台任务执行失败', },
   en: {
     translation: {
@@ -422,6 +433,17 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Gmail OAuth 2.0 Authentication',
       gmailOAuthHint: 'You will be redirected to Google login. Configure OAuth credentials in AI settings.',
+    },
+    // Layer 1 of the knowledge bedrock series: Sidebar "Knowledge Base" panel
+    knowledgeBase: {
+      title: 'Knowledge Base',
+      searchPlaceholder: 'Search AI summaries...',
+      empty: 'Type a keyword to search all AI summaries',
+      mailLevel: '📧 Mails',
+      threadLevel: '💬 Threads',
+      noResults: 'No matching results',
+      closePanel: 'Close',
+      resultsCount: '{count} results',
     },
       rendererErrorOccurred: 'An unexpected error occurred in the interface',     unhandledRejectionOccurred: 'A background task failed', },
   ja: {
