@@ -22,6 +22,7 @@ import { buildCachedMailListQuery } from '../../shared/mailCacheQuery';
 import { folderMatches } from '../../shared/mailFolders';
 import type { MailDeliveryState } from '../../shared/mailDeliveryState';
 import { isMailDeliveryState } from '../../shared/mailDeliveryState';
+import { enqueuePreSummarizeJob } from './mailSummaryService';
 
 export interface MailSummaryStored {
   id: string;
@@ -687,6 +688,30 @@ function markContactKnowledgeWikisStaleForMail(db: any, mail: MailSummaryStored)
       const contactAddresses = [row.contact_email, ...aliases].map((value) => value.trim().toLowerCase());
       if (contactAddresses.some((address) => addresses.has(address))) {
         update.run('mail_cache_updated', mail.accountId, row.contact_email);
+        // Layer 1 of the knowledge bedrock series: when a contact wiki goes
+        // stale, also enqueue the most recent 5 mail ids in the contact
+        // thread so the preheat worker (Phase 2.2) can refresh their AI
+        // summaries in the background. This is best-effort and silent on
+        // failure: a stale wiki is non-fatal and the user can always
+        // re-trigger summaries manually.
+        const recent = db.prepare(`
+          SELECT id FROM mail_cache
+          WHERE account_id = ?
+            AND ("from" LIKE ? OR "to" LIKE ? OR from_name LIKE ?)
+          ORDER BY date DESC LIMIT 5
+        `).all(
+          mail.accountId,
+          `%${row.contact_email}%`,
+          `%${row.contact_email}%`,
+          `%${row.contact_email}%`,
+        ) as Array<{ id: string }>;
+        if (recent.length > 0) {
+          try {
+            enqueuePreSummarizeJob({ accountId: mail.accountId, mailIds: recent.map((r) => r.id) });
+          } catch (err) {
+            log.warn('[mailService] preheat enqueue skipped:', err);
+          }
+        }
       }
     }
   } catch (error) {
