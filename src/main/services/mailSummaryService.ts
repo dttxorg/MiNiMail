@@ -25,16 +25,10 @@ import type {
   MailAiUrgency,
   PreheatMode,
   PreheatStatus,
-  PREHEAT_DAILY_CAPS as _PreheatDailyCapsTypeOnly,
 } from '../../shared/email-ai/mailSummaryTypes';
+import { PREHEAT_DAILY_CAPS } from '../../shared/email-ai/mailSummaryTypes';
 
-// The import above keeps the shared types linked to this module even though
-// they are not yet referenced here; later phases will use them. We re-export
-// the type-only PREHEAT_DAILY_CAPS handle to silence the unused import
-// warning under noUnusedLocals while preserving the import as a contract
-// anchor for downstream tasks.
 export type { MailAiSummaryRecord, MailAiThreadSummaryRecord, MailAiSummarySearchHit, MailAiUrgency, PreheatMode, PreheatStatus };
-export type _PreheatDailyCapsTypeOnlyAnchor = typeof _PreheatDailyCapsTypeOnly;
 
 let schemaReady = false;
 
@@ -515,15 +509,70 @@ export function searchAiSummaries(input: {
 // tracking, and queue length reporting. For Phase 1 they return a fixed
 // "conservative" status with zero usage so the IPC handlers in 1.8 can be
 // registered and the preload allowlist can be validated.
+const SETTING_KEY_MODE = 'ai_mail_summary_preheat';
+const SETTING_KEY_DAILY_COUNT = 'ai_mail_summary_daily_count';
+const SETTING_KEY_DAILY_RESET = 'ai_mail_summary_daily_reset_at';
+
+// Forward declaration for the preheat job queue; Phase 2.2 will fill this in
+// with the actual queue + worker. We declare it as `let` here so 2.1 helpers
+// can reference `preheatQueue.length` for queueLength reporting without
+// TS6200 / block-scoped-before-declared errors.
+let preheatQueue: { length: number } = { length: 0 };
+
+function getSettingsValue(key: string): string | null {
+  try {
+    const db = getMailCacheDb();
+    const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value: string } | undefined;
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function setSettingsValue(key: string, value: string): void {
+  const db = getMailCacheDb();
+  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, value);
+}
+
+function maybeResetDailyCount(): number {
+  const today = new Date().toISOString().slice(0, 10);
+  const resetAt = getSettingsValue(SETTING_KEY_DAILY_RESET);
+  if (resetAt !== today) {
+    setSettingsValue(SETTING_KEY_DAILY_RESET, today);
+    setSettingsValue(SETTING_KEY_DAILY_COUNT, '0');
+    return 0;
+  }
+  return Number(getSettingsValue(SETTING_KEY_DAILY_COUNT) ?? 0);
+}
+
+export function getPreheatMode(): PreheatMode {
+  const v = getSettingsValue(SETTING_KEY_MODE);
+  if (v === 'off' || v === 'conservative' || v === 'aggressive') return v;
+  return 'conservative';
+}
+
+export function setPreheatMode(mode: PreheatMode): PreheatStatus {
+  if (!['off', 'conservative', 'aggressive'].includes(mode)) {
+    throw new Error(`Invalid preheat mode: ${mode}`);
+  }
+  setSettingsValue(SETTING_KEY_MODE, mode);
+  return getPreheatStatus(0);
+}
+
 export function getPreheatStatus(_accountId: number): PreheatStatus {
+  const mode = getPreheatMode();
+  const dailyUsed = maybeResetDailyCount();
   return {
-    mode: 'conservative',
-    queueLength: 0,
-    dailyUsed: 0,
-    dailyCap: 50,
+    mode,
+    queueLength: preheatQueue.length,
+    dailyUsed,
+    dailyCap: PREHEAT_DAILY_CAPS[mode],
   };
 }
 
-export function setPreheatMode(_mode: PreheatMode): PreheatStatus {
-  return getPreheatStatus(0);
+function incrementDailyCount(): void {
+  maybeResetDailyCount();
+  const next = Number(getSettingsValue(SETTING_KEY_DAILY_COUNT) ?? 0) + 1;
+  setSettingsValue(SETTING_KEY_DAILY_COUNT, String(next));
 }
