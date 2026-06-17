@@ -222,6 +222,16 @@ const resources = {
       noResults: '没有找到相关结果',
       closePanel: '关闭',
       resultsCount: '{count} 条结果',
+      preheat: {
+        label: '后台预热',
+        off: '关闭',
+        offHint: '所有总结都需要手动点 AI 按钮',
+        conservative: '保守(推荐)',
+        conservativeHint: '每天最多 50 次,补齐最近 7 天',
+        aggressive: '积极',
+        aggressiveHint: '每天最多 200 次,补齐最近 30 天',
+        usage: '今日 {used}/{cap}',
+      },
     },
       rendererErrorOccurred: '界面层出现了一个错误',     unhandledRejectionOccurred: '后台任务执行失败', },
   en: {
@@ -444,6 +454,16 @@ const resources = {
       noResults: 'No matching results',
       closePanel: 'Close',
       resultsCount: '{count} results',
+      preheat: {
+        label: 'Background preheat',
+        off: 'Off',
+        offHint: 'All summaries require manual AI button',
+        conservative: 'Conservative (recommended)',
+        conservativeHint: 'Max 50/day, last 7 days',
+        aggressive: 'Aggressive',
+        aggressiveHint: 'Max 200/day, last 30 days',
+        usage: 'Today {used}/{cap}',
+      },
     },
       rendererErrorOccurred: 'An unexpected error occurred in the interface',     unhandledRejectionOccurred: 'A background task failed', },
   ja: {
