@@ -486,6 +486,22 @@ export function searchAiSummaries(input: {
   }));
 }
 
+// L5 of the knowledge bedrock series: confidence decay.
+// Stored AI summaries fade over time: a 30-day-old summary keeps full
+// confidence, a 6-month-old summary is halved, and a 2-year-old summary
+// is near zero. Search results multiply their FTS5 bm25 score by this
+// factor so recently-indexed summaries outrank stale-but-text-matching
+// ones.
+const DECAY_HALF_LIFE_DAYS = 180;
+
+export function computeEffectiveConfidence(updatedAt: string, now: Date = new Date()): number {
+  const updated = new Date(updatedAt);
+  if (Number.isNaN(updated.getTime())) return 1;
+  const ageDays = Math.max(0, (now.getTime() - updated.getTime()) / (1000 * 60 * 60 * 24));
+  // exp(-age/halfLife * ln(2)) = 2^(-age/halfLife)
+  return Math.pow(2, -ageDays / DECAY_HALF_LIFE_DAYS);
+}
+
 // Phase 1 stubs for the preheat settings helpers. Phase 2 (Task 2.1) will
 // replace these with real settings-table-backed implementations, daily cap
 // tracking, and queue length reporting. For Phase 1 they return a fixed
