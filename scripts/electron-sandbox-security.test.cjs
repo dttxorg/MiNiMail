@@ -75,4 +75,30 @@ assert(
   'trusted file open checks must reject path traversal outside allowlisted roots',
 );
 
+// Mail-level AI summary persistence (Layer 1 of the knowledge bedrock series):
+// the 7 new IPC channels must be present in the preload allowlist AND registered
+// as ipcMain.handle handlers in src/main/ipc/ai.ts.
+const NEW_MAIL_SUMMARY_CHANNELS = [
+  'ai:getMailSummary',
+  'ai:upsertMailSummary',
+  'ai:getThreadSummary',
+  'ai:upsertThreadSummary',
+  'ai:searchSummaries',
+  'ai:getMailSummaryPreheatStatus',
+  'ai:setMailSummaryPreheatMode',
+];
+for (const channel of NEW_MAIL_SUMMARY_CHANNELS) {
+  assert(
+    preload.includes(`'${channel}'`),
+    `Preload allowlist must include ${channel}`,
+  );
+}
+const aiIpc = fs.readFileSync(path.join(root, 'src', 'main', 'ipc', 'ai.ts'), 'utf8');
+for (const channel of NEW_MAIL_SUMMARY_CHANNELS) {
+  assert(
+    new RegExp(`ipcMain\\.handle\\(\\s*'${channel}'`).test(aiIpc),
+    `Main process must register ipcMain.handle for ${channel}`,
+  );
+}
+
 console.log('electron-sandbox-security regression passed');
