@@ -517,17 +517,47 @@ function clampInsightArray(value: unknown, limit: number): ContactWikiInsight[] 
   if (!Array.isArray(value)) return [];
   return value.map((item) => {
     if (typeof item === 'string') {
-      return { text: clampString(item, 220), confidence: 'low' as const, confidenceScore: 0.35, evidenceIds: [] };
+      const { text, evidenceIds } = extractEvidenceRefs(item);
+      return {
+        text: clampString(text, 220),
+        confidence: 'low' as const,
+        confidenceScore: 0.35,
+        evidenceIds,
+      };
     }
     const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
     const score = Math.max(0, Math.min(1, Number(record.confidenceScore ?? 0.35)));
+    const rawText = String(record.text || record.value || record.summary || '');
+    const explicit = clampStringArray(record.evidenceIds, 6, 80);
+    const { text: cleanedText, evidenceIds: inlineRefs } = extractEvidenceRefs(rawText);
+    // If the LLM omitted `evidenceIds` but inline-referenced chunks inside the
+    // text (e.g. "boss is the decision maker [evidence:chunk_abc]"), promote
+    // the inline refs into the structured field. This is Layer 3 of the
+    // knowledge bedrock series: insight provenance.
+    const evidenceIds = explicit.length > 0 ? explicit : inlineRefs;
     return {
-      text: clampString(record.text || record.value || record.summary, 220),
+      text: clampString(cleanedText, 220),
       confidence: normalizeConfidence(record.confidence || contactWikiConfidenceLevel(score)),
       confidenceScore: Number(score.toFixed(4)),
-      evidenceIds: clampStringArray(record.evidenceIds, 6, 80),
+      evidenceIds,
     };
   }).filter((item) => item.text).slice(0, limit);
+}
+
+// L3 of the knowledge bedrock series: insight provenance.
+// Prompts ask the LLM to embed `[evidence:chunk_<id>]` markers inside the
+// insight text. This helper strips those markers from the visible text and
+// returns them as a deduplicated `evidenceIds` array.
+function extractEvidenceRefs(raw: string): { text: string; evidenceIds: string[] } {
+  if (!raw) return { text: '', evidenceIds: [] };
+  const matches = raw.match(/\[evidence:[^\]]+\]/gi) || [];
+  const evidenceIds: string[] = [];
+  for (const m of matches) {
+    const inner = m.replace(/^\[evidence:/i, '').replace(/\]$/, '').trim();
+    if (inner && !evidenceIds.includes(inner)) evidenceIds.push(inner);
+  }
+  const text = raw.replace(/\s*\[evidence:[^\]]+\]/gi, '').trim();
+  return { text, evidenceIds: evidenceIds.slice(0, 6) };
 }
 
 function clampSenderTypeSignals(value: unknown, limit = 8): SenderTypeSignal[] {
