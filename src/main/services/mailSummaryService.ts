@@ -517,7 +517,148 @@ const SETTING_KEY_DAILY_RESET = 'ai_mail_summary_daily_reset_at';
 // with the actual queue + worker. We declare it as `let` here so 2.1 helpers
 // can reference `preheatQueue.length` for queueLength reporting without
 // TS6200 / block-scoped-before-declared errors.
-let preheatQueue: { length: number } = { length: 0 };
+type PreheatJob = {
+  accountId: number;
+  mailId: string;
+  subject: string;
+  bodyText: string;
+  enqueuedAt: number;
+};
+let preheatQueue: PreheatJob[] = [];
+let preheatWorkerRunning = false;
+let preheatWorkerPromise: Promise<void> | null = null;
+
+export function enqueuePreSummarizeJob(input: { accountId: number; mailIds: string[] }): void {
+  const db = getMailCacheDb();
+  const stmt = db.prepare(`SELECT subject, body_text FROM mail_cache WHERE id = ? AND account_id = ?`);
+  for (const mailId of input.mailIds) {
+    const row = stmt.get(mailId, input.accountId) as { subject?: string; body_text?: string | null } | undefined;
+    if (!row || !row.body_text) continue;
+    preheatQueue.push({
+      accountId: input.accountId,
+      mailId,
+      subject: row.subject || '',
+      bodyText: row.body_text,
+      enqueuedAt: Date.now(),
+    });
+  }
+}
+
+export async function processPreSummarizeQueue(): Promise<{ processed: number; skipped: number; failed: number }> {
+  if (preheatWorkerRunning) return { processed: 0, skipped: 0, failed: 0 };
+  const mode = getPreheatMode();
+  if (mode === 'off') {
+    const skipped = preheatQueue.length;
+    preheatQueue.length = 0;
+    return { processed: 0, skipped, failed: 0 };
+  }
+  const cap = PREHEAT_DAILY_CAPS[mode];
+  preheatWorkerRunning = true;
+  const stats = { processed: 0, skipped: 0, failed: 0 };
+  try {
+    while (preheatQueue.length > 0) {
+      const used = maybeResetDailyCount();
+      if (used >= cap) {
+        stats.skipped = preheatQueue.length;
+        preheatQueue.length = 0;
+        break;
+      }
+      const job = preheatQueue.shift();
+      if (!job) break;
+      try {
+        const existing = getMailSummary({ accountId: job.accountId, mailId: job.mailId });
+        if (existing && hashPrompt({ subject: job.subject, body: job.bodyText }) === existing.promptHash) {
+          stats.skipped += 1;
+          continue;
+        }
+        await runAiSummaryForJob(job);
+        incrementDailyCount();
+        stats.processed += 1;
+      } catch (err) {
+        log.warn('[mailSummary] preheat job failed', {
+          mailId: job.mailId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        stats.failed += 1;
+      }
+    }
+  } finally {
+    preheatWorkerRunning = false;
+  }
+  return stats;
+}
+
+async function runAiSummaryForJob(job: PreheatJob): Promise<void> {
+  // Lazy import to avoid loading the AI provider stack unless the worker
+  // actually runs. This keeps `mailSummaryService.ts` importable from
+  // renderer-side test rigs without dragging in the provider manager.
+  const { callAI } = await import('./ai');
+  const promptHash = hashPrompt({ subject: job.subject, body: job.bodyText });
+  const response = await callAI({
+    system: 'You summarize a single email. Return one strict JSON object only. No markdown.',
+    prompt: `Subject: ${job.subject || '(no subject)'}\n\nBody:\n${job.bodyText.slice(0, 8000)}`,
+    temperature: 0.3,
+    maxTokens: 600,
+  });
+  if (!response.success || !response.content) return;
+  const parsed = parseAiSummaryResponse(response.content);
+  upsertMailSummary({
+    accountId: job.accountId,
+    mailId: job.mailId,
+    subject: job.subject,
+    summary: parsed,
+    promptHash,
+  });
+}
+
+function parseAiSummaryResponse(content: string): Omit<MailAiSummaryRecord, 'accountId' | 'mailId' | 'subject' | 'createdAt' | 'updatedAt' | 'promptHash'> {
+  const trimmed = content.trim();
+  try {
+    const obj = JSON.parse(trimmed) as Record<string, unknown>;
+    const urgency = String(obj.urgency || 'none');
+    const validUrgency = ['now', 'today', 'later', 'none'].includes(urgency) ? urgency : 'none';
+    return {
+      what: String(obj.what || '').trim(),
+      impact: obj.impact == null ? null : String(obj.impact).trim(),
+      action: obj.action == null ? null : String(obj.action).trim(),
+      urgency: validUrgency as MailAiUrgency,
+      keyFacts: Array.isArray(obj.keyFacts)
+        ? (obj.keyFacts as unknown[]).map((x) => String(x)).filter(Boolean).slice(0, 6)
+        : [],
+      keyInfo: typeof obj.keyInfo === 'object' && obj.keyInfo
+        ? obj.keyInfo as MailAiSummaryRecord['keyInfo']
+        : {},
+      quickReplies: [],
+      model: 'cloud',
+    };
+  } catch {
+    return {
+      what: trimmed.slice(0, 240),
+      impact: null,
+      action: null,
+      urgency: 'none',
+      keyFacts: [],
+      keyInfo: {},
+      quickReplies: [],
+      model: 'cloud',
+    };
+  }
+}
+
+export function bootstrapPreheatWorker(): void {
+  if (preheatWorkerPromise) return;
+  preheatWorkerPromise = (async () => {
+    await new Promise((r) => setTimeout(r, 2000));
+    while (true) {
+      try {
+        await processPreSummarizeQueue();
+      } catch (err) {
+        log.warn('[mailSummary] preheat loop error', err);
+      }
+      await new Promise((r) => setTimeout(r, 60_000));
+    }
+  })();
+}
 
 function getSettingsValue(key: string): string | null {
   try {
