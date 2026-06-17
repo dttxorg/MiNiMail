@@ -415,3 +415,97 @@ export function upsertThreadSummary(input: UpsertThreadSummaryInput): MailAiThre
   if (!result) throw new Error('mail_ai_thread_summary upsert failed');
   return result;
 }
+
+function tokenizeQueryForLike(query: string): string[] {
+  return String(query || '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2)
+    .slice(0, 6);
+}
+
+function buildLikeSnippet(value: string | null | undefined, max = 160): string {
+  const v = String(value || '').replace(/\s+/g, ' ').trim();
+  return v.length > max ? `${v.slice(0, max)}…` : v;
+}
+
+export function searchAiSummaries(input: {
+  accountId: number;
+  query: string;
+  limit?: number;
+}): MailAiSummarySearchHit[] {
+  ensureMailAiSummarySchema();
+  const limit = Math.max(1, Math.min(50, input.limit ?? 20));
+  const cleaned = String(input.query || '').trim();
+  if (!cleaned) return [];
+  const db = getMailCacheDb();
+  const ftsQuery = cleaned
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 2)
+    .map((t) => `${t}*`)
+    .join(' ');
+
+  if (ftsQuery) {
+    try {
+      const rows = db
+        .prepare(
+          `SELECT mail_id, subject, what, impact, action, bm25(mail_ai_summary_fts) AS score
+           FROM mail_ai_summary_fts
+           WHERE account_id = ? AND mail_ai_summary_fts MATCH ?
+           ORDER BY score ASC
+           LIMIT ?`
+        )
+        .all(input.accountId, ftsQuery, limit) as Array<{
+        mail_id: string;
+        subject: string;
+        what: string;
+        impact: string;
+        action: string;
+        score: number;
+      }>;
+      return rows.map((r) => ({
+        mailId: r.mail_id,
+        subject: r.subject,
+        snippet: buildLikeSnippet(r.what || r.action || r.impact),
+        score: -r.score,
+        source: 'mail' as const,
+      }));
+    } catch (error) {
+      log.warn('[mailSummary] FTS5 search failed, falling back to LIKE', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const likeTokens = tokenizeQueryForLike(cleaned);
+  if (likeTokens.length === 0) return [];
+  const where = likeTokens
+    .map(() => '(subject LIKE ? OR what LIKE ? OR action LIKE ? OR key_facts_json LIKE ?)')
+    .join(' AND ');
+  const params: string[] = [];
+  for (const t of likeTokens) {
+    const wildcard = `%${t}%`;
+    params.push(wildcard, wildcard, wildcard, wildcard);
+  }
+  params.push(String(input.accountId), String(limit));
+  const rows = db
+    .prepare(
+      `SELECT mail_id, subject, what, impact, action FROM mail_ai_summary
+       WHERE ${where} AND account_id = ? LIMIT ?`
+    )
+    .all(...params) as Array<{
+    mail_id: string;
+    subject: string;
+    what: string;
+    impact: string;
+    action: string;
+  }>;
+  return rows.map((r, i) => ({
+    mailId: r.mail_id,
+    subject: r.subject,
+    snippet: buildLikeSnippet(r.what || r.action || r.impact),
+    score: rows.length - i,
+    source: 'mail' as const,
+  }));
+}
