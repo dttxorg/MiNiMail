@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
-import type { MailAiSummarySearchHit } from '../../shared/email-ai/mailSummaryTypes';
+import type { MailAiSummarySearchHit, PreheatMode, PreheatStatus } from '../../shared/email-ai/mailSummaryTypes';
 
 const DEBOUNCE_MS = 250;
 
@@ -22,6 +22,39 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
   const [hits, setHits] = useState<MailAiSummarySearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preheatStatus, setPreheatStatus] = useState<PreheatStatus | null>(null);
+  const [preheatBusy, setPreheatBusy] = useState(false);
+
+  // Layer 1 of the knowledge bedrock series: load the preheat worker status
+  // on mount so the user can see (and toggle) the cost-control mode from
+  // inside the panel header. The status includes daily usage / cap which is
+  // useful feedback even when the user is not actively searching.
+  useEffect(() => {
+    let cancelled = false;
+    void window.electronAPI
+      .getMailSummaryPreheatStatus(accountId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data) setPreheatStatus(res.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
+
+  const onChangePreheatMode = useCallback(
+    async (mode: PreheatMode) => {
+      setPreheatBusy(true);
+      try {
+        const res = await window.electronAPI.setMailSummaryPreheatMode(mode);
+        if (res.success && res.data) setPreheatStatus(res.data);
+      } finally {
+        setPreheatBusy(false);
+      }
+    },
+    [],
+  );
 
   const trimmedQuery = useMemo(() => query.trim(), [query]);
 
@@ -82,6 +115,30 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
           <X size={16} />
         </button>
       </div>
+
+      {preheatStatus && (
+        <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-xs text-slate-600">
+          <span className="font-medium">{t('knowledgeBase.preheat.label')}</span>
+          <select
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
+            value={preheatStatus.mode}
+            disabled={preheatBusy}
+            onChange={(e) => {
+              void onChangePreheatMode(e.target.value as PreheatMode);
+            }}
+          >
+            <option value="off">{t('knowledgeBase.preheat.off')}</option>
+            <option value="conservative">{t('knowledgeBase.preheat.conservative')}</option>
+            <option value="aggressive">{t('knowledgeBase.preheat.aggressive')}</option>
+          </select>
+          <span className="ml-auto text-slate-500">
+            {t('knowledgeBase.preheat.usage', {
+              used: preheatStatus.dailyUsed,
+              cap: preheatStatus.dailyCap,
+            })}
+          </span>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-3 text-sm">
         {!trimmedQuery && !loading && (

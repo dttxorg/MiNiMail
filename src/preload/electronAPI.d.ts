@@ -120,7 +120,7 @@ export interface ElectronAPI {
   upsertThreadSummary: (input: UpsertThreadSummaryInput) => Promise<{ success: boolean; data?: MailAiThreadSummaryRecord; error?: string }>;
   searchSummaries: (accountId: number, query: string, limit?: number) => Promise<{ success: boolean; data?: MailAiSummarySearchHit[]; error?: string }>;
   getMailSummaryPreheatStatus: (accountId: number) => Promise<{ success: boolean; data?: PreheatStatus; error?: string }>;
-  setMailSummaryPreheatMode: (mode: PreheatMode) => Promise<{ success: boolean; error?: string }>;
+  setMailSummaryPreheatMode: (mode: PreheatMode) => Promise<{ success: boolean; data?: PreheatStatus; error?: string }>;
   log: (...args: unknown[]) => void;
 }
 
