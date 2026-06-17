@@ -69,6 +69,7 @@ interface SidebarProps {
   scheduledCount?: number;
   appLanguage: AppLanguage;
   isMacOS?: boolean;
+  onOpenKnowledgeBase?: () => void;
 }
 
 const FOLDERS = [
@@ -342,6 +343,7 @@ export function Sidebar({
   scheduledCount = 0,
   appLanguage: appLanguageSetting,
   isMacOS = false,
+  onOpenKnowledgeBase,
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -458,6 +460,17 @@ export function Sidebar({
             <NavIcon active={selectedFolder === 'starred'}>{navIcons.starred}</NavIcon>
             <span className="flex-1 text-left leading-none">{t('starred')}</span>
           </button>
+
+          {onOpenKnowledgeBase && (
+            <button
+              onClick={onOpenKnowledgeBase}
+              className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
+              style={buildSidebarItemStyle(false)}
+            >
+              <NavIcon active={false}>{navIcons.starred /* fallback icon; visual identity is from the label */}</NavIcon>
+              <span className="flex-1 text-left leading-none">📚 {t('knowledgeBase.title')}</span>
+            </button>
+          )}
 
           <button onClick={() => onSelectFolder('archive')} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selectedFolder === 'archive')}>
             <NavIcon active={selectedFolder === 'archive'}>{navIcons.archive}</NavIcon>
