@@ -251,3 +251,167 @@ export function getThreadSummary(input: {
     .get(input.accountId, input.threadId) as MailAiThreadSummaryRow | undefined;
   return row ? rowToThreadSummary(row) : null;
 }
+
+export type UpsertMailSummaryInput = {
+  accountId: number;
+  mailId: string;
+  subject: string;
+  summary: Omit<
+    MailAiSummaryRecord,
+    'accountId' | 'mailId' | 'subject' | 'createdAt' | 'updatedAt' | 'promptHash'
+  >;
+  promptHash: string;
+  evidenceHash?: string;
+};
+
+export function upsertMailSummary(input: UpsertMailSummaryInput): MailAiSummaryRecord {
+  ensureMailAiSummarySchema();
+  const db = getMailCacheDb();
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO mail_ai_summary (
+      account_id, mail_id, subject, what, impact, action, urgency,
+      key_facts_json, key_info_json, quick_replies_json,
+      model, prompt_hash, evidence_hash, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, mail_id) DO UPDATE SET
+      subject = excluded.subject,
+      what = excluded.what,
+      impact = excluded.impact,
+      action = excluded.action,
+      urgency = excluded.urgency,
+      key_facts_json = excluded.key_facts_json,
+      key_info_json = excluded.key_info_json,
+      quick_replies_json = excluded.quick_replies_json,
+      model = excluded.model,
+      prompt_hash = excluded.prompt_hash,
+      evidence_hash = excluded.evidence_hash,
+      updated_at = excluded.updated_at`
+  ).run(
+    input.accountId,
+    input.mailId,
+    input.subject,
+    input.summary.what,
+    input.summary.impact,
+    input.summary.action,
+    input.summary.urgency,
+    JSON.stringify(input.summary.keyFacts),
+    JSON.stringify(input.summary.keyInfo),
+    JSON.stringify(input.summary.quickReplies),
+    input.summary.model,
+    input.promptHash,
+    input.evidenceHash ?? null,
+    now,
+    now
+  );
+  syncMailSummaryFts(input.accountId, input.mailId);
+  const result = getMailSummary({ accountId: input.accountId, mailId: input.mailId });
+  if (!result) throw new Error('mail_ai_summary upsert failed');
+  return result;
+}
+
+function syncMailSummaryFts(accountId: number, mailId: string): void {
+  ensureMailAiSummarySchema();
+  const db = getMailCacheDb();
+  const row = db
+    .prepare(
+      `SELECT subject, what, impact, action, key_facts_json FROM mail_ai_summary
+       WHERE account_id = ? AND mail_id = ?`
+    )
+    .get(accountId, mailId) as
+    | { subject: string; what: string | null; impact: string | null; action: string | null; key_facts_json: string }
+    | undefined;
+  if (!row) return;
+  const keyFacts = safeParseJson<string[]>(row.key_facts_json, []);
+  try {
+    db.prepare(`DELETE FROM mail_ai_summary_fts WHERE mail_id = ? AND account_id = ?`).run(
+      mailId,
+      accountId
+    );
+    db.prepare(
+      `INSERT INTO mail_ai_summary_fts (mail_id, account_id, subject, what, impact, action, key_facts)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      mailId,
+      accountId,
+      row.subject,
+      row.what || '',
+      row.impact || '',
+      row.action || '',
+      keyFacts.join(' ')
+    );
+  } catch (error) {
+    log.warn('[mailSummary] FTS sync failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export type UpsertThreadSummaryInput = {
+  accountId: number;
+  threadId: string;
+  threadSubject: string;
+  participants: string[];
+  latestMailId: string;
+  overallSummary: string;
+  overallOpenLoops: string[];
+  overallCommitments: string[];
+  overallActionItems: string[];
+  latestRoundSummary: string;
+  latestRoundAt: string;
+  model: string;
+  evidenceHash?: string;
+};
+
+export function upsertThreadSummary(input: UpsertThreadSummaryInput): MailAiThreadSummaryRecord {
+  ensureMailAiSummarySchema();
+  const db = getMailCacheDb();
+  const now = new Date().toISOString();
+  const existing = db
+    .prepare(
+      `SELECT mail_count FROM mail_ai_thread_summary WHERE account_id = ? AND thread_id = ?`
+    )
+    .get(input.accountId, input.threadId) as { mail_count: number } | undefined;
+  const mailCount = (existing?.mail_count ?? 0) + 1;
+  db.prepare(
+    `INSERT INTO mail_ai_thread_summary (
+      account_id, thread_id, thread_subject, thread_participants_json,
+      mail_count, overall_summary, overall_open_loops_json,
+      overall_commitments_json, overall_action_items_json,
+      latest_round_summary, latest_round_at, model, evidence_hash,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, thread_id) DO UPDATE SET
+      thread_subject = excluded.thread_subject,
+      thread_participants_json = excluded.thread_participants_json,
+      mail_count = excluded.mail_count,
+      overall_summary = excluded.overall_summary,
+      overall_open_loops_json = excluded.overall_open_loops_json,
+      overall_commitments_json = excluded.overall_commitments_json,
+      overall_action_items_json = excluded.overall_action_items_json,
+      latest_round_summary = excluded.latest_round_summary,
+      latest_round_at = excluded.latest_round_at,
+      model = excluded.model,
+      evidence_hash = excluded.evidence_hash,
+      updated_at = excluded.updated_at`
+  ).run(
+    input.accountId,
+    input.threadId,
+    input.threadSubject,
+    JSON.stringify(input.participants),
+    mailCount,
+    input.overallSummary,
+    JSON.stringify(input.overallOpenLoops),
+    JSON.stringify(input.overallCommitments),
+    JSON.stringify(input.overallActionItems),
+    input.latestRoundSummary,
+    input.latestRoundAt,
+    input.model,
+    input.evidenceHash ?? null,
+    now,
+    now
+  );
+  const result = getThreadSummary({ accountId: input.accountId, threadId: input.threadId });
+  if (!result) throw new Error('mail_ai_thread_summary upsert failed');
+  return result;
+}
