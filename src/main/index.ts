@@ -10,6 +10,7 @@ import { registerOAuthHandlers } from './ipc/oauth';
 import { APP_NAME, APP_USER_MODEL_ID, getAppIconPath } from './brand';
 import { initializeAISecretStorage } from './services/ai';
 import { closeScheduledSendDb, restoreScheduledSendJobs } from './services/scheduledSendService';
+import { bootstrapPreheatWorker } from './services/mailSummaryService';
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -401,6 +402,7 @@ app.whenReady().then(() => {
   registerAIHandlers();
   registerOAuthHandlers();
   restoreScheduledSendsOnStartup();
+  bootstrapPreheatWorker();
 
   log.info('Creating window...');
   createWindow();
