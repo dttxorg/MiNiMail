@@ -1,6 +1,13 @@
 import type { Account, CreateAccountInput, ApiResponse, ImapConnectionResult, SmtpConnectionResult, AIMailCategory } from '../renderer/types';
 import type { MailBackupProgress } from '../shared/backup';
 import type { MailHistoryRange } from '../shared/mailSyncSettings';
+import type {
+  MailAiSummaryRecord,
+  MailAiThreadSummaryRecord,
+  MailAiSummarySearchHit,
+  PreheatMode,
+  PreheatStatus,
+} from '../shared/email-ai/mailSummaryTypes';
 
 export interface MailStagedSyncProgress {
   accountId: number;
@@ -65,6 +72,22 @@ export type ContactKnowledgeIpcChannel =
   | 'ai:exportContactBehaviorSummary'
   | 'ai:clearContactBehaviorData';
 
+export type UpsertThreadSummaryInput = {
+  accountId: number;
+  threadId: string;
+  threadSubject: string;
+  participants: string[];
+  latestMailId: string;
+  overallSummary: string;
+  overallOpenLoops: string[];
+  overallCommitments: string[];
+  overallActionItems: string[];
+  latestRoundSummary: string;
+  latestRoundAt: string;
+  model: string;
+  evidenceHash?: string;
+};
+
 export interface ElectronAPI {
   getVersion: () => Promise<string>;
   getUserDataPath: () => Promise<string>;
@@ -84,6 +107,20 @@ export interface ElectronAPI {
   closeWindow: () => void;
   isMaximized: () => Promise<boolean>;
   onMaximizeChange: (callback: (isMaximized: boolean) => void) => () => void;
+  getMailSummary: (accountId: number, mailId: string) => Promise<{ success: boolean; data?: MailAiSummaryRecord | null; error?: string }>;
+  upsertMailSummary: (input: {
+    accountId: number;
+    mailId: string;
+    subject: string;
+    summary: Omit<MailAiSummaryRecord, 'accountId' | 'mailId' | 'subject' | 'createdAt' | 'updatedAt' | 'promptHash'>;
+    promptHash: string;
+    evidenceHash?: string;
+  }) => Promise<{ success: boolean; data?: MailAiSummaryRecord; error?: string }>;
+  getThreadSummary: (accountId: number, threadId: string) => Promise<{ success: boolean; data?: MailAiThreadSummaryRecord | null; error?: string }>;
+  upsertThreadSummary: (input: UpsertThreadSummaryInput) => Promise<{ success: boolean; data?: MailAiThreadSummaryRecord; error?: string }>;
+  searchSummaries: (accountId: number, query: string, limit?: number) => Promise<{ success: boolean; data?: MailAiSummarySearchHit[]; error?: string }>;
+  getMailSummaryPreheatStatus: (accountId: number) => Promise<{ success: boolean; data?: PreheatStatus; error?: string }>;
+  setMailSummaryPreheatMode: (mode: PreheatMode) => Promise<{ success: boolean; error?: string }>;
   log: (...args: unknown[]) => void;
 }
 
