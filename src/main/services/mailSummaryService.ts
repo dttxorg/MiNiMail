@@ -141,3 +141,113 @@ export function hashPrompt(input: { subject: string; body: string }): string {
     .digest('hex')
     .slice(0, 32);
 }
+
+type MailAiSummaryRow = {
+  account_id: number;
+  mail_id: string;
+  subject: string;
+  what: string | null;
+  impact: string | null;
+  action: string | null;
+  urgency: string | null;
+  key_facts_json: string;
+  key_info_json: string;
+  quick_replies_json: string;
+  model: string | null;
+  prompt_hash: string | null;
+  evidence_hash: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type MailAiThreadSummaryRow = {
+  account_id: number;
+  thread_id: string;
+  thread_subject: string | null;
+  thread_participants_json: string;
+  mail_count: number;
+  overall_summary: string | null;
+  overall_open_loops_json: string;
+  overall_commitments_json: string;
+  overall_action_items_json: string;
+  latest_round_summary: string | null;
+  latest_round_at: string | null;
+  model: string | null;
+  evidence_hash: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function safeParseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function rowToSummary(row: MailAiSummaryRow): MailAiSummaryRecord {
+  return {
+    accountId: row.account_id,
+    mailId: row.mail_id,
+    subject: row.subject,
+    what: row.what || '',
+    impact: row.impact,
+    action: row.action,
+    urgency: (row.urgency as MailAiUrgency) || 'none',
+    keyFacts: safeParseJson<string[]>(row.key_facts_json, []),
+    keyInfo: safeParseJson<Record<string, string | string[] | null>>(row.key_info_json, {}),
+    quickReplies: safeParseJson<MailAiSummaryRecord['quickReplies']>(row.quick_replies_json, []),
+    model: row.model || '',
+    promptHash: row.prompt_hash || '',
+    evidenceHash: row.evidence_hash || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToThreadSummary(row: MailAiThreadSummaryRow): MailAiThreadSummaryRecord {
+  return {
+    accountId: row.account_id,
+    threadId: row.thread_id,
+    threadSubject: row.thread_subject || '',
+    threadParticipants: safeParseJson<string[]>(row.thread_participants_json, []),
+    mailCount: row.mail_count,
+    overallSummary: row.overall_summary || '',
+    overallOpenLoops: safeParseJson<string[]>(row.overall_open_loops_json, []),
+    overallCommitments: safeParseJson<string[]>(row.overall_commitments_json, []),
+    overallActionItems: safeParseJson<string[]>(row.overall_action_items_json, []),
+    latestRoundSummary: row.latest_round_summary || '',
+    latestRoundAt: row.latest_round_at || '',
+    model: row.model || '',
+    evidenceHash: row.evidence_hash || undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getMailSummary(input: { accountId: number; mailId: string }): MailAiSummaryRecord | null {
+  ensureMailAiSummarySchema();
+  const db = getMailCacheDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM mail_ai_summary WHERE account_id = ? AND mail_id = ?`
+    )
+    .get(input.accountId, input.mailId) as MailAiSummaryRow | undefined;
+  return row ? rowToSummary(row) : null;
+}
+
+export function getThreadSummary(input: {
+  accountId: number;
+  threadId: string;
+}): MailAiThreadSummaryRecord | null {
+  ensureMailAiSummarySchema();
+  const db = getMailCacheDb();
+  const row = db
+    .prepare(
+      `SELECT * FROM mail_ai_thread_summary WHERE account_id = ? AND thread_id = ?`
+    )
+    .get(input.accountId, input.threadId) as MailAiThreadSummaryRow | undefined;
+  return row ? rowToThreadSummary(row) : null;
+}
