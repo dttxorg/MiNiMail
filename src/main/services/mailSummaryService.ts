@@ -509,3 +509,21 @@ export function searchAiSummaries(input: {
     source: 'mail' as const,
   }));
 }
+
+// Phase 1 stubs for the preheat settings helpers. Phase 2 (Task 2.1) will
+// replace these with real settings-table-backed implementations, daily cap
+// tracking, and queue length reporting. For Phase 1 they return a fixed
+// "conservative" status with zero usage so the IPC handlers in 1.8 can be
+// registered and the preload allowlist can be validated.
+export function getPreheatStatus(_accountId: number): PreheatStatus {
+  return {
+    mode: 'conservative',
+    queueLength: 0,
+    dailyUsed: 0,
+    dailyCap: 50,
+  };
+}
+
+export function setPreheatMode(_mode: PreheatMode): PreheatStatus {
+  return getPreheatStatus(0);
+}

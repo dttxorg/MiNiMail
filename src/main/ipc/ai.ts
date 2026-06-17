@@ -59,6 +59,22 @@ import {
   type ContactKnowledgeSettings,
   type ReindexContactKnowledgeRequest,
 } from '../services/contactKnowledgeService';
+import {
+  getMailSummary,
+  getThreadSummary,
+  upsertMailSummary,
+  upsertThreadSummary,
+  searchAiSummaries,
+  getPreheatStatus,
+  setPreheatMode,
+  type UpsertMailSummaryInput,
+  type UpsertThreadSummaryInput,
+} from '../services/mailSummaryService';
+import type {
+  MailAiSummaryRecord,
+  MailAiThreadSummaryRecord,
+  PreheatMode,
+} from '../../shared/email-ai/mailSummaryTypes';
 
 function sanitizeAIProviderError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -274,6 +290,87 @@ export function registerAIHandlers(): void {
       };
     } catch (err) {
       return { success: false, error: sanitizeAIProviderError(err) };
+    }
+  });
+
+  // --- mail-level AI summary (Layer 1 of the knowledge bedrock series) ---
+
+  ipcMain.handle('ai:getMailSummary', async (_event, accountId: number, mailId: string) => {
+    try {
+      const data = getMailSummary({ accountId, mailId });
+      return { success: true, data };
+    } catch (err) {
+      log.warn('[ai:getMailSummary]', err);
+      return { success: false, error: 'lookup_failed' };
+    }
+  });
+
+  ipcMain.handle('ai:getThreadSummary', async (_event, accountId: number, threadId: string) => {
+    try {
+      const data = getThreadSummary({ accountId, threadId });
+      return { success: true, data };
+    } catch (err) {
+      log.warn('[ai:getThreadSummary]', err);
+      return { success: false, error: 'lookup_failed' };
+    }
+  });
+
+  ipcMain.handle(
+    'ai:upsertMailSummary',
+    async (_event, input: UpsertMailSummaryInput) => {
+      try {
+        const data = upsertMailSummary(input);
+        return { success: true, data };
+      } catch (err) {
+        log.warn('[ai:upsertMailSummary]', sanitizeAIProviderError(err));
+        return { success: false, error: 'upsert_failed' };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'ai:upsertThreadSummary',
+    async (_event, input: UpsertThreadSummaryInput) => {
+      try {
+        const data = upsertThreadSummary(input);
+        return { success: true, data };
+      } catch (err) {
+        log.warn('[ai:upsertThreadSummary]', sanitizeAIProviderError(err));
+        return { success: false, error: 'upsert_failed' };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    'ai:searchSummaries',
+    async (_event, accountId: number, query: string, limit?: number) => {
+      try {
+        const data = searchAiSummaries({ accountId, query, limit });
+        return { success: true, data };
+      } catch (err) {
+        log.warn('[ai:searchSummaries]', err);
+        return { success: false, error: 'search_failed' };
+      }
+    }
+  );
+
+  ipcMain.handle('ai:getMailSummaryPreheatStatus', async (_event, accountId: number) => {
+    try {
+      const data = getPreheatStatus(accountId);
+      return { success: true, data };
+    } catch (err) {
+      log.warn('[ai:getMailSummaryPreheatStatus]', err);
+      return { success: false, error: 'lookup_failed' };
+    }
+  });
+
+  ipcMain.handle('ai:setMailSummaryPreheatMode', async (_event, mode: PreheatMode) => {
+    try {
+      const data = setPreheatMode(mode);
+      return { success: true, data };
+    } catch (err) {
+      log.warn('[ai:setMailSummaryPreheatMode]', err);
+      return { success: false, error: 'set_failed' };
     }
   });
 
