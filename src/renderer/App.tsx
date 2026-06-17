@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next';
 /// <reference path="../preload/electronAPI.d.ts" />
 import { Sidebar } from './components/Sidebar';
+import { KnowledgeBasePanel } from './components/KnowledgeBasePanel';
 import { MailList } from './components/MailList';
 import { MailDetail } from './components/MailDetail';
 import { ScheduledSendDetail } from './components/ScheduledSendDetail';
@@ -681,6 +682,7 @@ function App() {
   const [showCompose, setShowCompose] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [knowledgeBaseOpen, setKnowledgeBaseOpen] = useState(false);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new', source: null });
   const [composeRestoreDraft, setComposeRestoreDraft] = useState<ComposeRestoreDraft | null>(null);
   const [composeSessionId, setComposeSessionId] = useState(0);
@@ -3856,6 +3858,7 @@ function App() {
             scheduledCount={scheduledCount}
             appLanguage={appLanguage}
             isMacOS={isMacOS}
+            onOpenKnowledgeBase={() => setKnowledgeBaseOpen(true)}
           />
         </div>
 
@@ -4068,6 +4071,32 @@ function App() {
           onCancelBackupExport={handleCancelBackupExport}
           onOpenBackupFolder={handleOpenBackupFolder}
         />
+
+        {knowledgeBaseOpen && currentAccount && currentAccount !== 'all' && (
+          <div
+            className="fixed inset-0 z-40 flex bg-black/30"
+            onClick={() => setKnowledgeBaseOpen(false)}
+          >
+            <div
+              className="ml-auto h-full w-[480px] max-w-full bg-white shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <KnowledgeBasePanel
+                accountId={currentAccount.id}
+                onOpenMail={(mailId) => {
+                  setKnowledgeBaseOpen(false);
+                  setSelectedFolder('inbox');
+                  // Caller asks the MailDetail to scroll to this mail; we
+                  // simply select the inbox so the user lands in the right
+                  // folder. A future refinement can also open MailDetail
+                  // directly with the given mailId.
+                  void mailId;
+                }}
+                onClose={() => setKnowledgeBaseOpen(false)}
+              />
+            </div>
+          </div>
+        )}
 
         <AddAccountDialog
           ref={addAccountDialogRef}
