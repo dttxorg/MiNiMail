@@ -22,6 +22,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { RendererMailDetail, RendererMailSummary, type LoadMailBodyFn } from '../hooks/useMail';
+import { getOrBuildThreadId, hashPrompt } from '../../shared/email-ai/mailSummaryThread';
+import type { MailAiSummaryRecord } from '../../shared/email-ai/mailSummaryTypes';
 import { type AIEmailSourcePayload, type ContactWiki, useAI } from '../hooks/useAI';
 import { normalizeAiLanguage, normalizeAppLanguage } from '../utils/aiLanguages';
 import { extractReadableEmailText } from '../utils/emailContent';
@@ -70,8 +72,92 @@ const ASSISTANT_RESULT_TTL_MS = 10 * 60 * 1000;
 const ASSISTANT_ERROR_COOLDOWN_MS = 45 * 1000;
 const assistantResultCache = new Map<string, { state: MailAssistantState; expiresAt: number }>();
 
-function getAssistantCacheKey(emailId: string, language: string, contactWikiKey = 'no-wiki'): string {
-  return `${emailId}:${language}:${contactWikiKey}`;
+function getAssistantCacheKey(
+  emailId: string,
+  language: string,
+  contactWikiKey = 'no-wiki',
+  summaryKey = 'no-summary',
+): string {
+  // Layer 1 of the knowledge bedrock series: include the persisted summary
+  // version in the cache key so that when the background preheat worker
+  // (or a later AI re-run) refreshes mail_ai_summary, the next open of this
+  // mail triggers a fresh in-memory AI run that reflects the latest state.
+  return `${emailId}:${language}:${contactWikiKey}:${summaryKey}`;
+}
+
+function extractEmailAddresses(raw: string | undefined | null): string[] {
+  // MailDetail receives `email.to` as a single comma-separated string that
+  // may contain display-name forms like "Alice <a@x.com>, Bob <b@x.com>".
+  // The thread-id helper expects an array of bare email addresses.
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((part) => {
+      const match = part.match(/<([^>]+)>/);
+      return (match?.[1] || part).trim();
+    })
+    .filter((address) => address.includes('@'));
+}
+
+// Layer 1 of the knowledge bedrock series: write the freshly generated AI
+// summary to mail_ai_summary + mail_ai_thread_summary so subsequent opens
+// of the same mail can reuse the persisted version (no cloud round-trip).
+// Best-effort: failures here must NEVER block the in-memory assistant state
+// from rendering, since the user just got a successful AI response.
+async function persistAssistantSummary(input: {
+  accountId: number;
+  mailId: string;
+  subject: string;
+  from: string;
+  to: string;
+  readyState: MailAssistantState;
+  source: { bodyText?: string };
+}): Promise<void> {
+  try {
+    const threadId = getOrBuildThreadId({
+      subject: input.subject || '',
+      from: input.from || '',
+      to: extractEmailAddresses(input.to),
+    });
+    const promptHash = hashPrompt({
+      subject: input.subject || '',
+      body: input.source.bodyText || '',
+    });
+      await window.electronAPI.upsertMailSummary({
+      accountId: input.accountId,
+      mailId: input.mailId,
+      subject: input.subject || '',
+      summary: {
+        what: input.readyState.summary || '',
+        impact: null,
+        action: (input.readyState.actions && input.readyState.actions[0]) || null,
+        urgency: 'none',
+        keyFacts: (input.readyState.keyInfo || []).map((item) =>
+          typeof item === 'string' ? item : (item.value || item.label || ''),
+        ).filter(Boolean).slice(0, 6),
+        keyInfo: { actions: input.readyState.actions || [] },
+        quickReplies: input.readyState.quickReplies.map((body) => ({ style: 'short' as const, body })),
+        model: 'cloud',
+      },
+      promptHash,
+    });
+    await window.electronAPI.upsertThreadSummary({
+      accountId: input.accountId,
+      threadId,
+      threadSubject: input.subject || '',
+      participants: [input.from || '', ...extractEmailAddresses(input.to)],
+      latestMailId: input.mailId,
+      overallSummary: input.readyState.summary || '',
+      overallOpenLoops: [],
+      overallCommitments: [],
+      overallActionItems: (input.readyState.actions || []).slice(0, 3),
+      latestRoundSummary: input.readyState.summary || '',
+      latestRoundAt: new Date().toISOString(),
+      model: 'cloud',
+    });
+  } catch (err) {
+    console.warn('[mailSummary] persist failed', err);
+  }
 }
 
 function rememberAssistantState(key: string, state: MailAssistantState, ttlMs: number) {
@@ -662,7 +748,31 @@ function ConversationMessageCard({
   const [, setCopied] = useState(false); // setCopied used for "Copied" toast; value unused
   const [showRoutingTooltip, setShowRoutingTooltip] = useState(false);
   const [assistantState, setAssistantState] = useState<MailAssistantState>(EMPTY_ASSISTANT_STATE);
+  // Layer 1 of the knowledge bedrock series: persisted mail-level AI summary
+  // loaded from SQLite via ai:getMailSummary. Used to compose a cache key
+  // dimension so cache invalidates when the preheat worker writes a newer
+  // version.
+  const [mailSummary, setMailSummary] = useState<MailAiSummaryRecord | null>(null);
   const [quickReplyDraft, setQuickReplyDraft] = useState('');
+
+  // Load persisted summary for this mail so we can key the in-memory
+  // assistant cache by its updatedAt timestamp. Best-effort: a missing or
+  // failed lookup is fine — we fall back to the no-summary cache key.
+  useEffect(() => {
+    let cancelled = false;
+    setMailSummary(null);
+    if (!email?.id || !email?.accountId) return;
+    void window.electronAPI
+      .getMailSummary(email.accountId, email.id)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && res.data) setMailSummary(res.data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [email?.id, email?.accountId]);
   const [attachmentDownloadStates, setAttachmentDownloadStates] = useState<Record<string, { status: AttachmentActionStatus; error?: string }>>({});
   const detailRequestRef = useRef<Promise<MailEmail> | null>(null);
   const contactWikiAiContext = useMemo(() => buildContactWikiAiContext(contactWiki), [contactWiki]);
@@ -1209,7 +1319,8 @@ function ConversationMessageCard({
   const loadAssistant = useCallback(async (force = false) => {
     const normalizedLanguage = normalizeAiLanguage(aiTargetLanguage);
     const wikiCacheKey = contactWiki ? `${contactWiki.lastIndexedAt}:${contactWiki.stale ? 'stale' : 'ready'}` : 'no-wiki';
-    const cacheKey = getAssistantCacheKey(email.id, normalizedLanguage, wikiCacheKey);
+    const summaryCacheKey = mailSummary ? `s-${mailSummary.updatedAt}` : 'no-summary';
+    const cacheKey = getAssistantCacheKey(email.id, normalizedLanguage, wikiCacheKey, summaryCacheKey);
 
     if (!force) {
       const cached = readAssistantStateCache(cacheKey);
@@ -1257,6 +1368,18 @@ function ConversationMessageCard({
       };
       rememberAssistantState(cacheKey, readyState, ASSISTANT_RESULT_TTL_MS);
       setAssistantState(readyState);
+      // Layer 1 of the knowledge bedrock series: persist the freshly
+      // generated summary to SQLite so the Sidebar "Knowledge Base" search
+      // (Phase 3) and the background preheat worker (Phase 2.2) can use it.
+      void persistAssistantSummary({
+        accountId: email.accountId,
+        mailId: email.id,
+        subject: email.subject || '',
+        from: email.from || '',
+        to: email.to,
+        readyState,
+        source: { bodyText: aiPayload?.body_text || aiPayload?.snippet || '' },
+      });
     } catch (err) {
       console.error('[ConversationMessageCard] assistant load failed:', err);
       const errorState: MailAssistantState = {
@@ -1277,6 +1400,7 @@ function ConversationMessageCard({
     email.id,
     ensureDetailLoaded,
     extractKeyInfo,
+    mailSummary,
     summarizeDetailed,
     suggestActionsDetailed,
     suggestQuickRepliesDetailed,
