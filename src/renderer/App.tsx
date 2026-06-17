@@ -683,6 +683,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [knowledgeBaseOpen, setKnowledgeBaseOpen] = useState(false);
+  const [wikiStaleCount, setWikiStaleCount] = useState(0);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new', source: null });
   const [composeRestoreDraft, setComposeRestoreDraft] = useState<ComposeRestoreDraft | null>(null);
   const [composeSessionId, setComposeSessionId] = useState(0);
@@ -743,6 +744,39 @@ function App() {
   const runBatchAnalysisRef = useRef<(() => Promise<void>) | null>(null);
   const knownAutoAnalyzedIdsRef = useRef(new Set<string>());
   const scheduledSendTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  // L4 of the knowledge bedrock series: proactively show stale contact-wiki
+  // count in the Sidebar so the user notices that the knowledge base needs
+  // a refresh. Refreshes every 60s while a non-all account is active.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      if (!currentAccount || currentAccount === 'all') {
+        if (!cancelled) setWikiStaleCount(0);
+        return;
+      }
+      try {
+        const res = await window.electronAPI.invoke('ai:listContactKnowledgeStats', { accountId: currentAccount.id });
+        if (cancelled) return;
+        const payload = res as {
+          success?: boolean;
+          data?: { contacts?: Array<{ stale?: boolean }> };
+        } | null;
+        if (payload?.success && Array.isArray(payload.data?.contacts)) {
+          const stale = payload.data.contacts.filter((c) => Boolean(c.stale)).length;
+          setWikiStaleCount(stale);
+        }
+      } catch {
+        // Silent failure — the count is decorative, not blocking.
+      }
+    };
+    void refresh();
+    const handle = setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [currentAccount]);
   const activeScheduledSendsRef = useRef(new Set<string>());
   const staleScheduledSendIdsRef = useRef(new Set<string>());
   const promptedMissedScheduledJobIdsRef = useRef(new Set<string>());
@@ -3859,6 +3893,7 @@ function App() {
             appLanguage={appLanguage}
             isMacOS={isMacOS}
             onOpenKnowledgeBase={() => setKnowledgeBaseOpen(true)}
+            knowledgeBaseStaleCount={wikiStaleCount}
           />
         </div>
 

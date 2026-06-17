@@ -70,6 +70,7 @@ interface SidebarProps {
   appLanguage: AppLanguage;
   isMacOS?: boolean;
   onOpenKnowledgeBase?: () => void;
+  knowledgeBaseStaleCount?: number;
 }
 
 const FOLDERS = [
@@ -344,6 +345,7 @@ export function Sidebar({
   appLanguage: appLanguageSetting,
   isMacOS = false,
   onOpenKnowledgeBase,
+  knowledgeBaseStaleCount = 0,
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -469,6 +471,9 @@ export function Sidebar({
             >
               <NavIcon active={false}>{navIcons.starred /* fallback icon; visual identity is from the label */}</NavIcon>
               <span className="flex-1 text-left leading-none">📚 {t('knowledgeBase.title')}</span>
+              {knowledgeBaseStaleCount > 0 && (
+                <span style={{ fontSize: 11, color: uiColor.textSubtle, lineHeight: 1 }}>{knowledgeBaseStaleCount}</span>
+              )}
             </button>
           )}
 
