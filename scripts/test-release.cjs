@@ -267,6 +267,11 @@ const checks = [
     args: ['--import', tsLoaderImport, 'scripts/mail-summary-renderer.test.ts'],
   },
   {
+    name: 'mail summary IPC regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/mail-summary-ipc.test.ts'],
+  },
+  {
     name: 'macOS native experience regression',
     command: process.execPath,
     args: ['scripts/macos-native-experience.test.cjs'],
