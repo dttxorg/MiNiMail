@@ -1651,6 +1651,7 @@ export function SettingsModal({
   const [jevConfidence, setJevConfidence] = useState(0.8);
   const [jevTesting, setJevTesting] = useState(false);
   const [jevTestResult, setJevTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [appVersion, setAppVersion] = useState('0.1.3');
   const [signatureDrafts, setSignatureDrafts] = useState<Record<string, { enabled: boolean; text: string }>>({});
   const [savingSignatureAccountId, setSavingSignatureAccountId] = useState<number | null>(null);
   const [signatureSaveStatus, setSignatureSaveStatus] = useState<{ accountId: number; success: boolean } | null>(null);
@@ -2078,6 +2079,7 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
     void (async () => {
+        window.electronAPI.getVersion().then((v) => { if (v) setAppVersion(v); }).catch(() => {});
       try {
         const contactKnowledgeResponse = await window.electronAPI.invoke('ai:getContactKnowledgeSettings') as {
           success: boolean;
@@ -4744,33 +4746,81 @@ export function SettingsModal({
           )}
 
           {activeNav === 'about' && (
-            <div className="px-6 py-5">
-              <div className="mx-auto w-full max-w-[560px]">
-              <div className="mb-4">
-                <p className="text-[13px] font-semibold text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"', letterSpacing: '-0.01em' }}>
-                  {ui.about}
-                </p>
-              </div>
-              <div className="rounded-xl overflow-hidden" style={{ backgroundColor: '#161618' }}>
-                {[
-                  { label: ui.appName, value: 'MiniMail' },
-                  { label: ui.version, value: '1.0.0' },
-                  { label: 'Electron', value: '41.1.1' },
-                  { label: ui.buildDate, value: '2026-04' },
-                ].map((row, index, rows) => (
-                  <div
-                    key={row.label}
-                    className="flex items-center justify-between px-3 py-2"
-                    style={{ borderBottom: index < rows.length - 1 ? '1px solid #1c1c1e' : 'none' }}
-                  >
-                    <span className="text-[11px]" style={{ color: '#636366' }}>{row.label}</span>
-                    <span className="text-[11px] text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>{row.value}</span>
+            <div className="px-6 py-6">
+              <div className="mx-auto w-full max-w-[560px] space-y-5">
+                {/* Hero Header */}
+                <div className="flex flex-col items-center text-center pt-2 pb-1">
+                  <img
+                    src={minimailLogo}
+                    alt="MiNiMail"
+                    className="w-16 h-16 object-contain mb-3 drop-shadow-[0_8px_20px_rgba(124,58,237,0.25)]"
+                    draggable={false}
+                  />
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[20px] font-bold text-white tracking-[-0.02em]">MiNiMail</h2>
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[#30d158]/20 text-[#30d158] border border-[#30d158]/30">
+                      v{appVersion}
+                    </span>
                   </div>
-                ))}
-              </div>
-              <p className="text-[11px] mt-4 leading-relaxed" style={{ color: '#3a3a3c' }}>
-                {ui.appDescription}
-              </p>
+                  <p className="text-[12px] mt-1 text-[#8e8e93]">
+                    {appLanguage === 'zh'
+                      ? 'AI 原生桌面邮件客户端 · 本地优先与隐私感知'
+                      : 'AI-Native Desktop Email Client · Local-First & Privacy-Aware'}
+                  </p>
+                </div>
+
+                {/* Grouped Information List */}
+                <div className="rounded-2xl border border-[#2a2a2d] bg-[#161618] overflow-hidden">
+                  {[
+                    { label: appLanguage === 'zh' ? '应用名称' : 'App Name', value: 'MiNiMail' },
+                    { label: appLanguage === 'zh' ? '客户端版本' : 'Client Version', value: `v${appVersion}` },
+                    { label: appLanguage === 'zh' ? '决策引擎' : 'Decision Engine', value: 'TypeSafe Jev System One' },
+                    { label: appLanguage === 'zh' ? '运行架构' : 'Framework', value: 'Electron 41.1.1 · React 19' },
+                    { label: appLanguage === 'zh' ? '构建版本周期' : 'Build Cycle', value: '2026-09' },
+                    { label: appLanguage === 'zh' ? '开源协议' : 'License', value: 'ISC License' },
+                  ].map((row, index, rows) => (
+                    <div
+                      key={row.label}
+                      className="flex items-center justify-between px-4 py-2.5"
+                      style={{ borderBottom: index < rows.length - 1 ? '1px solid #242426' : 'none' }}
+                    >
+                      <span className="text-[11px] text-[#8e8e93]">{row.label}</span>
+                      <span className="text-[11px] font-medium text-white">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Description */}
+                <div className="rounded-2xl border border-[#2a2a2d] bg-[#161618] p-4 text-[11px] leading-relaxed text-[#8e8e93]">
+                  {appLanguage === 'zh'
+                    ? 'MiNiMail 是一款以隐私安全为核心的下一代邮件客户端。内置 TypeSafe Jev System One 极速决策引擎，支持邮件毫秒级分类、长会话往来脉络提炼、全链路实体脱敏与本地 SQLite 语义沉淀，提供沉浸无干扰的桌面办公体验。'
+                    : 'MiNiMail is a privacy-first, local-first AI email client. Built with TypeSafe Jev System One for sub-second email classification, lossless thread lineage compaction, and end-to-end entity sanitization.'}
+                </div>
+
+                {/* Quick Action Links */}
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail')}
+                    className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
+                  >
+                    ⭐ GitHub
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/releases')}
+                    className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
+                  >
+                    📄 {appLanguage === 'zh' ? '版本日志' : 'Releases'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/issues')}
+                    className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
+                  >
+                    🐞 {appLanguage === 'zh' ? '问题反馈' : 'Issues'}
+                  </button>
+                </div>
               </div>
             </div>
           )}
