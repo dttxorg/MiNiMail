@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { Modal } from './Modal';
+import minimailLogo from '../assets/minimail-logo.png';
 import { normalizeAppLanguage, type AppLanguage } from '../utils/aiLanguages';
 import {
   getAutoFetchIntervalOptions,
@@ -4801,21 +4802,21 @@ export function SettingsModal({
                 <div className="flex items-center justify-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail')}
+                    onClick={() => (typeof window.electronAPI?.openExternal === 'function' ? window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail') : window.electronAPI?.invoke?.('app:openExternal', 'https://github.com/dttxorg/MiNiMail'))}
                     className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
                   >
                     ⭐ GitHub
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/releases')}
+                    onClick={() => (typeof window.electronAPI?.openExternal === 'function' ? window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/releases') : window.electronAPI?.invoke?.('app:openExternal', 'https://github.com/dttxorg/MiNiMail/releases'))}
                     className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
                   >
                     📄 {appLanguage === 'zh' ? '版本日志' : 'Releases'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/issues')}
+                    onClick={() => (typeof window.electronAPI?.openExternal === 'function' ? window.electronAPI.openExternal('https://github.com/dttxorg/MiNiMail/issues') : window.electronAPI?.invoke?.('app:openExternal', 'https://github.com/dttxorg/MiNiMail/issues'))}
                     className="px-3 py-1.5 rounded-lg border border-[#2a2a2d] bg-[#1c1c1e] text-[11px] text-white hover:bg-[#252528] transition-colors cursor-pointer"
                   >
                     🐞 {appLanguage === 'zh' ? '问题反馈' : 'Issues'}
