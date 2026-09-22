@@ -75,6 +75,14 @@ import type {
   MailAiThreadSummaryRecord,
   PreheatMode,
 } from '../../shared/email-ai/mailSummaryTypes';
+import {
+  getJevSettings,
+  saveJevSettings,
+  testJevConnection,
+  classifyEmailViaJev,
+  compactThreadViaJev,
+} from '../services/jevService';
+import type { JevSettings, JevThreadMailInput } from '../../shared/email-ai/jev';
 
 function sanitizeAIProviderError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -536,5 +544,65 @@ export function registerAIHandlers(): void {
     }
   });
 
+
+  // Jev System One integration IPC handlers
+  ipcMain.handle('ai:getJevSettings', async () => {
+    try {
+      return { success: true, data: getJevSettings() };
+    } catch (err) {
+      log.error('[ai:getJevSettings]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:saveJevSettings', async (_event, settings: Partial<JevSettings>) => {
+    try {
+      saveJevSettings(settings);
+      return { success: true, data: getJevSettings() };
+    } catch (err) {
+      log.error('[ai:saveJevSettings]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:testJevConnection', async (_event, overrides?: Partial<JevSettings>) => {
+    try {
+      return await testJevConnection(overrides);
+    } catch (err) {
+      log.error('[ai:testJevConnection]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:classifyWithJev', async (_event, input: {
+    id: string;
+    subject: string;
+    from: string;
+    fromName?: string;
+    snippet?: string;
+    bodyText?: string;
+    hasAttachment?: boolean;
+  }) => {
+    try {
+      const data = await classifyEmailViaJev(input);
+      return { success: true, data };
+    } catch (err) {
+      log.error('[ai:classifyWithJev]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:compactThreadWithJev', async (_event, payload: {
+    threadId: string;
+    mails: JevThreadMailInput[];
+  }) => {
+    try {
+      const data = await compactThreadViaJev(payload.threadId, payload.mails);
+      return { success: true, data };
+    } catch (err) {
+      log.error('[ai:compactThreadWithJev]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
   log.info('AI IPC handlers registered');
 }

@@ -1,6 +1,6 @@
 {
   "name": "minimail",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Spark-style email client for Windows",
   "main": "dist/main/main/index.js",

@@ -73,3 +73,4 @@ export {
 } from './redactSensitiveEntities';
 export { classifyGitHubPriority } from './githubPriorityClassifier';
 export { analyzeGitHubNotification, buildGitHubNotificationThread, parseGitHubDedicatedResult } from './githubNotifications';
+export * from './jev';

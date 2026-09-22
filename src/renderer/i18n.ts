@@ -232,8 +232,10 @@ const resources = {
         aggressiveHint: '每天最多 200 次,补齐最近 30 天',
         usage: '今日 {used}/{cap}',
       },
+      rendererErrorOccurred: '界面层出现了一个错误',
+      unhandledRejectionOccurred: '后台任务执行失败',
     },
-      rendererErrorOccurred: '界面层出现了一个错误',     unhandledRejectionOccurred: '后台任务执行失败', },
+  },
   en: {
     translation: {
       // Sidebar
@@ -464,8 +466,10 @@ const resources = {
         aggressiveHint: 'Max 200/day, last 30 days',
         usage: 'Today {used}/{cap}',
       },
+      rendererErrorOccurred: 'An unexpected error occurred in the interface',
+      unhandledRejectionOccurred: 'A background task failed',
     },
-      rendererErrorOccurred: 'An unexpected error occurred in the interface',     unhandledRejectionOccurred: 'A background task failed', },
+  },
   ja: {
     translation: {
       // Sidebar
@@ -668,8 +672,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Gmail OAuth 2.0認証',
       gmailOAuthHint: 'Googleログインにリダイレクトされます。AI設定でOAuth資格情報を構成してください。',
+      rendererErrorOccurred: 'インターフェースで予期しないエラーが発生しました',
+      unhandledRejectionOccurred: 'バックグラウンドタスクが失敗しました',
     },
-      rendererErrorOccurred: 'インターフェースで予期しないエラーが発生しました',     unhandledRejectionOccurred: 'バックグラウンドタスクが失敗しました', },
+  },
   ko: {
     translation: {
       // Sidebar
@@ -872,8 +878,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Gmail OAuth 2.0 인증',
       gmailOAuthHint: 'Google 로그인으로 리디렉션됩니다. AI 설정에서 OAuth 자격 증명을 구성하세요.',
+      rendererErrorOccurred: '인터페이스에서 예기치 못한 오류가 발생했습니다',
+      unhandledRejectionOccurred: '백그라운드 작업이 실패했습니다',
     },
-      rendererErrorOccurred: '인터페이스에서 예기치 못한 오류가 발생했습니다',     unhandledRejectionOccurred: '백그라운드 작업이 실패했습니다', },
+  },
   es: {
     translation: {
       // Sidebar
@@ -1076,8 +1084,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Autenticación Gmail OAuth 2.0',
       gmailOAuthHint: 'Será redirigido a Google. Configure credenciales OAuth en ajustes de IA.',
+      rendererErrorOccurred: 'Ocurrió un error inesperado en la interfaz',
+      unhandledRejectionOccurred: 'Una tarea en segundo plano falló',
     },
-      rendererErrorOccurred: 'Ocurrió un error inesperado en la interfaz',     unhandledRejectionOccurred: 'Una tarea en segundo plano falló', },
+  },
   fr: {
     translation: {
       // Sidebar
@@ -1280,8 +1290,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Authentification Gmail OAuth 2.0',
       gmailOAuthHint: 'Vous serez redirigé vers Google. Configurez les identifiants OAuth dans les paramètres IA.',
+      rendererErrorOccurred: "Une erreur inattendue s\u2019est produite dans l\u2019interface",
+      unhandledRejectionOccurred: "Une t\u00e2che en arri\u00e8re-plan a \u00e9chou\u00e9",
     },
-      rendererErrorOccurred: "Une erreur inattendue s\u2019est produite dans l\u2019interface",     unhandledRejectionOccurred: "Une t\u00e2che en arri\u00e8re-plan a \u00e9chou\u00e9", },
+  },
   de: {
     translation: {
       // Sidebar
@@ -1484,8 +1496,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Gmail OAuth 2.0-Authentifizierung',
       gmailOAuthHint: 'Sie werden zu Google weitergeleitet. Konfigurieren Sie OAuth-Anmeldedaten in den KI-Einstellungen.',
+      rendererErrorOccurred: 'Ein unerwarteter Fehler ist in der Oberfläche aufgetreten',
+      unhandledRejectionOccurred: 'Eine Hintergrundaufgabe ist fehlgeschlagen',
     },
-      rendererErrorOccurred: 'Ein unerwarteter Fehler ist in der Oberfläche aufgetreten',     unhandledRejectionOccurred: 'Eine Hintergrundaufgabe ist fehlgeschlagen', },
+  },
   ru: {
     translation: {
       // Sidebar
@@ -1688,8 +1702,10 @@ const resources = {
       googleOAuth: 'Google OAuth',
       gmailOAuthNote: 'Аутентификация Gmail OAuth 2.0',
       gmailOAuthHint: 'Вы будете перенаправлены в Google. Настройте OAuth-учетные данные в настройках ИИ.',
+      rendererErrorOccurred: 'В интерфейсе произошла непредвиденная ошибка',
+      unhandledRejectionOccurred: 'Сбой фоновой задачи',
     },
-      rendererErrorOccurred: 'В интерфейсе произошла непредвиденная ошибка',     unhandledRejectionOccurred: 'Сбой фоновой задачи', },
+  },
 };
 
 i18n.use(initReactI18next).init({

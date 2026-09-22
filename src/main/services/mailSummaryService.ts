@@ -32,6 +32,7 @@ import {
   hashPrompt,
   normalizeSubjectForThread,
 } from '../../shared/email-ai/mailSummaryThread';
+import { redactSensitiveEntities } from '../../shared/email-ai';
 
 // Re-export so existing main-process callers can keep importing from
 // './mailSummaryService' without depending on the shared module path.
@@ -393,11 +394,16 @@ export function upsertThreadSummary(input: UpsertThreadSummaryInput): MailAiThre
 }
 
 function tokenizeQueryForLike(query: string): string[] {
-  return String(query || '')
+  const raw = String(query || '').trim();
+  if (!raw) return [];
+  const parts = raw
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 2)
-    .slice(0, 6);
+    .filter(Boolean);
+  if (parts.length > 0) {
+    return parts.slice(0, 6);
+  }
+  return [raw.slice(0, 20)];
 }
 
 function buildLikeSnippet(value: string | null | undefined, max = 160): string {
@@ -415,75 +421,142 @@ export function searchAiSummaries(input: {
   const cleaned = String(input.query || '').trim();
   if (!cleaned) return [];
   const db = getMailCacheDb();
-  const ftsQuery = cleaned
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter((t) => t.length >= 2)
-    .map((t) => `${t}*`)
-    .join(' ');
+  const hits: MailAiSummarySearchHit[] = [];
 
-  if (ftsQuery) {
-    try {
-      const rows = db
-        .prepare(
-          `SELECT mail_id, subject, what, impact, action, bm25(mail_ai_summary_fts) AS score
-           FROM mail_ai_summary_fts
-           WHERE account_id = ? AND mail_ai_summary_fts MATCH ?
-           ORDER BY score ASC
-           LIMIT ?`
-        )
-        .all(input.accountId, ftsQuery, limit) as Array<{
-        mail_id: string;
-        subject: string;
-        what: string;
-        impact: string;
-        action: string;
-        score: number;
-      }>;
-      return rows.map((r) => ({
+  const isChinese = /[\u4e00-\u9fa5]/.test(cleaned);
+  const tokens = tokenizeQueryForLike(cleaned);
+
+  // 1. Search mail_ai_summary
+  if (!isChinese) {
+    const ftsQuery = cleaned
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter((t) => t.length >= 2)
+      .map((t) => `${t}*`)
+      .join(' ');
+
+    if (ftsQuery) {
+      try {
+        const ftsRows = db
+          .prepare(
+            `SELECT m.mail_id, m.subject, m.what, m.impact, m.action, m.updated_at, bm25(f) AS fts_score
+             FROM mail_ai_summary_fts f
+             JOIN mail_ai_summary m ON m.mail_id = f.mail_id AND m.account_id = f.account_id
+             WHERE f.account_id = ? AND mail_ai_summary_fts MATCH ?
+             LIMIT ?`
+          )
+          .all(input.accountId, ftsQuery, limit) as Array<{
+          mail_id: string;
+          subject: string;
+          what: string;
+          impact: string;
+          action: string;
+          updated_at: string;
+          fts_score: number;
+        }>;
+
+        for (const r of ftsRows) {
+          const baseScore = Math.max(1, 100 / (1 + Math.max(0, r.fts_score)));
+          const confidence = computeEffectiveConfidence(r.updated_at);
+          hits.push({
+            mailId: r.mail_id,
+            subject: r.subject,
+            snippet: buildLikeSnippet(r.what || r.action || r.impact),
+            score: baseScore * confidence,
+            source: 'mail' as const,
+          });
+        }
+      } catch (error) {
+        log.warn('[mailSummary] FTS5 search failed, falling back to LIKE', error);
+      }
+    }
+  }
+
+  if (hits.length === 0 && tokens.length > 0) {
+    const where = tokens
+      .map(() => '(subject LIKE ? OR what LIKE ? OR action LIKE ? OR key_facts_json LIKE ?)')
+      .join(' AND ');
+    const params: string[] = [];
+    for (const t of tokens) {
+      const wildcard = `%${t}%`;
+      params.push(wildcard, wildcard, wildcard, wildcard);
+    }
+    params.push(String(input.accountId), String(limit));
+
+    const rows = db
+      .prepare(
+        `SELECT mail_id, subject, what, impact, action, updated_at FROM mail_ai_summary
+         WHERE ${where} AND account_id = ? LIMIT ?`
+      )
+      .all(...params) as Array<{
+      mail_id: string;
+      subject: string;
+      what: string;
+      impact: string;
+      action: string;
+      updated_at: string;
+    }>;
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const baseScore = (rows.length - i) * 10;
+      const confidence = computeEffectiveConfidence(r.updated_at);
+      hits.push({
         mailId: r.mail_id,
         subject: r.subject,
         snippet: buildLikeSnippet(r.what || r.action || r.impact),
-        score: -r.score,
+        score: baseScore * confidence,
         source: 'mail' as const,
-      }));
-    } catch (error) {
-      log.warn('[mailSummary] FTS5 search failed, falling back to LIKE', {
-        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  const likeTokens = tokenizeQueryForLike(cleaned);
-  if (likeTokens.length === 0) return [];
-  const where = likeTokens
-    .map(() => '(subject LIKE ? OR what LIKE ? OR action LIKE ? OR key_facts_json LIKE ?)')
-    .join(' AND ');
-  const params: string[] = [];
-  for (const t of likeTokens) {
-    const wildcard = `%${t}%`;
-    params.push(wildcard, wildcard, wildcard, wildcard);
+  // 2. Search mail_ai_thread_summary (Thread 级别搜索接线)
+  if (tokens.length > 0) {
+    const threadWhere = tokens
+      .map(() => '(thread_subject LIKE ? OR overall_summary LIKE ? OR overall_open_loops_json LIKE ? OR overall_commitments_json LIKE ?)')
+      .join(' AND ');
+    const threadParams: string[] = [];
+    for (const t of tokens) {
+      const wildcard = `%${t}%`;
+      threadParams.push(wildcard, wildcard, wildcard, wildcard);
+    }
+    threadParams.push(String(input.accountId), String(limit));
+
+    try {
+      const threadRows = db
+        .prepare(
+          `SELECT thread_id, latest_mail_id, thread_subject, overall_summary, latest_round_summary, updated_at
+           FROM mail_ai_thread_summary
+           WHERE ${threadWhere} AND account_id = ? LIMIT ?`
+        )
+        .all(...threadParams) as Array<{
+        thread_id: string;
+        latest_mail_id: string;
+        thread_subject: string;
+        overall_summary: string;
+        latest_round_summary: string;
+        updated_at: string;
+      }>;
+
+      for (let i = 0; i < threadRows.length; i++) {
+        const tr = threadRows[i];
+        const baseScore = (threadRows.length - i) * 12;
+        const confidence = computeEffectiveConfidence(tr.updated_at);
+        hits.push({
+          mailId: tr.latest_mail_id || tr.thread_id,
+          subject: tr.thread_subject || '会话脉络',
+          snippet: buildLikeSnippet(tr.overall_summary || tr.latest_round_summary),
+          score: baseScore * confidence,
+          source: 'thread' as const,
+        });
+      }
+    } catch (err) {
+      log.warn('[mailSummary] thread summary search failed:', err);
+    }
   }
-  params.push(String(input.accountId), String(limit));
-  const rows = db
-    .prepare(
-      `SELECT mail_id, subject, what, impact, action FROM mail_ai_summary
-       WHERE ${where} AND account_id = ? LIMIT ?`
-    )
-    .all(...params) as Array<{
-    mail_id: string;
-    subject: string;
-    what: string;
-    impact: string;
-    action: string;
-  }>;
-  return rows.map((r, i) => ({
-    mailId: r.mail_id,
-    subject: r.subject,
-    snippet: buildLikeSnippet(r.what || r.action || r.impact),
-    score: rows.length - i,
-    source: 'mail' as const,
-  }));
+
+  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 // L5 of the knowledge bedrock series: confidence decay.
@@ -587,17 +660,34 @@ export async function processPreSummarizeQueue(): Promise<{ processed: number; s
 }
 
 async function runAiSummaryForJob(job: PreheatJob): Promise<void> {
-  // Lazy import to avoid loading the AI provider stack unless the worker
-  // actually runs. This keeps `mailSummaryService.ts` importable from
-  // renderer-side test rigs without dragging in the provider manager.
   const { callAI } = await import('./ai');
+  // Enforce privacy redaction before calling cloud LLM
+  const redactedSubject = redactSensitiveEntities(job.subject || '').redactedText;
+  const redactedBody = redactSensitiveEntities(job.bodyText || '').redactedText;
   const promptHash = hashPrompt({ subject: job.subject, body: job.bodyText });
+
+  const systemPrompt = [
+    'You are an executive email assistant.',
+    'Summarize the email into a concise, actionable JSON object.',
+    'Output STRICT JSON ONLY. No markdown, no prose wrapping.',
+    '',
+    'Required JSON schema:',
+    '{',
+    '  "what": "1-2 sentence core message or key proposal",',
+    '  "impact": "business, project or relationship context (or null)",',
+    '  "action": "clear action item required from recipient (or null)",',
+    '  "urgency": "now | today | later | none",',
+    '  "keyFacts": ["key fact 1", "key fact 2"]',
+    '}',
+  ].join('\n');
+
   const response = await callAI({
-    system: 'You summarize a single email. Return one strict JSON object only. No markdown.',
-    prompt: `Subject: ${job.subject || '(no subject)'}\n\nBody:\n${job.bodyText.slice(0, 8000)}`,
-    temperature: 0.3,
-    maxTokens: 600,
+    system: systemPrompt,
+    prompt: `Subject: ${redactedSubject || '(no subject)'}\n\nBody:\n${redactedBody.slice(0, 6000)}`,
+    temperature: 0.2,
+    maxTokens: 500,
   });
+
   if (!response.success || !response.content) return;
   const parsed = parseAiSummaryResponse(response.content);
   upsertMailSummary({
@@ -610,28 +700,46 @@ async function runAiSummaryForJob(job: PreheatJob): Promise<void> {
 }
 
 function parseAiSummaryResponse(content: string): Omit<MailAiSummaryRecord, 'accountId' | 'mailId' | 'subject' | 'createdAt' | 'updatedAt' | 'promptHash'> {
-  const trimmed = content.trim();
+  const trimmed = content
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/, '')
+    .replace(/\s*```$/, '')
+    .trim();
+
   try {
     const obj = JSON.parse(trimmed) as Record<string, unknown>;
-    const urgency = String(obj.urgency || 'none');
+    const urgency = String(obj.urgency || 'none').toLowerCase();
     const validUrgency = ['now', 'today', 'later', 'none'].includes(urgency) ? urgency : 'none';
+
+    const what = String(obj.what || obj.summary || obj.content || obj.overview || '').trim();
+    const impact = obj.impact ? String(obj.impact).trim() : null;
+    const action = obj.action ? String(obj.action).trim() : (obj.actionItem ? String(obj.actionItem).trim() : null);
+
+    const keyFactsRaw = obj.keyFacts || obj.key_facts || obj.points || obj.facts;
+    const keyFacts = Array.isArray(keyFactsRaw)
+      ? keyFactsRaw.map((x) => String(x)).filter(Boolean).slice(0, 6)
+      : [];
+
     return {
-      what: String(obj.what || '').trim(),
-      impact: obj.impact == null ? null : String(obj.impact).trim(),
-      action: obj.action == null ? null : String(obj.action).trim(),
+      what: what || '邮件已完成语义解析。',
+      impact,
+      action,
       urgency: validUrgency as MailAiUrgency,
-      keyFacts: Array.isArray(obj.keyFacts)
-        ? (obj.keyFacts as unknown[]).map((x) => String(x)).filter(Boolean).slice(0, 6)
-        : [],
-      keyInfo: typeof obj.keyInfo === 'object' && obj.keyInfo
-        ? obj.keyInfo as MailAiSummaryRecord['keyInfo']
-        : {},
+      keyFacts,
+      keyInfo: typeof obj.keyInfo === 'object' && obj.keyInfo ? obj.keyInfo as any : {},
       quickReplies: [],
       model: 'cloud',
     };
   } catch {
+    const cleanText = trimmed
+      .replace(/\{[\s\S]*?\}/g, '')
+      .replace(/[{"}\[\]]/g, '')
+      .replace(/what:|summary:|impact:|action:/gi, '')
+      .trim();
+
     return {
-      what: trimmed.slice(0, 240),
+      what: cleanText.slice(0, 240) || trimmed.slice(0, 160),
       impact: null,
       action: null,
       urgency: 'none',
@@ -714,4 +822,52 @@ function incrementDailyCount(): void {
   maybeResetDailyCount();
   const next = Number(getSettingsValue(SETTING_KEY_DAILY_COUNT) ?? 0) + 1;
   setSettingsValue(SETTING_KEY_DAILY_COUNT, String(next));
+}
+
+/**
+ * Organizes and persists an email thread's lineage using Jev Compaction decisions.
+ * Prunes conversational chatter, extracts open loops and commitments, and writes to DB.
+ */
+export async function organizeThreadLineageWithJev(input: {
+  accountId: number;
+  threadId: string;
+  threadSubject: string;
+  mails: Array<{
+    id: string;
+    from: string;
+    date: string;
+    subject: string;
+    bodyText: string;
+    snippet?: string;
+  }>;
+}): Promise<MailAiThreadSummaryRecord | null> {
+  const { isJevEnabled, compactThreadViaJev } = await import('./jevService');
+  if (!isJevEnabled()) return null;
+
+  const compaction = await compactThreadViaJev(input.threadId, input.mails);
+  if (!compaction) return null;
+
+  const latestMail = input.mails[input.mails.length - 1];
+  const participants = Array.from(new Set(input.mails.map((m) => m.from).filter(Boolean)));
+
+  const timelineSummary = compaction.compactedTimeline
+    .map((item, idx) => `${idx + 1}. [${item.date.slice(0, 10)}] ${item.from}: ${item.summaryHint}`)
+    .join('\n');
+
+  const overallSummary = `[Jev 脉络整理 / 精简后 ${compaction.keptMailCount} 封关键邮件 (共 ${compaction.originalMailCount} 封)]:\n${timelineSummary}`;
+
+  return upsertThreadSummary({
+    accountId: input.accountId,
+    threadId: input.threadId,
+    threadSubject: input.threadSubject,
+    participants,
+    latestMailId: latestMail?.id || '',
+    overallSummary,
+    overallOpenLoops: compaction.openLoops,
+    overallCommitments: compaction.commitments,
+    overallActionItems: compaction.openLoops,
+    latestRoundSummary: compaction.compactedTimeline[compaction.compactedTimeline.length - 1]?.summaryHint || '',
+    latestRoundAt: latestMail?.date || new Date().toISOString(),
+    model: 'jev-latest',
+  });
 }

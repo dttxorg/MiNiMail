@@ -1630,6 +1630,13 @@ export function SettingsModal({
   const [isSettingEmbeddingModelProfile, setIsSettingEmbeddingModelProfile] = useState<string | null>(null);
   const [contactKnowledgeEnabled, setContactKnowledgeEnabled] = useState(false);
   const [contactBehaviorEnabled, setContactBehaviorEnabled] = useState(false);
+  const [jevEnabled, setJevEnabled] = useState(false);
+  const [jevApiKey, setJevApiKey] = useState('');
+  const [jevBaseUrl, setJevBaseUrl] = useState('https://api.typesafe.ai/v1/systemone');
+  const [jevModel, setJevModel] = useState('jev-latest');
+  const [jevConfidence, setJevConfidence] = useState(0.8);
+  const [jevTesting, setJevTesting] = useState(false);
+  const [jevTestResult, setJevTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [signatureDrafts, setSignatureDrafts] = useState<Record<string, { enabled: boolean; text: string }>>({});
   const [savingSignatureAccountId, setSavingSignatureAccountId] = useState<number | null>(null);
   const [signatureSaveStatus, setSignatureSaveStatus] = useState<{ accountId: number; success: boolean } | null>(null);
@@ -2071,6 +2078,17 @@ export function SettingsModal({
         };
         if (contactBehaviorResponse.success && contactBehaviorResponse.data) {
           setContactBehaviorEnabled(Boolean(contactBehaviorResponse.data.enabled));
+        }
+        const jevResponse = await window.electronAPI.invoke('ai:getJevSettings') as {
+          success: boolean;
+          data?: { enabled: boolean; apiKey: string; baseUrl: string; model: string; confidenceThreshold: number };
+        };
+        if (jevResponse?.success && jevResponse.data) {
+          setJevEnabled(Boolean(jevResponse.data.enabled));
+          setJevApiKey(jevResponse.data.apiKey || '');
+          setJevBaseUrl(jevResponse.data.baseUrl || 'https://api.typesafe.ai/v1/systemone');
+          setJevModel(jevResponse.data.model || 'jev-latest');
+          setJevConfidence(jevResponse.data.confidenceThreshold ?? 0.8);
         }
 
         const providerProfilesResponse = await window.electronAPI.invoke('ai:getProviderProfiles') as {
@@ -2747,9 +2765,46 @@ export function SettingsModal({
       await window.electronAPI.invoke('ai:saveContactBehaviorSettings', {
         enabled: contactBehaviorEnabled,
       });
+      await window.electronAPI.invoke('ai:saveJevSettings', {
+        enabled: jevEnabled,
+        apiKey: jevApiKey,
+        baseUrl: jevBaseUrl,
+        model: jevModel,
+        confidenceThreshold: jevConfidence,
+      });
       setSaved(true);
     } catch {
       // Keep silent until explicit error UI is added.
+    }
+  }
+  async function handleTestJev() {
+    setJevTesting(true);
+    setJevTestResult(null);
+    try {
+      const res = await window.electronAPI.invoke('ai:testJevConnection', {
+        enabled: true,
+        apiKey: jevApiKey,
+        baseUrl: jevBaseUrl,
+        model: jevModel,
+      }) as { success: boolean; latencyMs?: number; error?: string };
+      if (res.success) {
+        setJevTestResult({
+          success: true,
+          message: appLanguage === 'zh' ? `连接成功 (${res.latencyMs}ms)` : `Connected (${res.latencyMs}ms)`,
+        });
+      } else {
+        setJevTestResult({
+          success: false,
+          message: res.error || (appLanguage === 'zh' ? '连接失败' : 'Connection failed'),
+        });
+      }
+    } catch (err) {
+      setJevTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setJevTesting(false);
     }
   }
 
@@ -4519,6 +4574,84 @@ export function SettingsModal({
                   ))}
                 </select>
                 <p className="text-[10px] mt-2" style={{ color: '#636366' }}>{ui.aiPrivacyHint}</p>
+              </div>
+
+              <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3 h-3" style={{ color: '#0a84ff' }} />
+                      <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
+                        {appLanguage === 'zh' ? 'Jev 决策助手 (TypeSafe Jev System One)' : 'Jev Decision Engine (TypeSafe Jev)'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>
+                      {appLanguage === 'zh'
+                        ? '默认关闭。开启后，通过 Jev System One 极速研判邮件分类与会话脉络裁剪。所有发往 Jev 的数据将严格先经过本地隐私脱敏；关闭时完全保持原本的本地正则与大模型流程。'
+                        : 'Disabled by default. Uses Jev System One for low-latency classification and thread lineage compaction. All data is sanitized locally first. Falls back to legacy rules when disabled.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setJevEnabled((v) => !v)}
+                    className="relative mt-0.5 shrink-0 rounded-full transition-colors cursor-pointer"
+                    style={{ backgroundColor: jevEnabled ? '#0071e3' : '#2a2a2d', height: '18px', width: '32px' }}
+                  >
+                    <span className="absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-[left]" style={{ left: jevEnabled ? '14px' : '2px' }} />
+                  </button>
+                </div>
+
+                {jevEnabled && (
+                  <div className="mt-3 pt-3 border-t border-[#2a2a2d] space-y-2">
+                    <div>
+                      <label className="text-[10px] text-[#8e8e93] block mb-1">TypeSafe API Key</label>
+                      <input
+                        type="password"
+                        value={jevApiKey}
+                        onChange={(e) => setJevApiKey(e.target.value)}
+                        placeholder="ts_..."
+                        className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
+                        style={{ backgroundColor: '#0d0d0f' }}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-[#8e8e93] block mb-1">Base URL</label>
+                        <input
+                          type="text"
+                          value={jevBaseUrl}
+                          onChange={(e) => setJevBaseUrl(e.target.value)}
+                          className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white focus:outline-none"
+                          style={{ backgroundColor: '#0d0d0f' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#8e8e93] block mb-1">Model</label>
+                        <input
+                          type="text"
+                          value={jevModel}
+                          onChange={(e) => setJevModel(e.target.value)}
+                          className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white focus:outline-none"
+                          style={{ backgroundColor: '#0d0d0f' }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={handleTestJev}
+                        disabled={jevTesting || !jevApiKey.trim()}
+                        className="px-2.5 py-1 text-[11px] rounded-md bg-[#2a2a2d] text-white hover:bg-[#3a3a3d] transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {jevTesting ? (appLanguage === 'zh' ? '测试中...' : 'Testing...') : (appLanguage === 'zh' ? '测试连接' : 'Test Connection')}
+                      </button>
+                      {jevTestResult && (
+                        <span className={`text-[10px] ${jevTestResult.success ? 'text-green-400' : 'text-red-400'}`}>
+                          {jevTestResult.message}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>

@@ -141,20 +141,50 @@ async function persistAssistantSummary(input: {
       },
       promptHash,
     });
-    await window.electronAPI.upsertThreadSummary({
-      accountId: input.accountId,
-      threadId,
-      threadSubject: input.subject || '',
-      participants: [input.from || '', ...extractEmailAddresses(input.to)],
-      latestMailId: input.mailId,
-      overallSummary: input.readyState.summary || '',
-      overallOpenLoops: [],
-      overallCommitments: [],
-      overallActionItems: (input.readyState.actions || []).slice(0, 3),
-      latestRoundSummary: input.readyState.summary || '',
-      latestRoundAt: new Date().toISOString(),
-      model: 'cloud',
-    });
+    // Safely update thread summary without wiping historical overall summary or commitments
+    const existingThreadRes = await window.electronAPI.getThreadSummary(input.accountId, threadId).catch(() => null);
+    const existingThread = existingThreadRes?.success ? existingThreadRes.data : null;
+
+    if (!existingThread) {
+      await window.electronAPI.upsertThreadSummary({
+        accountId: input.accountId,
+        threadId,
+        threadSubject: input.subject || '',
+        participants: [input.from || '', ...extractEmailAddresses(input.to)],
+        latestMailId: input.mailId,
+        overallSummary: input.readyState.summary || '',
+        overallOpenLoops: [],
+        overallCommitments: [],
+        overallActionItems: (input.readyState.actions || []).slice(0, 3),
+        latestRoundSummary: input.readyState.summary || '',
+        latestRoundAt: new Date().toISOString(),
+        model: 'cloud',
+      });
+    } else {
+      const mergedActions = Array.from(new Set([
+        ...(existingThread.overallActionItems || []),
+        ...(input.readyState.actions || []).slice(0, 3),
+      ])).slice(0, 8);
+
+      await window.electronAPI.upsertThreadSummary({
+        accountId: input.accountId,
+        threadId,
+        threadSubject: existingThread.threadSubject || input.subject || '',
+        participants: Array.from(new Set([
+          ...(existingThread.threadParticipants || []),
+          input.from || '',
+          ...extractEmailAddresses(input.to),
+        ])).filter(Boolean),
+        latestMailId: input.mailId,
+        overallSummary: existingThread.overallSummary || input.readyState.summary || '',
+        overallOpenLoops: existingThread.overallOpenLoops || [],
+        overallCommitments: existingThread.overallCommitments || [],
+        overallActionItems: mergedActions,
+        latestRoundSummary: input.readyState.summary || existingThread.latestRoundSummary || '',
+        latestRoundAt: new Date().toISOString(),
+        model: 'cloud',
+      });
+    }
   } catch (err) {
     console.warn('[mailSummary] persist failed', err);
   }
@@ -1349,14 +1379,13 @@ function ConversationMessageCard({
       const repliesResponse = await suggestQuickRepliesDetailed(aiPayload, normalizedLanguage);
       const keyInfoResult = await extractKeyInfo(aiPayload, normalizedLanguage);
       const replyNeeded = repliesResponse.metadata?.replyNeeded ?? actionsResponse.metadata?.replyNeeded ?? null;
+      const actionsResult = actionsResponse.content || '';
 
       const readyState: MailAssistantState = {
         status: 'ready',
         loadedForId: email.id,
         summary: (summaryResponse.content || '').trim(),
-        actions: actionsResponse.metadata?.actions?.length
-          ? actionsResponse.metadata.actions.map((action) => [action.label, action.evidence].filter(Boolean).join(' — ')).slice(0, 4)
-          : parseActionSuggestionLines(actionsResponse.content || '', 4),
+        actions: parseActionSuggestionLines(actionsResult, 4),
         quickReplies: replyNeeded === false
           ? []
           : (repliesResponse.metadata?.quickReplies?.length
@@ -1366,6 +1395,11 @@ function ConversationMessageCard({
         replyNeeded,
         noReplyMessage: repliesResponse.metadata?.noReplyMessage || actionsResponse.metadata?.noReplyMessage,
       };
+      if (actionsResponse.metadata?.actions?.length) {
+        readyState.actions = actionsResponse.metadata.actions
+          .map((action) => [action.label, action.evidence].filter(Boolean).join(' — '))
+          .slice(0, 4);
+      }
       rememberAssistantState(cacheKey, readyState, ASSISTANT_RESULT_TTL_MS);
       setAssistantState(readyState);
       // Layer 1 of the knowledge bedrock series: persist the freshly
@@ -1444,11 +1478,11 @@ function ConversationMessageCard({
         onError?.(response.metadata.noReplyMessage || response.content || assistantLabels.noReplyNeeded);
         return;
       }
-      const candidate = response.metadata?.replyCandidates?.find((item) => item.style === 'best')?.body ||
+      const result = response.metadata?.replyCandidates?.find((item) => item.style === 'best')?.body ||
         response.metadata?.replyCandidates?.[0]?.body ||
         response.content ||
         '';
-      if (candidate.trim()) onReplyWithSuggestion(candidate);
+      if (result.trim()) onReplyWithSuggestion(result);
     } catch (err) {
       console.error('[ConversationMessageCard] AI reply failed:', err);
       onError?.(ui.aiFailed);
@@ -1775,7 +1809,7 @@ function ConversationMessageCard({
               </div>
             </div>
           )}
-          {aiResult && aiFunction !== 'summarize' && (
+          {aiResult && aiFunction !== 'translate' && aiFunction !== 'reply' && (
             <div className="mb-4 rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.10)', backdropFilter: 'blur(10px)', border: `1px solid ${uiColor.borderSubtle}` }}>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.9)' }}>

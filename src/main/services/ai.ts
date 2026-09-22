@@ -878,7 +878,74 @@ export async function batchClassifyMails(
   const allResults: BatchClassifyResult[] = [...githubCompatibilityResults, ...localRuleResults];
   const failedIds: string[] = [];
 
-  const genericEmailModes = genericEmails.map((email) => {
+  const remainingGenericEmails: typeof genericEmails = [];
+  let jevClassifier: ((input: any) => Promise<any>) | null = null;
+  try {
+    const jevMod = await import('./jevService');
+    if (jevMod && jevMod.isJevEnabled()) {
+      jevClassifier = jevMod.classifyEmailViaJev;
+    }
+  } catch {
+    jevClassifier = null;
+  }
+
+  if (jevClassifier) {
+    log.info(`[batchClassifyMails] Jev enabled: running fast triage for ${genericEmails.length} emails`);
+    for (const email of genericEmails) {
+      try {
+        const jevResult = await jevClassifier({
+          id: email.id,
+          subject: email.subject,
+          from: email.from,
+          fromName: email.from_name,
+          snippet: email.snippet,
+          bodyText: email.body_text,
+          hasAttachment: email.has_attachment,
+        });
+
+        if (jevResult && jevResult.isHighConfidence) {
+          const categoryMap: Record<string, Category> = {
+            inbox: '工作/业务类',
+            newsletter: '通知类',
+            transactional: '账单/财务类',
+            notification: '通知类',
+            risk: '安全/风险类',
+            spam: '广告/营销类',
+          };
+          const inboxClassMap: Record<string, string> = {
+            inbox: 'primary',
+            newsletter: 'promotions',
+            transactional: 'transactions',
+            notification: 'updates',
+            risk: 'updates',
+            spam: 'promotions',
+          };
+
+          allResults.push({
+            id: email.id,
+            category: categoryMap[jevResult.category] || '工作/业务类',
+            senderType: jevResult.category === 'notification' ? 'system_notification' : 'work_contact',
+            inboxClass: inboxClassMap[jevResult.category] || 'primary',
+            replyNeeded: jevResult.actionRequired,
+            confidence: jevResult.categoryConfidence,
+            source: 'jev' as any,
+          });
+          continue;
+        }
+      } catch (err) {
+        log.warn(`[batchClassifyMails] Jev triage failed for ${email.id}, fallback to legacy:`, err);
+      }
+      remainingGenericEmails.push(email);
+    }
+  } else {
+    remainingGenericEmails.push(...genericEmails);
+  }
+
+  if (remainingGenericEmails.length === 0) {
+    return { success: true, results: allResults, routingResults, failedIds: failedIds.length > 0 ? failedIds : undefined };
+  }
+
+  const genericEmailModes = remainingGenericEmails.map((email) => {
     const routing = routingResults.find((entry) => entry.id === email.id)?.routing;
     return {
       email,

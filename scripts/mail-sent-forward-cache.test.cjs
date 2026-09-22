@@ -18,6 +18,12 @@ function loadTsModule(filePath, overrides = {}) {
     if (Object.prototype.hasOwnProperty.call(overrides, specifier)) {
       return overrides[specifier];
     }
+    if (specifier === '../../shared/mailDeliveryState') {
+      return loadTsModule(path.join(process.cwd(), 'src', 'shared', 'mailDeliveryState.ts'), overrides);
+    }
+    if (specifier === './mailSummaryService') {
+      return { enqueuePreSummarizeJob: () => {} };
+    }
     return require(specifier);
   };
 
