@@ -80,6 +80,7 @@ import {
   saveJevSettings,
   testJevConnection,
   classifyEmailViaJev,
+  classifyGitHubMailViaJev,
   compactThreadViaJev,
 } from '../services/jevService';
 import type { JevSettings, JevThreadMailInput } from '../../shared/email-ai/jev';
@@ -601,6 +602,25 @@ export function registerAIHandlers(): void {
       return { success: true, data };
     } catch (err) {
       log.error('[ai:compactThreadWithJev]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:classifyGitHubWithJev', async (_event, input: {
+    id: string;
+    subject: string;
+    from: string;
+    fromName?: string;
+    snippet?: string;
+    bodyText?: string;
+    repositoryFullName?: string;
+    headers?: Record<string, string | string[] | undefined>;
+  }) => {
+    try {
+      const data = await classifyGitHubMailViaJev(input);
+      return { success: true, data };
+    } catch (err) {
+      log.error('[ai:classifyGitHubWithJev]', err);
       return { success: false, error: (err as Error).message };
     }
   });

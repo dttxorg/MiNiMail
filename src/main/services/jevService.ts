@@ -7,6 +7,7 @@ import {
 } from '../database';
 import {
   classifyMailWithJev,
+  classifyGitHubWithJev,
   compactThreadWithJev,
   DEFAULT_JEV_SETTINGS,
   FetchJevClient,
@@ -15,6 +16,8 @@ import {
   type JevSettings,
   type JevThreadCompactionResult,
   type JevThreadMailInput,
+  type GitHubMailTriageInput,
+  type JevGitHubClassification,
 } from '../../shared/email-ai/jev';
 
 const SETTING_KEY_ENABLED = 'jev_enabled';
@@ -163,6 +166,26 @@ export async function compactThreadViaJev(
     });
   } catch (err) {
     log.warn('[JevService] thread compaction failed, falling back to legacy:', err);
+    return null;
+  }
+}
+
+/**
+ * Classifies a GitHub notification via Jev if enabled, returning null otherwise.
+ */
+export async function classifyGitHubMailViaJev(
+  input: GitHubMailTriageInput,
+): Promise<JevGitHubClassification | null> {
+  if (!isJevEnabled()) return null;
+  const s = getJevSettings();
+  const client = new FetchJevClient(s);
+
+  try {
+    return await classifyGitHubWithJev(client, input, {
+      confidenceThreshold: s.confidenceThreshold,
+    });
+  } catch (err) {
+    log.warn('[JevService] GitHub mail classification failed, falling back to legacy:', err);
     return null;
   }
 }

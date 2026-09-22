@@ -95,6 +95,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:testJevConnection',
       'ai:classifyWithJev',
       'ai:compactThreadWithJev',
+      'ai:classifyGitHubWithJev',
       'oauth:startFlow',
       'oauth:refreshToken',
       'oauth:getClientConfig',
