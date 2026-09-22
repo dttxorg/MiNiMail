@@ -10,6 +10,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
 import { ToastContainer, ToastData } from './components/Toast';
 import { WindowControls } from './components/WindowControls';
+import { uiColor } from './utils/uiDesignTokens';
 import type { AIMailCategory, CreateAccountInput } from './types';
 import { useAccounts } from './hooks/useAccounts';
 import { useMail, RendererMailAttachment, RendererMailDetail, RendererMailSummary } from './hooks/useMail';
@@ -3854,7 +3855,7 @@ function App() {
   const scheduledEmptyMessage = appLanguage === 'zh' ? '暂无待发送邮件' : 'No scheduled emails';
 
   return (
-    <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: uiColor.canvas }}>
+    <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#0A0B0E' }}>
       {!isMacOS && <WindowControls className="absolute top-3 right-3 z-[10001]" />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div
