@@ -2084,6 +2084,7 @@ export function MailDetail({
   const [contactWikiError, setContactWikiError] = useState<string | null>(null);
   const [contactWikiFeedbackStatus, setContactWikiFeedbackStatus] = useState<string | null>(null);
   const [contactWikiExpanded, setContactWikiExpanded] = useState(false);
+  const [threadLineageExpanded, setThreadLineageExpanded] = useState(false);
 
   const formatDate = useCallback((date: Date) => {
     return date.toLocaleString(locale, {
@@ -2314,6 +2315,7 @@ export function MailDetail({
 
   return (
     <div className="flex-1 h-full min-h-0 flex flex-col relative w-full min-w-0" style={{ backgroundColor: '#07101D' }}>
+      <div className="w-full h-8 flex-shrink-0 [-webkit-app-region:drag]" />
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3a3a3d transparent' }}>
         <div className="mb-5 px-1 flex items-start gap-3">
           {onBack && (
@@ -2332,6 +2334,38 @@ export function MailDetail({
             </div>
           </div>
         </div>
+        {sortedConversation.length > 1 && (
+          <div className="mb-4 rounded-[16px] px-3.5 py-2.5 bg-[#161618] border border-[#2a2a2d] text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-medium text-white flex items-center gap-1.5">
+                  🧵 {appLanguage === 'zh' ? '会话往来脉络' : 'Thread Lineage'}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0a84ff]/15 text-[#0a84ff]">
+                  {sortedConversation.length} {appLanguage === 'zh' ? '轮往来' : 'turns'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setThreadLineageExpanded((v) => !v)}
+                className="text-[11px] text-[#0a84ff] hover:underline cursor-pointer"
+              >
+                {threadLineageExpanded ? (appLanguage === 'zh' ? '收起脉络' : 'Collapse') : (appLanguage === 'zh' ? '查看时间线' : 'View Timeline')}
+              </button>
+            </div>
+            {threadLineageExpanded && (
+              <div className="mt-2.5 pt-2.5 border-t border-[#2a2a2d] space-y-1.5 text-[11px]">
+                {sortedConversation.map((item, idx) => (
+                  <div key={item.id} className="flex items-start gap-2">
+                    <span className="text-[10px] text-[#636366] shrink-0">{idx + 1}.</span>
+                    <span className="text-white shrink-0">{item.fromName || item.from}:</span>
+                    <span className="truncate text-[#8e8e93]">{item.snippet || item.subject}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {contactEmail && /@/.test(contactEmail) && (
           <div className="mb-5 rounded-[20px] p-4" style={{ backgroundColor: 'rgba(15,23,42,0.62)', border: '1px solid rgba(148,163,184,0.14)' }}>
             <div className="flex items-center justify-between gap-3">

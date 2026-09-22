@@ -349,7 +349,7 @@ export function Sidebar({
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
-  const [isAiCollapsed, setIsAiCollapsed] = useState(false);
+  const [isAiCollapsed, setIsAiCollapsed] = useState(true);
   const isAllAccounts = currentAccount === 'all';
   const hasNoAccounts = currentAccount === null && accounts.length === 0;
   const appLanguage = normalizeAppLanguage(appLanguageSetting || i18n.language);
@@ -401,8 +401,8 @@ export function Sidebar({
         className="pt-4 pb-3 px-4 flex-shrink-0 space-y-4"
         style={isMacOS ? { paddingTop: 36 } : undefined}
       >
-        <div className="flex items-center justify-between [-webkit-app-region:no-drag]">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0 pointer-events-none">
             <LogoMark />
             <div className="min-w-0">
               <div className="text-[15px] font-semibold text-white truncate tracking-[-0.03em]">MiNiMail</div>
@@ -463,19 +463,6 @@ export function Sidebar({
             <span className="flex-1 text-left leading-none">{t('starred')}</span>
           </button>
 
-          {onOpenKnowledgeBase && (
-            <button
-              onClick={onOpenKnowledgeBase}
-              className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
-              style={buildSidebarItemStyle(false)}
-            >
-              <NavIcon active={false}>{navIcons.starred /* fallback icon; visual identity is from the label */}</NavIcon>
-              <span className="flex-1 text-left leading-none">📚 {t('knowledgeBase.title')}</span>
-              {knowledgeBaseStaleCount > 0 && (
-                <span style={{ fontSize: 11, color: uiColor.textSubtle, lineHeight: 1 }}>{knowledgeBaseStaleCount}</span>
-              )}
-            </button>
-          )}
 
           <button onClick={() => onSelectFolder('archive')} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selectedFolder === 'archive')}>
             <NavIcon active={selectedFolder === 'archive'}>{navIcons.archive}</NavIcon>
