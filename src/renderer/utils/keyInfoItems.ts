@@ -198,7 +198,7 @@ function valueToText(raw: unknown): string {
       .filter(Boolean)
       .join('；');
   }
-  if (typeof raw === 'object') {
+  if (raw && typeof raw === 'object') {
     return Object.entries(raw as Record<string, unknown>)
       .map(([key, value]) => {
         const text = valueToText(value);
@@ -224,6 +224,7 @@ function pushItem(items: KeyInfoItem[], label: string, rawValue: unknown) {
 }
 
 function collectObjectItem(items: KeyInfoItem[], item: Record<string, unknown>) {
+  if (!item || typeof item !== 'object') return;
   const labelKey = Array.from(LABEL_PROPERTY_KEYS).find((key) => valueToText(item[key]));
   const label = labelKey ? valueToText(item[labelKey]) : '';
 

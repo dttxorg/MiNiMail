@@ -123,7 +123,17 @@ async function persistAssistantSummary(input: {
       subject: input.subject || '',
       body: input.source.bodyText || '',
     });
-      await window.electronAPI.upsertMailSummary({
+    const upsertMail = typeof window.electronAPI?.upsertMailSummary === 'function'
+      ? window.electronAPI.upsertMailSummary
+      : ((payload: unknown) => window.electronAPI?.invoke?.('ai:upsertMailSummary', payload));
+    const getThread = typeof window.electronAPI?.getThreadSummary === 'function'
+      ? window.electronAPI.getThreadSummary
+      : ((accId: number, tId: string) => window.electronAPI?.invoke?.('ai:getThreadSummary', accId, tId));
+    const upsertThread = typeof window.electronAPI?.upsertThreadSummary === 'function'
+      ? window.electronAPI.upsertThreadSummary
+      : ((payload: unknown) => window.electronAPI?.invoke?.('ai:upsertThreadSummary', payload));
+
+    await upsertMail({
       accountId: input.accountId,
       mailId: input.mailId,
       subject: input.subject || '',
@@ -142,11 +152,11 @@ async function persistAssistantSummary(input: {
       promptHash,
     });
     // Safely update thread summary without wiping historical overall summary or commitments
-    const existingThreadRes = await window.electronAPI.getThreadSummary(input.accountId, threadId).catch(() => null);
+    const existingThreadRes = await getThread(input.accountId, threadId).catch(() => null) as any;
     const existingThread = existingThreadRes?.success ? existingThreadRes.data : null;
 
     if (!existingThread) {
-      await window.electronAPI.upsertThreadSummary({
+      await upsertThread({
         accountId: input.accountId,
         threadId,
         threadSubject: input.subject || '',
@@ -166,7 +176,7 @@ async function persistAssistantSummary(input: {
         ...(input.readyState.actions || []).slice(0, 3),
       ])).slice(0, 8);
 
-      await window.electronAPI.upsertThreadSummary({
+      await upsertThread({
         accountId: input.accountId,
         threadId,
         threadSubject: existingThread.threadSubject || input.subject || '',

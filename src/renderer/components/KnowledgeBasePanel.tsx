@@ -26,13 +26,17 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
 
   useEffect(() => {
     let cancelled = false;
-    void window.electronAPI
-      .getMailSummaryPreheatStatus(accountId)
-      .then((res) => {
-        if (cancelled) return;
-        if (res.success && res.data) setPreheatStatus(res.data);
-      })
-      .catch(() => {});
+    const fetchStatus = async () => {
+      try {
+        const res = typeof window.electronAPI?.getMailSummaryPreheatStatus === 'function'
+          ? await window.electronAPI.getMailSummaryPreheatStatus(accountId)
+          : await (window.electronAPI?.invoke?.('ai:getMailSummaryPreheatStatus', accountId) as any);
+        if (!cancelled && res?.success && res?.data) setPreheatStatus(res.data);
+      } catch {
+        // Safe fallback
+      }
+    };
+    void fetchStatus();
     return () => {
       cancelled = true;
     };
@@ -42,8 +46,9 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
     async (mode: PreheatMode) => {
       setPreheatBusy(true);
       try {
-        const res = await window.electronAPI.setMailSummaryPreheatMode(mode);
-        if (res.success && res.data) setPreheatStatus(res.data);
+        const res = typeof window.electronAPI?.setMailSummaryPreheatMode === 'function'
+          ? await window.electronAPI.setMailSummaryPreheatMode(mode)
+          : await (window.electronAPI?.invoke?.('ai:setMailSummaryPreheatMode', mode) as any);
       } finally {
         setPreheatBusy(false);
       }
@@ -62,8 +67,10 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
       }
       setLoading(true);
       try {
-        const res = await window.electronAPI.searchSummaries(accountId, q, 25);
-        if (res.success && res.data) {
+        const res = typeof window.electronAPI?.searchSummaries === 'function'
+          ? await window.electronAPI.searchSummaries(accountId, q, 25)
+          : await (window.electronAPI?.invoke?.('ai:searchSummaries', accountId, q, 25) as any);
+        if (res && res.success && res.data) {
           setHits(res.data);
           setError(null);
         } else {

@@ -166,4 +166,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('window:maximized-change', listener);
     return () => ipcRenderer.removeListener('window:maximized-change', listener);
   },
+  // Mail Summary & Knowledge Base persistence helpers
+  getMailSummary: (accountId: number, mailId: string) => ipcRenderer.invoke('ai:getMailSummary', accountId, mailId),
+  upsertMailSummary: (input: unknown) => ipcRenderer.invoke('ai:upsertMailSummary', input),
+  getThreadSummary: (accountId: number, threadId: string) => ipcRenderer.invoke('ai:getThreadSummary', accountId, threadId),
+  upsertThreadSummary: (input: unknown) => ipcRenderer.invoke('ai:upsertThreadSummary', input),
+  searchSummaries: (accountId: number, query: string, limit?: number) => ipcRenderer.invoke('ai:searchSummaries', accountId, query, limit),
+  getMailSummaryPreheatStatus: (accountId: number) => ipcRenderer.invoke('ai:getMailSummaryPreheatStatus', accountId),
+  setMailSummaryPreheatMode: (mode: unknown) => ipcRenderer.invoke('ai:setMailSummaryPreheatMode', mode),
 });
