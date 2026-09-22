@@ -1107,6 +1107,13 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 天', '7d': '7 天', '1mo': '1 个月', '6mo': '半年', all: '全部' },
       appLanguages,
+      aiPrivacyMode: '数据隐私模式',
+      aiPrivacyHint: '云端脱敏模式会在向 AI 发送邮件前，将手机号、邮箱、银行卡等自动替换为安全占位符。',
+      aiPrivacyOptions: {
+        cloud_redacted: '云端脱敏 (推荐：自动遮蔽敏感实体)',
+        local_raw: '本地直连 (不脱敏)',
+        cloud_raw: '云端直连 (不脱敏)',
+      },
     },
     en: {
       groups: { personal: 'Personal', app: 'App', system: 'System' },
@@ -1137,6 +1144,13 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 days', '7d': '7 days', '1mo': '1 month', '6mo': '6 months', all: 'All' },
       appLanguages,
+      aiPrivacyMode: 'Data Privacy Mode',
+      aiPrivacyHint: 'Cloud redacted mode masks sensitive entities before sending data to AI.',
+      aiPrivacyOptions: {
+        cloud_redacted: 'Cloud Redacted (Recommended: mask sensitive entities)',
+        local_raw: 'Local Raw (No redaction)',
+        cloud_raw: 'Cloud Raw (No redaction)',
+      },
     },
     ja: {
       groups: { personal: '個人', app: 'アプリ', system: 'システム' },
@@ -4560,7 +4574,7 @@ export function SettingsModal({
                 <div className="flex items-center gap-2 mb-2">
                   <Ban className="w-3 h-3" style={{ color: '#ff9f0a' }} />
                   <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
-                    {ui.aiPrivacyMode}
+                    {ui.aiPrivacyMode || (appLanguage === 'zh' ? '数据隐私模式' : 'Data Privacy Mode')}
                   </span>
                 </div>
                 <select
@@ -4569,11 +4583,19 @@ export function SettingsModal({
                   className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
                   style={{ backgroundColor: '#0d0d0f', fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}
                 >
-                  {(Object.entries(ui.aiPrivacyOptions) as Array<[AiPrivacyMode, string]>).map(([value, label]) => (
+                  {(Object.entries(ui.aiPrivacyOptions || {
+                    cloud_redacted: appLanguage === 'zh' ? '云端脱敏 (推荐：自动遮蔽敏感实体)' : 'Cloud Redacted (Recommended: mask sensitive entities)',
+                    local_raw: appLanguage === 'zh' ? '本地直连 (不脱敏)' : 'Local Raw (No redaction)',
+                    cloud_raw: appLanguage === 'zh' ? '云端直连 (不脱敏)' : 'Cloud Raw (No redaction)',
+                  }) as Array<[AiPrivacyMode, string]>).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
-                <p className="text-[10px] mt-2" style={{ color: '#636366' }}>{ui.aiPrivacyHint}</p>
+                <p className="text-[10px] mt-2" style={{ color: '#636366' }}>
+                  {ui.aiPrivacyHint || (appLanguage === 'zh'
+                    ? '云端脱敏模式会在向 AI 发送邮件前，将手机号、邮箱、银行卡等自动替换为安全占位符。'
+                    : 'Cloud redacted mode masks sensitive entities before sending data to AI.')}
+                </p>
               </div>
 
               <div className="rounded-xl px-3 py-3 mb-3" style={{ backgroundColor: '#161618' }}>
