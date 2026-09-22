@@ -309,11 +309,11 @@ function LogoMark() {
 function ComposeHeroIcon() {
   return (
     <span
-      className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+      className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
       style={{
-        backgroundColor: 'rgba(13,18,33,0.32)',
-        border: '1px solid rgba(255,255,255,0.14)',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(99, 102, 241, 0.22)',
+        color: '#A5B4FC',
+        border: '1px solid rgba(99, 102, 241, 0.35)',
       }}
     >
       <Plus className="w-4 h-4" strokeWidth={2.2} />
@@ -427,14 +427,14 @@ export function Sidebar({
         <div className="[-webkit-app-region:no-drag]">
           <button
             onClick={onCompose}
-            className="w-full px-4 py-3 cursor-pointer text-left"
+            className="w-full px-3.5 py-2.5 cursor-pointer text-left transition-all duration-150"
             title={ui.composeTitle}
             style={{
-              color: uiColor.text,
-              borderRadius: 18,
-              background: 'linear-gradient(135deg, rgba(124,58,237,0.94), rgba(99,102,241,0.92))',
-              border: '1px solid rgba(196,181,253,0.24)',
-              boxShadow: '0 14px 28px rgba(76,29,149,0.22)',
+              color: '#FFFFFF',
+              borderRadius: 14,
+              backgroundColor: 'rgba(99, 102, 241, 0.16)',
+              border: '1px solid rgba(99, 102, 241, 0.32)',
+              boxShadow: '0 4px 16px rgba(99, 102, 241, 0.12)',
             }}
           >
             <div className="flex items-start justify-between gap-3">
@@ -593,10 +593,10 @@ export function Sidebar({
         <div className="relative w-full">
           <button
             onClick={() => setShowAccountMenu((prev) => !prev)}
-            className="m-3 flex flex-row items-center justify-between gap-3 w-[calc(100%-24px)] px-4 py-3 cursor-pointer rounded-2xl [-webkit-app-region:no-drag]"
-            style={{ ...buildPanelStyle(), color: uiColor.textMuted }}
+            className="m-2.5 flex flex-row items-center justify-between gap-2.5 w-[calc(100%-20px)] px-3 py-2.5 cursor-pointer rounded-xl [-webkit-app-region:no-drag] transition-colors"
+            style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.06)' }}
           >
-            <span className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ color: '#C4B5FD', backgroundColor: 'rgba(124,58,237,0.22)' }}>{navIcons.users}</span>
+            <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ color: '#A5B4FC', backgroundColor: 'rgba(99, 102, 241, 0.18)' }}>{navIcons.users}</span>
             <div className="flex-1 min-w-0 text-left">
               <p className="text-white text-xs font-medium truncate">{hasNoAccounts ? 'No account connected' : isAllAccounts ? t('allAccounts') : (currentAccount && 'name' in currentAccount ? currentAccount.name : '')}</p>
               <p className="text-[11px] truncate" style={{ color: uiColor.textSubtle }}>{hasNoAccounts ? '请添加邮箱账号' : isAllAccounts ? ui.globalView : (currentAccount && 'email' in currentAccount ? currentAccount.email : '')}</p>

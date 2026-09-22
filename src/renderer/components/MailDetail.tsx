@@ -2314,7 +2314,7 @@ export function MailDetail({
   if (!selectedSummary) return null;
 
   return (
-    <div className="flex-1 h-full min-h-0 flex flex-col relative w-full min-w-0" style={{ backgroundColor: '#07101D' }}>
+    <div className="flex-1 h-full min-h-0 flex flex-col relative w-full min-w-0" style={{ backgroundColor: uiColor.mailDetail }}>
       <div className="w-full h-8 flex-shrink-0 [-webkit-app-region:drag]" />
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6" style={{ scrollbarWidth: 'thin', scrollbarColor: '#3a3a3d transparent' }}>
         <div className="mb-5 px-1 flex items-start gap-3">

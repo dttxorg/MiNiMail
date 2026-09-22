@@ -293,9 +293,9 @@ export function MailList({
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col min-w-0" style={{ backgroundColor: '#0A1220', flexShrink: 0, borderLeft: `1px solid ${uiColor.borderSubtle}`, borderRight: `1px solid ${uiColor.borderSubtle}` }}>
-      <div className="px-4 pt-4 pb-2 flex-shrink-0 space-y-3 [-webkit-app-region:drag]">
-        <div className="flex items-center gap-2 px-4 py-2.5 [-webkit-app-region:no-drag]" style={{ backgroundColor: '#111827', border: `1px solid ${uiColor.borderSubtle}`, borderRadius: uiRadius.lg }}>
+    <div className="h-full min-h-0 flex flex-col min-w-0" style={{ backgroundColor: uiColor.mailList, flexShrink: 0, borderLeft: `1px solid ${uiColor.borderSubtle}`, borderRight: `1px solid ${uiColor.borderSubtle}` }}>
+      <div className="px-3.5 pt-3.5 pb-2 flex-shrink-0 space-y-2.5 [-webkit-app-region:drag]">
+        <div className="flex items-center gap-2 px-3.5 py-2 [-webkit-app-region:no-drag]" style={{ backgroundColor: '#0D0E12', border: `1px solid ${uiColor.borderSubtle}`, borderRadius: 12 }}>
           <Search className="w-4 h-4 flex-shrink-0" style={{ color: uiColor.textSubtle }} />
           <input
             ref={searchRef}

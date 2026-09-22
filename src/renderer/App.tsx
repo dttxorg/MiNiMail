@@ -3854,7 +3854,7 @@ function App() {
   const scheduledEmptyMessage = appLanguage === 'zh' ? '暂无待发送邮件' : 'No scheduled emails';
 
   return (
-    <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#050B14' }}>
+    <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: uiColor.canvas }}>
       {!isMacOS && <WindowControls className="absolute top-3 right-3 z-[10001]" />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div
