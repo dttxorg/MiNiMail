@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'mail:openAttachment',
       'mail:fetchAttachmentBytes',
       'mail:selectOutgoingAttachments',
+      'mail:addOutgoingAttachmentsFromPaths',
       'mail:setFlags',
       'mail:setRead',
       'mail:setStarred',
@@ -95,6 +96,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:testJevConnection',
       'ai:classifyWithJev',
       'ai:compactThreadWithJev',
+      'app:setBadgeCount',
+      'mail:print',
       'ai:classifyGitHubWithJev',
       'oauth:startFlow',
       'oauth:refreshToken',
@@ -157,6 +160,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:refresh-mail', listener);
     return () => ipcRenderer.removeListener('app:refresh-mail', listener);
   },
+  onOpenMailto: (callback: (mailtoUrl: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, url: string) => callback(url);
+    ipcRenderer.on('app:open-mailto', listener);
+    return () => ipcRenderer.removeListener('app:open-mailto', listener);
+  },
   // Window controls for frameless window
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),
@@ -175,4 +183,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchSummaries: (accountId: number, query: string, limit?: number) => ipcRenderer.invoke('ai:searchSummaries', accountId, query, limit),
   getMailSummaryPreheatStatus: (accountId: number) => ipcRenderer.invoke('ai:getMailSummaryPreheatStatus', accountId),
   setMailSummaryPreheatMode: (mode: unknown) => ipcRenderer.invoke('ai:setMailSummaryPreheatMode', mode),
+  setBadgeCount: (count: number) => ipcRenderer.invoke('app:setBadgeCount', count),
+  printMail: () => ipcRenderer.invoke('mail:print'),
 });

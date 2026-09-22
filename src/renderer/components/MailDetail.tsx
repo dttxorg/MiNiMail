@@ -17,6 +17,9 @@ import {
   RefreshCw,
   Reply,
   Send,
+  Printer,
+  Code,
+  ReplyAll,
   Sparkles,
   Star,
   Trash2,
@@ -752,6 +755,8 @@ function ConversationMessageCard({
   onArchive?: (mail: RendererMailSummary) => void;
   onToggleStar: (mail: RendererMailSummary) => void;
   onRescan?: (mail: RendererMailSummary) => void;
+  onReplyAll?: (mail: MailEmail) => void;
+  onToggleRead?: (mail: RendererMailSummary) => void;
   onReplyWithSuggestion: (content: string, mode?: 'reply' | 'forward', source?: MailEmail | null) => void;
   onSaveQuickPhrase?: (content: string) => Promise<void> | void;
   loadMailBody: LoadMailBodyFn;
@@ -778,6 +783,7 @@ function ConversationMessageCard({
   const resolvedInitialDetail = initialDetail ?? inlineDetail;
   const [detail, setDetail] = useState<RendererMailDetail | null>(resolvedInitialDetail);
   const [loading, setLoading] = useState(initialLoading && !resolvedInitialDetail);
+  const [showRawHeaders, setShowRawHeaders] = useState(false);
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [translatedHtml, setTranslatedHtml] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -1692,7 +1698,34 @@ function ConversationMessageCard({
 
           <div className="pt-4 pb-3 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-1.5">
-              <button onClick={() => onToggleStar(email)} className="p-2 rounded-lg cursor-pointer" title={email.isStarred ? ui.removeStar : ui.addStar} style={{ ...buildIconButtonStyle(email.isStarred), color: email.isStarred ? '#ff9f0a' : uiColor.textSubtle }}><Star className="w-[18px] h-[18px]" strokeWidth={1.8} fill={email.isStarred ? 'currentColor' : 'none'} /></button>
+              <button onClick={() => onToggleStar(email)} className="p-2 rounded-lg cursor-pointer" title={email.isStarred ? ui.removeStar : ui.addStar} style={{ ...buildIconButtonStyle(email.isStarred), color: email.isStarred ? '#ff9f0a' : uiColor.textSubtle }}><Star className="w-[18px] h-[18px]\" strokeWidth={1.8} fill={email.isStarred ? 'currentColor' : 'none'} /></button>
+              {onToggleRead && (
+                <button onClick={() => onToggleRead(email)} className="p-2 rounded-lg cursor-pointer" title={email.isRead ? (appLanguage === 'zh' ? '标为未读' : 'Mark as Unread') : (appLanguage === 'zh' ? '标为已读' : 'Mark as Read')} style={buildIconButtonStyle()}>
+                  <Mail className="w-[18px] h-[18px]" strokeWidth={1.8} />
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  if (typeof (window.electronAPI as any)?.printMail === 'function') {
+                    void (window.electronAPI as any).printMail();
+                  } else {
+                    window.print();
+                  }
+                }}
+                className="p-2 rounded-lg cursor-pointer"
+                title={appLanguage === 'zh' ? '打印 / 导出 PDF' : 'Print / Export PDF'}
+                style={buildIconButtonStyle()}
+              >
+                <Printer className="w-[18px] h-[18px]" strokeWidth={1.8} />
+              </button>
+              <button
+                onClick={() => setShowRawHeaders((v) => !v)}
+                className="p-2 rounded-lg cursor-pointer"
+                title={appLanguage === 'zh' ? '查看邮件头与源码' : 'View Headers & Source'}
+                style={{ ...buildIconButtonStyle(showRawHeaders), color: showRawHeaders ? '#6366F1' : uiColor.textSubtle }}
+              >
+                <Code className="w-[18px] h-[18px]" strokeWidth={1.8} />
+              </button>
               <button onClick={() => onDelete(email)} className="p-2 rounded-lg cursor-pointer" title={t('delete')} style={buildIconButtonStyle()}><Trash2 className="w-[18px] h-[18px]" strokeWidth={1.8} /></button>
               {onArchive && (
                 <button onClick={() => onArchive(email)} className="p-2 rounded-lg cursor-pointer" title={isSpam ? ui.removeSpam : isArchived ? ui.removeArchive : ui.archive} style={buildIconButtonStyle()}>
@@ -1712,18 +1745,32 @@ function ConversationMessageCard({
                 <Languages className="w-3.5 h-3.5" strokeWidth={1.8} />
                 {translateButtonLabel}
               </button>
-              {showAiReplyButton && (
-                <button
-                  type="button"
-                  onClick={() => void handleAiReply()}
-                  disabled={aiLoading || aiApiLoading}
-                  className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                  title={t('reply')}
-                  style={{ color: uiColor.textSubtle, backgroundColor: 'rgba(255,255,255,0.04)' }}
-                >
-                  <Reply className="w-3.5 h-3.5" strokeWidth={1.8} />
-                  {t('reply')}
-                </button>
+              {!isLocalSender && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleAiReply()}
+                    disabled={aiLoading || aiApiLoading}
+                    className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                    title={t('reply')}
+                    style={{ color: uiColor.textSubtle, backgroundColor: 'rgba(255,255,255,0.04)' }}
+                  >
+                    <Reply className="w-3.5 h-3.5" strokeWidth={1.8} />
+                    {t('reply')}
+                  </button>
+                  {onReplyAll && (
+                    <button
+                      type="button"
+                      onClick={() => onReplyAll(detail ?? email)}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium cursor-pointer flex items-center gap-1.5"
+                      title={appLanguage === 'zh' ? '全部回复' : 'Reply All'}
+                      style={{ color: uiColor.textSubtle, backgroundColor: 'rgba(255,255,255,0.04)' }}
+                    >
+                      <ReplyAll className="w-3.5 h-3.5" strokeWidth={1.8} />
+                      {appLanguage === 'zh' ? '全部回复' : 'Reply All'}
+                    </button>
+                  )}
+                </>
               )}
               <button
                 type="button"
@@ -1738,6 +1785,23 @@ function ConversationMessageCard({
               </button>
             </div>
           </div>
+          {showRawHeaders && (
+            <div className="mb-4 rounded-xl p-3 text-[11px] font-mono bg-[#0A0B0E] border border-white/10 space-y-1.5">
+              <div className="flex items-center justify-between text-[#8E8E93] border-b border-white/5 pb-1">
+                <span className="font-semibold text-white">MIME Headers / 原始邮件头</span>
+                <button type="button" onClick={() => setShowRawHeaders(false)} className="hover:text-white cursor-pointer">关闭</button>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-1 text-[#A1A1AA] select-text">
+                <div><span className="text-[#8E8E93]">Message-ID:</span> {detail?.messageId || email.messageId || '(none)'}</div>
+                <div><span className="text-[#8E8E93]">Subject:</span> {email.subject}</div>
+                <div><span className="text-[#8E8E93]">From:</span> {email.from}</div>
+                <div><span className="text-[#8E8E93]">To:</span> {email.to || '(none)'}</div>
+                {detail?.headers && Object.entries(detail.headers).slice(0, 15).map(([k, v]) => (
+                  <div key={k}><span className="text-[#8E8E93]">{k}:</span> {String(v)}</div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(aiLoading || aiApiLoading) && (
             <div className="mb-4 flex items-center gap-2" style={{ color: '#636366' }}>

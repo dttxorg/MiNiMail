@@ -493,6 +493,9 @@ export function ComposeDialog({
   const [currentQuotedOriginal, setCurrentQuotedOriginal] = useState<ComposeQuotedOriginal | null>(null);
   const [activeDraftSource, setActiveDraftSource] = useState<ComposeDraftOption | null>(null);
   const [outgoingAttachments, setOutgoingAttachments] = useState<OutgoingAttachmentReference[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
   const [customScheduleValue, setCustomScheduleValue] = useState('');
   const recipientInputRef = useRef<HTMLInputElement | null>(null);
   const richTextContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1232,9 +1235,48 @@ export function ComposeDialog({
       <div className="absolute inset-0 bg-black/70" onClick={() => void handleCloseRequest()} />
 
       <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDraggingFiles(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDraggingFiles(false);
+        }}
+        onDrop={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDraggingFiles(false);
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length === 0) return;
+          const paths = files.map((f: any) => f.path).filter(Boolean);
+          if (paths.length > 0) {
+            try {
+              const resp = await window.electronAPI.invoke('mail:addOutgoingAttachmentsFromPaths', paths) as any;
+              if (resp?.success && resp.data) {
+                const added = normalizeOutgoingAttachments(resp.data);
+                setOutgoingAttachments((prev) => {
+                  const byId = new Map(prev.map((item) => [item.id, item]));
+                  for (const att of added) byId.set(att.id, att);
+                  return Array.from(byId.values());
+                });
+              }
+            } catch (err) {
+              setError(String(err));
+            }
+          }
+        }}
         className="relative z-10 w-full max-w-4xl max-h-[calc(100vh-48px)] overflow-y-auto overflow-x-hidden rounded-[24px] [-webkit-app-region:drag]"
-        style={{ ...buildModalShellStyle(), backgroundColor: '#08111F', borderColor: 'rgba(148,163,184,0.12)' }}
+        style={{ ...buildModalShellStyle(), backgroundColor: '#12141A', borderColor: 'rgba(255,255,255,0.08)' }}
       >
+        {isDraggingFiles && (
+          <div className="absolute inset-0 z-50 bg-[#6366F1]/15 border-2 border-dashed border-[#6366F1] rounded-[24px] flex flex-col items-center justify-center pointer-events-none backdrop-blur-sm">
+            <Paperclip className="w-10 h-10 text-[#A5B4FC] animate-bounce mb-2" />
+            <span className="text-sm font-semibold text-white">松开鼠标添加附件</span>
+          </div>
+        )}
         <div
           className="flex items-center justify-between px-7 py-6"
           style={{ borderBottom: `1px solid ${uiColor.borderSubtle}` }}
@@ -1339,6 +1381,26 @@ export function ComposeDialog({
                       className="min-w-[160px] flex-1 bg-transparent text-sm text-zinc-100 focus:outline-none"
                       placeholder={recipients.length === 0 ? composeUi.multipleRecipients : composeUi.recipientsHint}
                     />
+                    <div className="flex items-center gap-1 text-[11px] text-[#8E8E93] shrink-0">
+                      {!showCc && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCc(true)}
+                          className="px-1.5 py-0.5 rounded hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                        >
+                          Cc
+                        </button>
+                      )}
+                      {!showBcc && (
+                        <button
+                          type="button"
+                          onClick={() => setShowBcc(true)}
+                          className="px-1.5 py-0.5 rounded hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                        >
+                          Bcc
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {showRecipientSuggestions && filteredSuggestions.length > 0 && (

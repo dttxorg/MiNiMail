@@ -44,6 +44,22 @@ app.setName(APP_NAME);
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
+try {
+  if (!app.isDefaultProtocolClient('mailto')) {
+    app.setAsDefaultProtocolClient('mailto');
+  }
+} catch (err) {
+  log.warn('[app] failed to register default mailto client', err);
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  log.info('[app] open-url received:', url);
+  if (url && url.startsWith('mailto:')) {
+    showMainWindow();
+    mainWindow?.webContents.send('app:open-mailto', url);
+  }
+});
 
 function isAllowedExternalTarget(target: string): boolean {
   try {
@@ -533,6 +549,31 @@ ipcMain.handle('file:openPath', async (_event, targetPath: string) => {
       success: response.length === 0,
       error: response || undefined,
     };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('app:setBadgeCount', (_event, count: number) => {
+  try {
+    const validCount = Math.max(0, Math.floor(Number(count) || 0));
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.setBadge(validCount > 0 ? String(validCount) : '');
+    }
+    if (typeof app.setBadgeCount === 'function') {
+      app.setBadgeCount(validCount);
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+});
+
+ipcMain.handle('mail:print', async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { success: false, error: 'No active window' };
+  try {
+    mainWindow.webContents.print({ silent: false, printBackground: true });
+    return { success: true };
   } catch (err) {
     return { success: false, error: String(err) };
   }

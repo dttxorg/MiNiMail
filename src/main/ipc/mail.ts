@@ -1035,9 +1035,47 @@ export function registerMailHandlers(): void {
     }
   });
 
+  async function processOutgoingFilePaths(filePaths: string[]): Promise<OutgoingAttachmentReference[]> {
+    pruneOutgoingAttachmentTokens();
+    const attachments: OutgoingAttachmentReference[] = [];
+    let totalBytes = 0;
+    for (const filePath of filePaths) {
+      const stat = await fs.promises.stat(filePath);
+      if (!stat.isFile()) continue;
+      if (stat.size > MAX_OUTGOING_ATTACHMENT_BYTES) {
+        throw new Error(`Attachment is too large: ${path.basename(filePath)}`);
+      }
+      totalBytes += stat.size;
+      if (totalBytes > MAX_OUTGOING_TOTAL_BYTES) {
+        throw new Error('Total attachment size is too large');
+      }
+
+      const filename = sanitizeAttachmentFilename(path.basename(filePath));
+      const contentType = guessAttachmentContentType(filePath);
+      const durableCache = await writeOutgoingAttachmentCacheFromPath(filePath, { filename, contentType });
+      const token = crypto.randomUUID();
+      outgoingAttachmentTokens.set(token, {
+        filePath,
+        filename,
+        contentType,
+        size: stat.size,
+        createdAt: Date.now(),
+      });
+      attachments.push({
+        kind: 'localFile',
+        id: `local-cache:${durableCache.cacheId}`,
+        token,
+        cacheId: durableCache.cacheId,
+        filename,
+        contentType,
+        size: stat.size,
+      });
+    }
+    return attachments;
+  }
+
   ipcMain.handle('mail:selectOutgoingAttachments', async (event) => {
     try {
-      pruneOutgoingAttachmentTokens();
       const pickerOptions: Electron.OpenDialogOptions = {
         title: 'Select attachments',
         properties: ['openFile', 'multiSelections'],
@@ -1051,45 +1089,25 @@ export function registerMailHandlers(): void {
         return { success: true, data: [] };
       }
 
-      const attachments: OutgoingAttachmentReference[] = [];
-      let totalBytes = 0;
-      for (const filePath of result.filePaths) {
-        const stat = await fs.promises.stat(filePath);
-        if (!stat.isFile()) continue;
-        if (stat.size > MAX_OUTGOING_ATTACHMENT_BYTES) {
-          throw new Error(`Attachment is too large: ${path.basename(filePath)}`);
-        }
-        totalBytes += stat.size;
-        if (totalBytes > MAX_OUTGOING_TOTAL_BYTES) {
-          throw new Error('Total attachment size is too large');
-        }
-
-        const filename = sanitizeAttachmentFilename(path.basename(filePath));
-        const contentType = guessAttachmentContentType(filePath);
-        const durableCache = await writeOutgoingAttachmentCacheFromPath(filePath, { filename, contentType });
-        const token = crypto.randomUUID();
-        outgoingAttachmentTokens.set(token, {
-          filePath,
-          filename,
-          contentType,
-          size: stat.size,
-          createdAt: Date.now(),
-        });
-        attachments.push({
-          kind: 'localFile',
-          id: `local-cache:${durableCache.cacheId}`,
-          token,
-          cacheId: durableCache.cacheId,
-          filename,
-          contentType,
-          size: stat.size,
-        });
-      }
-
-      return { success: true, data: attachments };
+      const data = await processOutgoingFilePaths(result.filePaths);
+      return { success: true, data };
     } catch (err) {
       const error = err as Error;
       log.error('Failed to select outgoing attachments:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('mail:addOutgoingAttachmentsFromPaths', async (_event, filePaths: string[]) => {
+    try {
+      if (!Array.isArray(filePaths) || filePaths.length === 0) {
+        return { success: true, data: [] };
+      }
+      const data = await processOutgoingFilePaths(filePaths);
+      return { success: true, data };
+    } catch (err) {
+      const error = err as Error;
+      log.error('Failed to add outgoing attachments from paths:', error);
       return { success: false, error: error.message };
     }
   });

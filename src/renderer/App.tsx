@@ -337,7 +337,7 @@ type BatchClassifyResponse = {
 };
 
 interface ComposeContext {
-  mode: 'new' | 'reply' | 'forward';
+  mode: 'new' | 'reply' | 'replyAll' | 'forward';
   source: RendererMailSummary | RendererMailDetail | null;
 }
 
@@ -1173,6 +1173,88 @@ function App() {
 
     return unsubscribe;
   }, []);
+  useEffect(() => {
+    const unread = folderUnreadCounts.inbox || 0;
+    void (window.electronAPI as any)?.setBadgeCount?.(unread);
+  }, [folderUnreadCounts.inbox]);
+
+  useEffect(() => {
+    const electronApi = window.electronAPI as any;
+    if (typeof electronApi?.onOpenMailto === 'function') {
+      return electronApi.onOpenMailto((url: string) => {
+        try {
+          const parsed = new URL(url);
+          const toAddress = decodeURIComponent(parsed.pathname || '');
+          const subj = parsed.searchParams.get('subject') || '';
+          openCompose('new', null);
+          if (toAddress) {
+            setComposeRestoreDraft({
+              accountId: currentAccount && currentAccount !== 'all' ? currentAccount.id : 0,
+              recipients: [buildComposeRecipientOption(toAddress, toAddress.split('@')[0])].filter(Boolean) as any,
+              subject: subj,
+              body: parsed.searchParams.get('body') || '',
+            });
+          }
+        } catch (err) {
+          console.warn('[App] parse mailto failed', err);
+        }
+      });
+    }
+  }, [currentAccount, openCompose]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === '/') {
+        e.preventDefault();
+        const input = document.querySelector('input[placeholder*="搜索"], input[placeholder*="Search"]') as HTMLInputElement | null;
+        input?.focus();
+        return;
+      }
+      if (e.key === 'c') {
+        e.preventDefault();
+        openCompose('new', null);
+        return;
+      }
+      if (e.key === 'j' || e.key === 'k') {
+        e.preventDefault();
+        const currentIdx = folderEmails.findIndex((m) => m.id === selectedEmail?.id);
+        if (e.key === 'j' && currentIdx < folderEmails.length - 1) {
+          handleSelectEmail(folderEmails[currentIdx + 1]);
+        } else if (e.key === 'k' && currentIdx > 0) {
+          handleSelectEmail(folderEmails[currentIdx - 1]);
+        }
+        return;
+      }
+      if (e.key === 'r' && selectedEmail) {
+        e.preventDefault();
+        openCompose('reply', selectedEmail);
+        return;
+      }
+      if (e.key === 'a' && selectedEmail) {
+        e.preventDefault();
+        openCompose('replyAll', selectedEmail);
+        return;
+      }
+      if (e.key === 'e' && selectedEmail) {
+        e.preventDefault();
+        void handleArchiveForMail(selectedEmail);
+        return;
+      }
+      if ((e.key === '#' || e.key === 'Delete') && selectedEmail) {
+        e.preventDefault();
+        void handleDeleteForMail(selectedEmail);
+        return;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [folderEmails, handleArchiveForMail, handleDeleteForMail, handleSelectEmail, openCompose, selectedEmail]);
 
   useEffect(() => {
     if (!stagedHistorySync.active && stagedHistorySync.accountId === null && stagedHistorySync.folder === null) {
@@ -2401,6 +2483,16 @@ function App() {
       throw new Error(result.error || `Failed to mark mail as ${read ? 'read' : 'unread'}`);
     }
   }, []);
+  const handleToggleReadForMail = useCallback(async (mail: RendererMailSummary) => {
+    const nextRead = !mail.isRead;
+    applyReadUpdate([mail.id], nextRead);
+    try {
+      await persistReadChange(mail, nextRead);
+    } catch (err) {
+      applyReadUpdate([mail.id], mail.isRead);
+      setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message: (err as Error).message }]);
+    }
+  }, [applyReadUpdate, persistReadChange]);
 
   const handleDeleteForMail = useCallback(async (target: RendererMailSummary) => {
     const trashFolderPath = await resolveFolderPathForAction(target.accountId, 'trash');
@@ -3982,6 +4074,8 @@ function App() {
               conversationMessages={conversationMessages}
               accountEmails={conversationAccountEmails}
               onReplyForMail={(mail) => openCompose('reply', mail)}
+              onReplyAll={(mail) => openCompose('replyAll', mail)}
+              onToggleReadMail={(mail) => void handleToggleReadForMail(mail)}
               onForwardForMail={(mail) => openCompose('forward', mail)}
               onDeleteMail={(mail) => {
                 void handleDeleteForMail(mail).catch((err) => {
