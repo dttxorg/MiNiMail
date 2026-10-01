@@ -23,6 +23,7 @@ Il combine un cache de messagerie local-first avec des fonctions AI respectueuse
 - Cache local-first pour les listes d'e-mails, les corps de message et les métadonnées des pièces jointes.
 - Résumés AI, suggestions de réponse, traduction, routage et extraction structurée des informations clés.
 - Catégories AI génériques et routage dédié pour les notifications GitHub.
+- Intègre le moteur de décision TypeSafe Jev System One pour une classification structurée à très faible latence, le tri des notifications GitHub et la compaction des fils de discussion.
 - Prend en charge les API compatibles OpenAI et les grands modèles de langage locaux, afin que les utilisateurs puissent choisir entre modèles cloud et locaux selon leurs besoins de confidentialité, leurs coûts et leurs habitudes d'utilisation.
 - Bloque par défaut les images distantes et les pixels de suivi.
 - Nettoie les e-mails HTML avant le rendu.

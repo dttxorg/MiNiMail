@@ -338,6 +338,7 @@ export type UpsertThreadSummaryInput = {
   latestRoundAt: string;
   model: string;
   evidenceHash?: string;
+  mailCount?: number;
 };
 
 export function upsertThreadSummary(input: UpsertThreadSummaryInput): MailAiThreadSummaryRecord {
@@ -349,7 +350,7 @@ export function upsertThreadSummary(input: UpsertThreadSummaryInput): MailAiThre
       `SELECT mail_count FROM mail_ai_thread_summary WHERE account_id = ? AND thread_id = ?`
     )
     .get(input.accountId, input.threadId) as { mail_count: number } | undefined;
-  const mailCount = (existing?.mail_count ?? 0) + 1;
+  const mailCount = input.mailCount !== undefined ? input.mailCount : ((existing?.mail_count ?? 0) + 1);
   db.prepare(
     `INSERT INTO mail_ai_thread_summary (
       account_id, thread_id, thread_subject, thread_participants_json,
@@ -841,7 +842,7 @@ export async function organizeThreadLineageWithJev(input: {
     snippet?: string;
   }>;
 }): Promise<MailAiThreadSummaryRecord | null> {
-  const { isJevEnabled, compactThreadViaJev } = await import('./jevService');
+  const { isJevEnabled, compactThreadViaJev, getJevSettings } = await import('./jevService');
   if (!isJevEnabled()) return null;
 
   const compaction = await compactThreadViaJev(input.threadId, input.mails);
@@ -854,7 +855,29 @@ export async function organizeThreadLineageWithJev(input: {
     .map((item, idx) => `${idx + 1}. [${item.date.slice(0, 10)}] ${item.from}: ${item.summaryHint}`)
     .join('\n');
 
-  const overallSummary = `[Jev 脉络整理 / 精简后 ${compaction.keptMailCount} 封关键邮件 (共 ${compaction.originalMailCount} 封)]:\n${timelineSummary}`;
+  const existingRecord = getThreadSummary({ accountId: input.accountId, threadId: input.threadId });
+  const jevTimelineBlock = `[Jev 脉络整理 / 精简后 ${compaction.keptMailCount} 封关键邮件 (共 ${compaction.originalMailCount} 封)]:\n${timelineSummary}`;
+
+  // Cleanly replace previously appended Jev lineage block to prevent unbounded growth
+  const existingSummary = existingRecord?.overallSummary || '';
+  const baseSummary = existingSummary.replace(/\n\n\[Jev 脉络整理[\s\S]*$/g, '').trim();
+
+  let overallSummary = jevTimelineBlock;
+  if (baseSummary && !baseSummary.startsWith('[Jev 脉络整理')) {
+    overallSummary = `${baseSummary}\n\n${jevTimelineBlock}`;
+  }
+
+  // Replace old Jev items with fresh turn extractions while preserving non-Jev notes
+  const existingNonJevLoops = (existingRecord?.overallOpenLoops || []).filter((item) => !item.startsWith('[Jev:'));
+  const existingNonJevCommits = (existingRecord?.overallCommitments || []).filter((item) => !item.startsWith('[Jev:'));
+  const existingNonJevActions = (existingRecord?.overallActionItems || []).filter((item) => !item.startsWith('[Jev:'));
+
+  const mergedOpenLoops = Array.from(new Set([...existingNonJevLoops, ...compaction.openLoops]));
+  const mergedCommitments = Array.from(new Set([...existingNonJevCommits, ...compaction.commitments]));
+  const mergedActionItems = Array.from(new Set([...existingNonJevActions, ...compaction.openLoops]));
+
+  const settings = getJevSettings();
+  const modelName = settings.model || 'jev-latest';
 
   return upsertThreadSummary({
     accountId: input.accountId,
@@ -863,11 +886,12 @@ export async function organizeThreadLineageWithJev(input: {
     participants,
     latestMailId: latestMail?.id || '',
     overallSummary,
-    overallOpenLoops: compaction.openLoops,
-    overallCommitments: compaction.commitments,
-    overallActionItems: compaction.openLoops,
+    overallOpenLoops: mergedOpenLoops,
+    overallCommitments: mergedCommitments,
+    overallActionItems: mergedActionItems,
     latestRoundSummary: compaction.compactedTimeline[compaction.compactedTimeline.length - 1]?.summaryHint || '',
     latestRoundAt: latestMail?.date || new Date().toISOString(),
-    model: 'jev-latest',
+    model: modelName,
+    mailCount: input.mails.length,
   });
 }

@@ -1115,6 +1115,15 @@ function getSettingsText(appLanguage: AppLanguage) {
         local_raw: '本地直连 (不脱敏)',
         cloud_raw: '云端直连 (不脱敏)',
       },
+      jevTitle: 'Jev 决策助手 (TypeSafe Jev System One)',
+      jevDesc: '默认关闭。开启后，通过 Jev System One 极速研判邮件分类与会话脉络裁剪。所有发往 Jev 的数据将严格先经过本地隐私脱敏；关闭时完全保持原本的本地正则与大模型流程。',
+      jevConfidenceLabel: '自动决策置信度阈值',
+      jevPreserveRecentLabel: '保留最近邮件数',
+      jevTest: '测试连接',
+      jevTesting: '测试中...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (已配置，留空保留)',
+      jevConnected: '连接成功',
+      jevFailed: '连接失败',
     },
     en: {
       groups: { personal: 'Personal', app: 'App', system: 'System' },
@@ -1152,6 +1161,15 @@ function getSettingsText(appLanguage: AppLanguage) {
         local_raw: 'Local Raw (No redaction)',
         cloud_raw: 'Cloud Raw (No redaction)',
       },
+      jevTitle: 'Jev Decision Engine (TypeSafe Jev)',
+      jevDesc: 'Disabled by default. Uses Jev System One for low-latency classification and thread lineage compaction. All data is sanitized locally first. Falls back to legacy rules when disabled.',
+      jevConfidenceLabel: 'Auto-decision confidence',
+      jevPreserveRecentLabel: 'Recent mails preserved',
+      jevTest: 'Test Connection',
+      jevTesting: 'Testing...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (Configured, leave blank to keep)',
+      jevConnected: 'Connected',
+      jevFailed: 'Connection failed',
     },
     ja: {
       groups: { personal: '個人', app: 'アプリ', system: 'システム' },
@@ -1182,6 +1200,15 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3日', '7d': '7日', '1mo': '1か月', '6mo': '半年', all: 'すべて' },
       appLanguages,
+      jevTitle: 'Jev 意思決定エンジン (TypeSafe Jev)',
+      jevDesc: 'デフォルト無効。Jev System One を使用して高速にメール分類とスレッド要約を行います。データはすべて事前にローカルで匿名化されます。',
+      jevConfidenceLabel: '自動判定の信頼度しきい値',
+      jevPreserveRecentLabel: '保持する最新メール数',
+      jevTest: '接続テスト',
+      jevTesting: 'テスト中...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (設定済み、空欄で保持)',
+      jevConnected: '接続成功',
+      jevFailed: '接続失敗',
     },
     ko: {
       groups: { personal: '개인', app: '앱', system: '시스템' },
@@ -1212,6 +1239,15 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3일', '7d': '7일', '1mo': '1개월', '6mo': '반년', all: '전체' },
       appLanguages,
+      jevTitle: 'Jev 결정 엔진 (TypeSafe Jev)',
+      jevDesc: '기본값 꺼짐. Jev System One을 사용하여 빠른 메일 분류 및 스레드 정리를 수행합니다. 모든 데이터는 사전에 로컬에서 마스킹됩니다.',
+      jevConfidenceLabel: '자동 결정 신뢰도 임계값',
+      jevPreserveRecentLabel: '보존할 최근 메일 수',
+      jevTest: '연결 테스트',
+      jevTesting: '테스트 중...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (설정됨, 유지하려면 비워 둠)',
+      jevConnected: '연결 성공',
+      jevFailed: '연결 실패',
     },
     es: {
       groups: { personal: 'Personal', app: 'Aplicación', system: 'Sistema' },
@@ -1242,6 +1278,15 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 días', '7d': '7 días', '1mo': '1 mes', '6mo': '6 meses', all: 'Todo' },
       appLanguages,
+      jevTitle: 'Motor de decisiones Jev (TypeSafe Jev)',
+      jevDesc: 'Desactivado por defecto. Usa Jev System One para clasificación rápida y compactación de hilos. Todos los datos se desinfectan localmente primero.',
+      jevConfidenceLabel: 'Umbral de confianza de decisión automática',
+      jevPreserveRecentLabel: 'Correos recientes conservados',
+      jevTest: 'Probar conexión',
+      jevTesting: 'Probando...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (Configurado, dejar en blanco para conservar)',
+      jevConnected: 'Conectado',
+      jevFailed: 'Error de conexión',
     },
     fr: {
       groups: { personal: 'Personnel', app: 'Application', system: 'Système' },
@@ -1272,6 +1317,15 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 jours', '7d': '7 jours', '1mo': '1 mois', '6mo': '6 mois', all: 'Tout' },
       appLanguages,
+      jevTitle: 'Moteur de décision Jev (TypeSafe Jev)',
+      jevDesc: 'Désactivé par défaut. Utilise Jev System One pour une classification et un élagage rapides des fils. Toutes les données sont d’abord anonymisées localement.',
+      jevConfidenceLabel: 'Seuil de confiance de décision automatique',
+      jevPreserveRecentLabel: 'Nombre de mails récents conservés',
+      jevTest: 'Tester la connexion',
+      jevTesting: 'Test en cours...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (Configuré, laisser vide pour conserver)',
+      jevConnected: 'Connecté',
+      jevFailed: 'Échec de connexion',
     },
     de: {
       groups: { personal: 'Persönlich', app: 'App', system: 'System' },
@@ -1302,6 +1356,15 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 Tage', '7d': '7 Tage', '1mo': '1 Monat', '6mo': '6 Monate', all: 'Alle' },
       appLanguages,
+      jevTitle: 'Jev Entscheidungs-Engine (TypeSafe Jev)',
+      jevDesc: 'Standardmäßig deaktiviert. Nutzt Jev System One für schnelle E-Mail-Klassifizierung und Thread-Kompaktierung. Alle Daten werden lokal zuerst bereinigt.',
+      jevConfidenceLabel: 'Konfidenz-Schwellenwert für automatische Entscheidungen',
+      jevPreserveRecentLabel: 'Behaltene aktuelle E-Mails',
+      jevTest: 'Verbindung testen',
+      jevTesting: 'Wird getestet...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (Konfiguriert, leer lassen zum Beibehalten)',
+      jevConnected: 'Verbunden',
+      jevFailed: 'Verbindung fehlgeschlagen',
     },
     ru: {
       groups: { personal: 'Личное', app: 'Приложение', system: 'Система' },
@@ -1332,13 +1395,21 @@ function getSettingsText(appLanguage: AppLanguage) {
       },
       lookback: { '3d': '3 дня', '7d': '7 дней', '1mo': '1 месяц', '6mo': '6 месяцев', all: 'Все' },
       appLanguages,
+      jevTitle: 'Модуль решений Jev (TypeSafe Jev)',
+      jevDesc: 'По умолчанию выключено. Использует Jev System One для быстрой классификации писем и сжатия веток. Все данные предварительно маскируются локально.',
+      jevConfidenceLabel: 'Порог уверенности авторешения',
+      jevPreserveRecentLabel: 'Сохранять последних писем',
+      jevTest: 'Проверить соединение',
+      jevTesting: 'Проверка...',
+      jevKeyPlaceholderConfigured: '•••••••••••••••• (Настроено, оставьте пустым для сохранения)',
+      jevConnected: 'Подключено',
+      jevFailed: 'Ошибка подключения',
     },
   };
 
   // Use `texts.zh` (the most complete record) as the structural type so
-  // every key present in any locale is visible to TypeScript. The
-  // `Record<string, ...>` cast lets us index by `AppLanguage` at runtime.
-  const baseText = (texts as Record<string, typeof texts.zh>)[appLanguage] ?? texts.zh;
+  // every key present in any locale is visible to TypeScript.
+  const baseText = (texts as unknown as Record<string, Partial<typeof texts.zh>>)[appLanguage] ?? texts.zh;
   const backupText = appLanguage === 'zh'
     ? {
       backupNav: '备份',
@@ -1647,9 +1718,11 @@ export function SettingsModal({
   const [contactBehaviorEnabled, setContactBehaviorEnabled] = useState(false);
   const [jevEnabled, setJevEnabled] = useState(false);
   const [jevApiKey, setJevApiKey] = useState('');
+  const [jevHasApiKey, setJevHasApiKey] = useState(false);
   const [jevBaseUrl, setJevBaseUrl] = useState('https://api.typesafe.ai/v1/systemone');
   const [jevModel, setJevModel] = useState('jev-latest');
   const [jevConfidence, setJevConfidence] = useState(0.8);
+  const [jevPreserveRecent, setJevPreserveRecent] = useState(2);
   const [jevTesting, setJevTesting] = useState(false);
   const [jevTestResult, setJevTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [appVersion, setAppVersion] = useState('0.1.3');
@@ -2098,14 +2171,16 @@ export function SettingsModal({
         }
         const jevResponse = await window.electronAPI.invoke('ai:getJevSettings') as {
           success: boolean;
-          data?: { enabled: boolean; apiKey: string; baseUrl: string; model: string; confidenceThreshold: number };
+          data?: { enabled: boolean; hasApiKey: boolean; baseUrl: string; model: string; confidenceThreshold: number; preserveRecentMails: number };
         };
         if (jevResponse?.success && jevResponse.data) {
           setJevEnabled(Boolean(jevResponse.data.enabled));
-          setJevApiKey(jevResponse.data.apiKey || '');
+          setJevHasApiKey(Boolean(jevResponse.data.hasApiKey));
+          setJevApiKey('');
           setJevBaseUrl(jevResponse.data.baseUrl || 'https://api.typesafe.ai/v1/systemone');
           setJevModel(jevResponse.data.model || 'jev-latest');
           setJevConfidence(jevResponse.data.confidenceThreshold ?? 0.8);
+          setJevPreserveRecent(jevResponse.data.preserveRecentMails ?? 2);
         }
 
         const providerProfilesResponse = await window.electronAPI.invoke('ai:getProviderProfiles') as {
@@ -2784,14 +2859,19 @@ export function SettingsModal({
       });
       await window.electronAPI.invoke('ai:saveJevSettings', {
         enabled: jevEnabled,
-        apiKey: jevApiKey,
+        apiKey: jevApiKey.trim() ? jevApiKey.trim() : undefined,
         baseUrl: jevBaseUrl,
         model: jevModel,
         confidenceThreshold: jevConfidence,
+        preserveRecentMails: jevPreserveRecent,
       });
+      if (jevApiKey.trim()) {
+        setJevHasApiKey(true);
+        setJevApiKey('');
+      }
       setSaved(true);
-    } catch {
-      // Keep silent until explicit error UI is added.
+    } catch (error) {
+      setApiSaveError((error as Error).message || 'AI settings save failed');
     }
   }
   async function handleTestJev() {
@@ -2800,19 +2880,19 @@ export function SettingsModal({
     try {
       const res = await window.electronAPI.invoke('ai:testJevConnection', {
         enabled: true,
-        apiKey: jevApiKey,
+        apiKey: jevApiKey.trim() ? jevApiKey.trim() : undefined,
         baseUrl: jevBaseUrl,
         model: jevModel,
       }) as { success: boolean; latencyMs?: number; error?: string };
       if (res.success) {
         setJevTestResult({
           success: true,
-          message: appLanguage === 'zh' ? `连接成功 (${res.latencyMs}ms)` : `Connected (${res.latencyMs}ms)`,
+          message: `${ui.jevConnected} (${res.latencyMs}ms)`,
         });
       } else {
         setJevTestResult({
           success: false,
-          message: res.error || (appLanguage === 'zh' ? '连接失败' : 'Connection failed'),
+          message: res.error || ui.jevFailed,
         });
       }
     } catch (err) {
@@ -4607,13 +4687,11 @@ export function SettingsModal({
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3 h-3" style={{ color: '#0a84ff' }} />
                       <span className="text-[11px] font-medium text-white" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text"' }}>
-                        {appLanguage === 'zh' ? 'Jev 决策助手 (TypeSafe Jev System One)' : 'Jev Decision Engine (TypeSafe Jev)'}
+                        {ui.jevTitle}
                       </span>
                     </div>
                     <p className="mt-1 text-[10px] leading-relaxed" style={{ color: '#636366' }}>
-                      {appLanguage === 'zh'
-                        ? '默认关闭。开启后，通过 Jev System One 极速研判邮件分类与会话脉络裁剪。所有发往 Jev 的数据将严格先经过本地隐私脱敏；关闭时完全保持原本的本地正则与大模型流程。'
-                        : 'Disabled by default. Uses Jev System One for low-latency classification and thread lineage compaction. All data is sanitized locally first. Falls back to legacy rules when disabled.'}
+                      {ui.jevDesc}
                     </p>
                   </div>
                   <button
@@ -4633,7 +4711,7 @@ export function SettingsModal({
                         type="password"
                         value={jevApiKey}
                         onChange={(e) => setJevApiKey(e.target.value)}
-                        placeholder="ts_..."
+                        placeholder={jevHasApiKey ? ui.jevKeyPlaceholderConfigured : 'ts_...'}
                         className="w-full py-1.5 px-2.5 rounded-lg text-[12px] text-white focus:outline-none"
                         style={{ backgroundColor: '#0d0d0f' }}
                       />
@@ -4660,14 +4738,46 @@ export function SettingsModal({
                         />
                       </div>
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] text-[#8e8e93] block mb-1">
+                          {ui.jevConfidenceLabel}
+                        </label>
+                        <input
+                          type="number"
+                          min="0.5"
+                          max="0.99"
+                          step="0.01"
+                          value={jevConfidence}
+                          onChange={(e) => setJevConfidence(Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.8)))}
+                          className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white focus:outline-none"
+                          style={{ backgroundColor: '#0d0d0f' }}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#8e8e93] block mb-1">
+                          {ui.jevPreserveRecentLabel}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          step="1"
+                          value={jevPreserveRecent}
+                          onChange={(e) => setJevPreserveRecent(Math.max(1, Math.min(10, Math.round(Number(e.target.value) || 2))))}
+                          className="w-full py-1.5 px-2.5 rounded-lg text-[11px] text-white focus:outline-none"
+                          style={{ backgroundColor: '#0d0d0f' }}
+                        />
+                      </div>
+                    </div>
                     <div className="flex items-center justify-between pt-1">
                       <button
                         type="button"
                         onClick={handleTestJev}
-                        disabled={jevTesting || !jevApiKey.trim()}
+                        disabled={jevTesting || (!jevApiKey.trim() && !jevHasApiKey)}
                         className="px-2.5 py-1 text-[11px] rounded-md bg-[#2a2a2d] text-white hover:bg-[#3a3a3d] transition-colors disabled:opacity-50 cursor-pointer"
                       >
-                        {jevTesting ? (appLanguage === 'zh' ? '测试中...' : 'Testing...') : (appLanguage === 'zh' ? '测试连接' : 'Test Connection')}
+                        {jevTesting ? ui.jevTesting : ui.jevTest}
                       </button>
                       {jevTestResult && (
                         <span className={`text-[10px] ${jevTestResult.success ? 'text-green-400' : 'text-red-400'}`}>

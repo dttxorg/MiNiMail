@@ -54,6 +54,7 @@ export interface MailSummaryStored {
   category?: string;
   isScanned?: boolean;
   scanResult?: string;
+  classificationSource?: 'local_rule' | 'llm' | 'github' | 'jev';
   attachments?: MailAttachmentMetadata[];
 }
 
@@ -162,6 +163,7 @@ function migrateMailCacheTable(db: any) {
     'ALTER TABLE mail_cache ADD COLUMN category TEXT',
     'ALTER TABLE mail_cache ADD COLUMN is_scanned INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE mail_cache ADD COLUMN scan_result TEXT',
+    'ALTER TABLE mail_cache ADD COLUMN classification_source TEXT',
     'ALTER TABLE mail_cache ADD COLUMN delivery_state TEXT',
     'ALTER TABLE mail_cache ADD COLUMN delivery_error TEXT',
   ];
@@ -239,6 +241,7 @@ function ensureMailCacheTable(db: any) {
       category TEXT,
       is_scanned INTEGER NOT NULL DEFAULT 0,
       scan_result TEXT,
+      classification_source TEXT,
       UNIQUE(account_id, folder, uid)
     )
   `);
@@ -569,13 +572,13 @@ function upsertMailCache(mail: MailSummaryStored): void {
   }
 
   const existingByUid = db.prepare(`
-    SELECT id, uid, snippet, has_attachments, message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result
+    SELECT id, uid, snippet, has_attachments, message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result, classification_source
     FROM mail_cache
     WHERE account_id = ? AND folder = ? AND uid = ?
   `).get(mail.accountId, mail.folder, mail.uid) as Record<string, unknown> | undefined;
   const existingByMessageId = !existingByUid && mail.messageId
     ? db.prepare(`
-        SELECT id, uid, snippet, has_attachments, message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result
+        SELECT id, uid, snippet, has_attachments, message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result, classification_source
         FROM mail_cache
         WHERE account_id = ? AND folder = ? AND message_id = ?
         ORDER BY
@@ -594,11 +597,11 @@ function upsertMailCache(mail: MailSummaryStored): void {
     INSERT OR REPLACE INTO mail_cache
       (id, uid, "from", from_name, "to", subject, date, snippet,
        has_attachments, is_read, is_starred, folder, account_id, cached_at,
-       message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result)
+       message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result, classification_source)
     VALUES
       (@id, @uid, @from, @fromName, @to, @subject, @date, @snippet,
        @hasAttachments, @isRead, @isStarred, @folder, @accountId, @cachedAt,
-       @messageId, @inReplyTo, @references, @bodyHtml, @bodyText, @draftPayload, @localDraftId, @localSendId, @deliveryState, @deliveryError, @category, @isScanned, @scanResult)
+       @messageId, @inReplyTo, @references, @bodyHtml, @bodyText, @draftPayload, @localDraftId, @localSendId, @deliveryState, @deliveryError, @category, @isScanned, @scanResult, @classificationSource)
   `).run({
     id: mail.id,
     uid: mail.uid,
@@ -628,6 +631,7 @@ function upsertMailCache(mail: MailSummaryStored): void {
     localSendId: mail.localSendId ?? existing?.local_send_id ?? null,
     deliveryState: mail.deliveryState ?? existing?.delivery_state ?? null,
     deliveryError: mail.deliveryError ?? existing?.delivery_error ?? null,
+    classificationSource: mail.classificationSource ?? (existing?.classification_source as string | undefined) ?? null,
     category: mail.category ?? existing?.category ?? null,
     isScanned: mail.isScanned != null ? (mail.isScanned ? 1 : 0) : ((existing?.is_scanned as number | undefined) ?? 0),
     scanResult: mail.scanResult ?? existing?.scan_result ?? null,
@@ -827,6 +831,9 @@ function getCachedMails(accountId: number, folder: string, options: CachedMailLo
     category: row.category != null ? (row.category as string) : undefined,
     isScanned: Boolean(row.is_scanned),
     scanResult: row.scan_result != null ? (row.scan_result as string) : undefined,
+    classificationSource: row.classification_source === 'jev' || row.classification_source === 'github' || row.classification_source === 'llm' || row.classification_source === 'local_rule'
+      ? row.classification_source as MailSummaryStored['classificationSource']
+      : undefined,
   }));
 }
 
@@ -848,7 +855,7 @@ function getCachedMailRecordsWithBodies(accountId: number, folder: string): Mail
   const rows = db.prepare(`
     SELECT id, uid, "from", from_name, "to", subject, date, snippet,
            has_attachments, is_read, is_starred, folder, account_id, cached_at,
-           message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result
+           message_id, in_reply_to, references_header, body_html, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result, classification_source
     FROM mail_cache
     WHERE account_id = ? AND folder = ?
     ORDER BY uid DESC
@@ -882,6 +889,9 @@ function getCachedMailRecordsWithBodies(accountId: number, folder: string): Mail
     category: row.category != null ? (row.category as string) : undefined,
     isScanned: Boolean(row.is_scanned),
     scanResult: row.scan_result != null ? (row.scan_result as string) : undefined,
+    classificationSource: row.classification_source === 'jev' || row.classification_source === 'github' || row.classification_source === 'llm' || row.classification_source === 'local_rule'
+      ? row.classification_source as MailSummaryStored['classificationSource']
+      : undefined,
     attachments: getCachedAttachments(row.account_id as number, row.folder as string, row.uid as number),
   }));
 }
@@ -1323,7 +1333,7 @@ export function loadCachedLocalDrafts(accountId?: number): MailSummary[] {
       ? db.prepare(`
           SELECT id, uid, "from", from_name, "to", subject, date, snippet,
                  has_attachments, is_read, is_starred, folder, account_id, cached_at,
-                 message_id, in_reply_to, references_header, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, category, is_scanned, scan_result
+                 message_id, in_reply_to, references_header, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, category, is_scanned, scan_result, classification_source
           FROM mail_cache
           WHERE account_id = ?
             AND ${localDraftWhere}
@@ -1332,7 +1342,7 @@ export function loadCachedLocalDrafts(accountId?: number): MailSummary[] {
       : db.prepare(`
           SELECT id, uid, "from", from_name, "to", subject, date, snippet,
                  has_attachments, is_read, is_starred, folder, account_id, cached_at,
-                 message_id, in_reply_to, references_header, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, category, is_scanned, scan_result
+                 message_id, in_reply_to, references_header, body_text, draft_payload, local_draft_id, local_send_id, delivery_state, category, is_scanned, scan_result, classification_source
           FROM mail_cache
           WHERE ${localDraftWhere}
           ORDER BY datetime(cached_at) DESC
@@ -1364,6 +1374,9 @@ export function loadCachedLocalDrafts(accountId?: number): MailSummary[] {
       category: row.category != null ? (row.category as string) : undefined,
       isScanned: Boolean(row.is_scanned),
       scanResult: row.scan_result != null ? (row.scan_result as string) : undefined,
+      classificationSource: row.classification_source === 'jev' || row.classification_source === 'github' || row.classification_source === 'llm' || row.classification_source === 'local_rule'
+        ? row.classification_source as MailSummary['classificationSource']
+        : undefined,
     } as MailSummary));
   } catch (err) {
     log.warn('[mailService] loadCachedLocalDrafts failed:', err);
@@ -1377,13 +1390,22 @@ export function updateCachedMailCategory(
   uid: number,
   category: string,
   scanResult?: string,
+  classificationSource?: MailSummaryStored['classificationSource'],
 ): void {
   const db = getMailCacheDb();
   db.prepare(`
     UPDATE mail_cache
-    SET category = ?, is_scanned = 1, scan_result = ?, cached_at = ?
+    SET category = ?, is_scanned = 1, scan_result = ?, classification_source = ?, cached_at = ?
     WHERE account_id = ? AND folder = ? AND uid = ?
-  `).run(category, scanResult ?? category, new Date().toISOString(), accountId, folder, uid);
+  `).run(
+    category,
+    scanResult ?? category,
+    classificationSource ?? null,
+    new Date().toISOString(),
+    accountId,
+    folder,
+    uid,
+  );
 }
 
 export function clearCachedMailScanState(
@@ -1394,7 +1416,7 @@ export function clearCachedMailScanState(
   const db = getMailCacheDb();
   db.prepare(`
     UPDATE mail_cache
-    SET category = NULL, is_scanned = 0, scan_result = NULL, cached_at = ?
+    SET category = NULL, is_scanned = 0, scan_result = NULL, classification_source = NULL, cached_at = ?
     WHERE account_id = ? AND folder = ? AND uid = ?
   `).run(new Date().toISOString(), accountId, folder, uid);
 }

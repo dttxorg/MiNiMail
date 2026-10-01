@@ -44,7 +44,7 @@ export function buildCachedMailListQuery(input: CachedMailListQueryInput): Cache
     sql: `
       SELECT id, uid, "from", from_name, "to", subject, date, snippet,
              has_attachments, is_read, is_starred, folder, account_id, cached_at,
-             message_id, in_reply_to, references_header, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result
+             message_id, in_reply_to, references_header, draft_payload, local_draft_id, local_send_id, delivery_state, delivery_error, category, is_scanned, scan_result, classification_source
       FROM mail_cache
       WHERE ${where.join(' AND ')}
       ORDER BY uid DESC

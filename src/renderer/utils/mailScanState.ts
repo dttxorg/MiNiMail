@@ -14,7 +14,7 @@ interface ClearMailScanStateResult {
   routingResults: MailRoutingResultEntry[];
 }
 
-function clearMailScanFields<T extends { id: string; category?: string; isScanned?: boolean; scanResult?: string }>(
+function clearMailScanFields<T extends { id: string; category?: string; isScanned?: boolean; scanResult?: string; classificationSource?: 'local_rule' | 'llm' | 'github' | 'jev' }>(
   mail: T,
   targetMailId: string,
 ): T {
@@ -27,6 +27,7 @@ function clearMailScanFields<T extends { id: string; category?: string; isScanne
     category: undefined,
     isScanned: false,
     scanResult: undefined,
+    classificationSource: undefined,
   };
 }
 

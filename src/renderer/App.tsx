@@ -10,7 +10,6 @@ import { SettingsModal } from './components/SettingsModal';
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
 import { ToastContainer, ToastData } from './components/Toast';
 import { WindowControls } from './components/WindowControls';
-import { uiColor } from './utils/uiDesignTokens';
 import type { AIMailCategory, CreateAccountInput } from './types';
 import { useAccounts } from './hooks/useAccounts';
 import { useMail, RendererMailAttachment, RendererMailDetail, RendererMailSummary } from './hooks/useMail';
@@ -72,6 +71,7 @@ import {
   type MailCacheRange,
   type MailHistoryRange,
 } from '../shared/mailSyncSettings';
+import { getOrBuildThreadId } from '../shared/email-ai/mailSummaryThread';
 import type { MailBackupProgress, MailBackupResult, MailExportRequest, MailImportRequest } from '../shared/backup';
 import {
   GITHUB_NOTIFICATIONS_VIEW_ENABLED_SETTING_KEY,
@@ -331,7 +331,23 @@ interface MailFolderInfo {
 
 type BatchClassifyResponse = {
   success: boolean;
-  results?: Array<{ id: string; category: string; senderType?: string; replyNeeded?: boolean; confidence?: number; source?: string }>;
+  results?: Array<{
+    id: string;
+    category: string;
+    senderType?: string;
+    replyNeeded?: boolean;
+    confidence?: number;
+    source?: 'local_rule' | 'llm' | 'github' | 'jev';
+    jev?: {
+      priority?: string;
+      actionRequired?: boolean;
+      urgencyScore?: number;
+      categoryConfidence?: number;
+      priorityConfidence?: number;
+      matchedFolder?: string;
+      reason?: string;
+    };
+  }>;
   routingResults?: MailRoutingResultEntry[];
   failedIds?: string[];
 };
@@ -682,7 +698,7 @@ function App() {
   const [showCompose, setShowCompose] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
-  const [wikiStaleCount, setWikiStaleCount] = useState(0);
+  const [, setWikiStaleCount] = useState(0);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new', source: null });
   const [composeRestoreDraft, setComposeRestoreDraft] = useState<ComposeRestoreDraft | null>(null);
   const [composeSessionId, setComposeSessionId] = useState(0);
@@ -743,6 +759,7 @@ function App() {
   const runBatchAnalysisRef = useRef<(() => Promise<void>) | null>(null);
   const knownAutoAnalyzedIdsRef = useRef(new Set<string>());
   const scheduledSendTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const jevThreadRequestsRef = useRef(new Set<string>());
 
   // L4 of the knowledge bedrock series: proactively show stale contact-wiki
   // count in the Sidebar so the user notices that the knowledge base needs
@@ -1152,10 +1169,11 @@ function App() {
     const electronApi = window.electronAPI as typeof window.electronAPI & {
       onOpenSettings?: (callback: () => void) => () => void;
     };
-    return electronApi.onOpenSettings?.(() => setShowSettings(true));
+    return electronApi?.onOpenSettings?.(() => setShowSettings(true));
   }, []);
 
   useEffect(() => {
+    if (typeof window.electronAPI?.onBackupProgress !== 'function') return;
     const unsubscribe = window.electronAPI.onBackupProgress((progress: MailBackupProgress) => {
       setBackupState((prev) => {
         if (prev.taskId && progress.taskId !== prev.taskId) {
@@ -1173,89 +1191,6 @@ function App() {
 
     return unsubscribe;
   }, []);
-  useEffect(() => {
-    const unread = folderUnreadCounts.inbox || 0;
-    void (window.electronAPI as any)?.setBadgeCount?.(unread);
-  }, [folderUnreadCounts.inbox]);
-
-  useEffect(() => {
-    const electronApi = window.electronAPI as any;
-    if (typeof electronApi?.onOpenMailto === 'function') {
-      return electronApi.onOpenMailto((url: string) => {
-        try {
-          const parsed = new URL(url);
-          const toAddress = decodeURIComponent(parsed.pathname || '');
-          const subj = parsed.searchParams.get('subject') || '';
-          openCompose('new', null);
-          if (toAddress) {
-            setComposeRestoreDraft({
-              accountId: currentAccount && currentAccount !== 'all' ? currentAccount.id : 0,
-              recipients: [buildComposeRecipientOption(toAddress, toAddress.split('@')[0])].filter(Boolean) as any,
-              subject: subj,
-              body: parsed.searchParams.get('body') || '',
-            });
-          }
-        } catch (err) {
-          console.warn('[App] parse mailto failed', err);
-        }
-      });
-    }
-  }, [currentAccount, openCompose]);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-        return;
-      }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      if (e.key === '/') {
-        e.preventDefault();
-        const input = document.querySelector('input[placeholder*="搜索"], input[placeholder*="Search"]') as HTMLInputElement | null;
-        input?.focus();
-        return;
-      }
-      if (e.key === 'c') {
-        e.preventDefault();
-        openCompose('new', null);
-        return;
-      }
-      if (e.key === 'j' || e.key === 'k') {
-        e.preventDefault();
-        const currentIdx = folderEmails.findIndex((m) => m.id === selectedEmail?.id);
-        if (e.key === 'j' && currentIdx < folderEmails.length - 1) {
-          handleSelectEmail(folderEmails[currentIdx + 1]);
-        } else if (e.key === 'k' && currentIdx > 0) {
-          handleSelectEmail(folderEmails[currentIdx - 1]);
-        }
-        return;
-      }
-      if (e.key === 'r' && selectedEmail) {
-        e.preventDefault();
-        openCompose('reply', selectedEmail);
-        return;
-      }
-      if (e.key === 'a' && selectedEmail) {
-        e.preventDefault();
-        openCompose('replyAll', selectedEmail);
-        return;
-      }
-      if (e.key === 'e' && selectedEmail) {
-        e.preventDefault();
-        void handleArchiveForMail(selectedEmail);
-        return;
-      }
-      if ((e.key === '#' || e.key === 'Delete') && selectedEmail) {
-        e.preventDefault();
-        void handleDeleteForMail(selectedEmail);
-        return;
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [folderEmails, handleArchiveForMail, handleDeleteForMail, handleSelectEmail, openCompose, selectedEmail]);
-
   useEffect(() => {
     if (!stagedHistorySync.active && stagedHistorySync.accountId === null && stagedHistorySync.folder === null) {
       return;
@@ -1387,6 +1322,7 @@ function App() {
   }, [accounts.length, reloadScheduledSendJobs]);
 
   useEffect(() => {
+    if (typeof window.electronAPI?.onScheduledSendUpdated !== 'function') return;
     const unsubscribe = window.electronAPI.onScheduledSendUpdated((payload) => {
       const event = payload as ScheduledSendUpdatePayload;
       if (!event || typeof event.jobId !== 'string') return;
@@ -1519,6 +1455,7 @@ function App() {
   }, [replaceFolderEntries, resolveFolderPathForAction, scopedAccounts, selectedFolder, setMailList]);
 
   useEffect(() => {
+    if (typeof window.electronAPI?.onMailStagedSyncProgress !== 'function') return;
     const unsubscribe = window.electronAPI.onMailStagedSyncProgress((progress) => {
       const accountMatches = currentAccount === 'all' || (currentAccount !== null && progress.accountId === currentAccount.id);
       const folderMatchesView = getSyncFoldersForView(selectedFolder).some((folder) => folderMatches(progress.folder, folder));
@@ -1610,6 +1547,10 @@ function App() {
 
     return counts;
   }, [currentAccount, mailList]);
+  useEffect(() => {
+    const unread = folderUnreadCounts.inbox || 0;
+    void (window.electronAPI as any)?.setBadgeCount?.(unread);
+  }, [folderUnreadCounts.inbox]);
 
   const nonDraftMailList = useMemo(
     () => mailList.filter((mail) => !isUnsentDraftMail(mail)),
@@ -1830,23 +1771,25 @@ function App() {
   );
 
   const applyScanResultsToState = useCallback((
-    results: Array<{ id: string; category: string }>,
+    results: Array<{ id: string; category: string; source?: string; jev?: { matchedFolder?: string } }>,
     routingEntries: MailRoutingResultEntry[],
   ) => {
     if (results.length === 0) return;
 
-    const categoryMap = new Map(results.map((result) => [result.id, result.category]));
+    const categoryMap = new Map(results.map((result) => [result.id, result]));
     const scanResultMap = new Map(
       routingEntries.map((entry) => [entry.id, entry.routing.smart_folder?.folder ?? undefined])
     );
 
     const applyToMail = <T extends RendererMailSummary>(mail: T): T => {
       if (!categoryMap.has(mail.id)) return mail;
+      const res = categoryMap.get(mail.id);
       return {
         ...mail,
-        category: categoryMap.get(mail.id),
+        category: res?.category,
         isScanned: true,
-        scanResult: scanResultMap.get(mail.id) ?? categoryMap.get(mail.id),
+        scanResult: (res?.source === 'jev' && res?.jev?.matchedFolder) ? res.jev.matchedFolder : (scanResultMap.get(mail.id) ?? res?.category),
+        classificationSource: res?.source as RendererMailSummary['classificationSource'],
       };
     };
 
@@ -1890,6 +1833,81 @@ function App() {
     if (conversationBodyPrefetchCandidates.length === 0) return;
     void preloadMailBodies(conversationBodyPrefetchCandidates, CONVERSATION_BODY_PREFETCH_LIMIT);
   }, [conversationBodyPrefetchCandidates, preloadMailBodies]);
+
+  useEffect(() => {
+    const selected = selectedMailForThread;
+    if (!selected || conversationMessages.length < 3) return;
+
+    const sortedThreadMails = conversationMessages
+      .filter((mail) => mail.accountId === selected.accountId)
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
+    const threadMails = sortedThreadMails.slice(-20);
+    if (threadMails.length < 3) return;
+
+    const requestKey = `${selected.accountId}:${threadMails.map((mail) => mail.id).join(',')}`;
+    if (jevThreadRequestsRef.current.has(requestKey)) return;
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const settingsResponse = await window.electronAPI.invoke('ai:getJevSettings') as {
+            success: boolean;
+            data?: { enabled: boolean; hasApiKey: boolean };
+          };
+          if (!settingsResponse.success || !settingsResponse.data?.enabled || !settingsResponse.data.hasApiKey) return;
+
+          const mails = await Promise.all(threadMails.map(async (mail) => {
+            let bodyText = mail.bodyText;
+            if (!bodyText) {
+              try {
+                bodyText = (await loadMailBody(mail.accountId, mail.uid, mail.folder)).bodyText;
+              } catch {
+                bodyText = '';
+              }
+            }
+            return {
+              id: mail.id,
+              from: mail.from,
+              date: mail.date.toISOString(),
+              subject: mail.subject,
+              bodyText: bodyText || mail.snippet || '',
+              snippet: mail.snippet,
+            };
+          }));
+          const to = selected.to
+            .split(',')
+            .map((value) => value.match(/<([^>]+)>/)?.[1] || value)
+            .map((value) => value.trim())
+            .filter((value) => value.includes('@'));
+          const threadId = getOrBuildThreadId({
+            subject: selected.subject,
+            from: selected.from,
+            to,
+          });
+          await window.electronAPI.invoke('ai:organizeThreadWithJev', {
+            accountId: selected.accountId,
+            threadId,
+            threadSubject: selected.subject,
+            mails,
+          });
+          if (!cancelled) {
+            jevThreadRequestsRef.current.add(requestKey);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            jevThreadRequestsRef.current.add(requestKey);
+          }
+          console.warn('[jevThread] thread organization failed:', error);
+        }
+      })();
+    }, 800);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [conversationMessages, loadMailBody, selectedMailForThread]);
 
   const serverMailIdentitySet = useMemo(
     () => buildServerMailIdentitySet(mailList),
@@ -2178,11 +2196,19 @@ function App() {
     setIsAiClassifying(true);
 
     try {
-      const aiConfig = await window.electronAPI.invoke('ai:getConfig') as {
-        success: boolean;
-        data?: { hasApiKey: boolean };
-      };
-      if (!aiConfig.success || !aiConfig.data?.hasApiKey) {
+      const [aiConfig, jevConfig] = await Promise.all([
+        window.electronAPI.invoke('ai:getConfig') as Promise<{
+          success: boolean;
+          data?: { hasApiKey: boolean };
+        }>,
+        window.electronAPI.invoke('ai:getJevSettings') as Promise<{
+          success: boolean;
+          data?: { enabled: boolean; hasApiKey: boolean };
+        }>,
+      ]);
+      const hasOpenAICompatibleKey = Boolean(aiConfig.success && aiConfig.data?.hasApiKey);
+      const hasJevKey = Boolean(jevConfig.success && jevConfig.data?.enabled && jevConfig.data.hasApiKey);
+      if (!hasOpenAICompatibleKey && !hasJevKey) {
         setToasts((prev) => [...prev, {
           id: Date.now().toString(),
           type: 'error',
@@ -2212,8 +2238,7 @@ function App() {
         type: 'info',
         message: appUi.aiStarted(total, scanLabel, rangeLabel),
       }]);
-
-      const allResults: Array<{ id: string; category: string }> = [];
+      const allResults: Array<{ id: string; category: string; source?: string; jev?: { matchedFolder?: string } }> = [];
       const collectedRoutingEntries: MailRoutingResultEntry[] = [];
       const failedBatchIds: string[] = [];
       let processed = 0;
@@ -2269,12 +2294,7 @@ function App() {
             });
           }
 
-          const githubRoutedIds = new Set(
-            (response.routingResults ?? [])
-              .filter((entry) => entry.routing.kind === 'github')
-              .map((entry) => entry.id)
-          );
-          allResults.push(...response.results.filter((result) => !githubRoutedIds.has(result.id)));
+          allResults.push(...response.results);
           if (response.failedIds?.length) {
             failedBatchIds.push(...response.failedIds);
           }
@@ -2301,19 +2321,23 @@ function App() {
           new Map(collectedRoutingEntries.map((entry) => [entry.id, entry])).values()
         );
         applyScanResultsToState(allResults, mergedRoutingEntries);
-        const categoryMap = new Map(allResults.map((result) => [result.id, result.category]));
+        const categoryMap = new Map(allResults.map((result) => [result.id, result]));
         const routingFolderMap = new Map(
           mergedRoutingEntries.map((entry) => [entry.id, entry.routing.smart_folder?.folder])
         );
         const categoryUpdates = eligible
           .filter((mail) => categoryMap.has(mail.id))
-          .map((mail) => ({
-            accountId: mail.accountId,
-            uid: mail.uid,
-            folder: mail.folder,
-            category: categoryMap.get(mail.id)!,
-            scanResult: routingFolderMap.get(mail.id) ?? categoryMap.get(mail.id)!,
-          }));
+          .map((mail) => {
+            const result = categoryMap.get(mail.id)!;
+            return {
+              accountId: mail.accountId,
+              uid: mail.uid,
+              folder: mail.folder,
+              category: result.category,
+              scanResult: (result.source === 'jev' && result.jev?.matchedFolder) ? result.jev.matchedFolder : (routingFolderMap.get(mail.id) ?? result.category),
+              classificationSource: result.source,
+            };
+          });
         if (categoryUpdates.length > 0) {
           await window.electronAPI.invoke('mail:updateCategories', categoryUpdates);
         }
@@ -2485,14 +2509,14 @@ function App() {
   }, []);
   const handleToggleReadForMail = useCallback(async (mail: RendererMailSummary) => {
     const nextRead = !mail.isRead;
-    applyReadUpdate([mail.id], nextRead);
+    applyReadUpdateToState(new Set([mail.id]), nextRead);
     try {
       await persistReadChange(mail, nextRead);
     } catch (err) {
-      applyReadUpdate([mail.id], mail.isRead);
+      applyReadUpdateToState(new Set([mail.id]), mail.isRead);
       setToasts((prev) => [...prev, { id: Date.now().toString(), type: 'error', message: (err as Error).message }]);
     }
-  }, [applyReadUpdate, persistReadChange]);
+  }, [applyReadUpdateToState, persistReadChange]);
 
   const handleDeleteForMail = useCallback(async (target: RendererMailSummary) => {
     const trashFolderPath = await resolveFolderPathForAction(target.accountId, 'trash');
@@ -2641,8 +2665,8 @@ function App() {
       onComposeNewMail?: (callback: () => void) => () => void;
       onRefreshMail?: (callback: () => void) => () => void;
     };
-    const unsubscribeCompose = electronApi.onComposeNewMail?.(() => openCompose('new', null));
-    const unsubscribeRefresh = electronApi.onRefreshMail?.(() => {
+    const unsubscribeCompose = electronApi?.onComposeNewMail?.(() => openCompose('new', null));
+    const unsubscribeRefresh = electronApi?.onRefreshMail?.(() => {
       void handleRefresh();
     });
     return () => {
@@ -2650,6 +2674,85 @@ function App() {
       unsubscribeRefresh?.();
     };
   }, [handleRefresh, openCompose]);
+  useEffect(() => {
+    const electronApi = window.electronAPI as any;
+    if (typeof electronApi?.onOpenMailto === 'function') {
+      return electronApi.onOpenMailto((url: string) => {
+        try {
+          const parsed = new URL(url);
+          const toAddress = decodeURIComponent(parsed.pathname || '');
+          const subj = parsed.searchParams.get('subject') || '';
+          openCompose('new', null);
+          if (toAddress) {
+            setComposeRestoreDraft({
+              accountId: currentAccount && currentAccount !== 'all' ? currentAccount.id : 0,
+              recipients: [buildComposeRecipientOption(toAddress, toAddress.split('@')[0])].filter(Boolean) as any,
+              subject: subj,
+              body: parsed.searchParams.get('body') || '',
+              mode: 'new',
+              source: null,
+            });
+          }
+        } catch (err) {
+          console.warn('[App] parse mailto failed', err);
+        }
+      });
+    }
+  }, [currentAccount, openCompose]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === '/') {
+        e.preventDefault();
+        const input = document.querySelector('input[placeholder*="搜索"], input[placeholder*="Search"]') as HTMLInputElement | null;
+        input?.focus();
+        return;
+      }
+      if (e.key === 'c') {
+        e.preventDefault();
+        openCompose('new', null);
+        return;
+      }
+      if (e.key === 'j' || e.key === 'k') {
+        e.preventDefault();
+        const currentIdx = folderEmails.findIndex((m) => m.id === selectedEmail?.id);
+        if (e.key === 'j' && currentIdx < folderEmails.length - 1) {
+          handleSelectEmail(folderEmails[currentIdx + 1]);
+        } else if (e.key === 'k' && currentIdx > 0) {
+          handleSelectEmail(folderEmails[currentIdx - 1]);
+        }
+        return;
+      }
+      if (e.key === 'r' && selectedEmail) {
+        e.preventDefault();
+        openCompose('reply', selectedEmail);
+        return;
+      }
+      if (e.key === 'a' && selectedEmail) {
+        e.preventDefault();
+        openCompose('replyAll', selectedEmail);
+        return;
+      }
+      if (e.key === 'e' && selectedEmail) {
+        e.preventDefault();
+        void handleArchiveForMail(selectedEmail);
+        return;
+      }
+      if ((e.key === '#' || e.key === 'Delete') && selectedEmail) {
+        e.preventDefault();
+        void handleDeleteForMail(selectedEmail);
+        return;
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [folderEmails, handleArchiveForMail, handleDeleteForMail, handleSelectEmail, openCompose, selectedEmail]);
 
   const handleReplyWithSuggestion = (content: string, mode: 'reply' | 'forward' = 'reply', source?: RendererMailSummary | RendererMailDetail | null) => {
     setReplySuggestion(content);
@@ -2763,13 +2866,19 @@ function App() {
 
       applyScanResultsToState(response.results, response.routingResults ?? []);
 
+      const firstResult = response.results[0];
+      const routingSmartFolder = response.routingResults?.find((entry) => entry.id === target.id)?.routing.smart_folder?.folder;
+      const effectiveScanResult = (firstResult.source === 'jev' && firstResult.jev?.matchedFolder)
+        ? firstResult.jev.matchedFolder
+        : (routingSmartFolder ?? firstResult.category);
+
       await window.electronAPI.invoke('mail:updateCategories', [{
         accountId: target.accountId,
         uid: target.uid,
         folder: target.folder,
-        category: response.results[0].category,
-        scanResult: response.routingResults?.find((entry) => entry.id === target.id)?.routing.smart_folder?.folder ??
-          response.results[0].category,
+        category: firstResult.category,
+        scanResult: effectiveScanResult,
+        classificationSource: firstResult.source,
       }]);
     } catch (err) {
       console.error('[handleRescanMail]', err);
@@ -3947,7 +4056,7 @@ function App() {
   const scheduledEmptyMessage = appLanguage === 'zh' ? '暂无待发送邮件' : 'No scheduled emails';
 
   return (
-    <div className="relative flex flex-col h-screen overflow-hidden" style={{ backgroundColor: '#0A0B0E' }}>
+    <div className="relative flex flex-col h-screen overflow-hidden" data-testid="minimail-app-workspace" style={{ backgroundColor: '#0A0B0E' }}>
       {!isMacOS && <WindowControls className="absolute top-3 right-3 z-[10001]" />}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div
@@ -4075,7 +4184,7 @@ function App() {
               accountEmails={conversationAccountEmails}
               onReplyForMail={(mail) => openCompose('reply', mail)}
               onReplyAll={(mail) => openCompose('replyAll', mail)}
-              onToggleReadMail={(mail) => void handleToggleReadForMail(mail)}
+              onToggleRead={(mail) => void handleToggleReadForMail(mail as RendererMailSummary)}
               onForwardForMail={(mail) => openCompose('forward', mail)}
               onDeleteMail={(mail) => {
                 void handleDeleteForMail(mail).catch((err) => {

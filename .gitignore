@@ -18,3 +18,5 @@ recordings/
 .claude_state.md
 .superpowers/
 .DS_Store
+*-review.md
+*-recheck.md

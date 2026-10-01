@@ -23,6 +23,7 @@ Combina una caché de correo local-first con funciones AI conscientes de la priv
 - Caché local-first para listas de correo, cuerpos de mensaje y metadatos de adjuntos.
 - Resúmenes AI, sugerencias de respuesta, traducción, enrutamiento y extracción estructurada de información clave.
 - Categorías AI genéricas y enrutamiento dedicado para notificaciones de GitHub.
+- Integra el motor de decisiones TypeSafe Jev System One para clasificación estructurada de baja latencia, triaje de notificaciones de GitHub y compactación de hilos.
 - Soporta API compatibles con OpenAI y modelos de lenguaje grandes locales, lo que permite elegir entre modelos en la nube y locales según las necesidades de privacidad, el costo y los hábitos de uso.
 - Bloquea por defecto imágenes remotas y píxeles de seguimiento.
 - Sanitiza el correo HTML antes de renderizarlo.

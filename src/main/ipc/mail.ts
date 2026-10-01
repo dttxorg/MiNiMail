@@ -1009,10 +1009,10 @@ export function registerMailHandlers(): void {
     }
   });
 
-  ipcMain.handle('mail:updateCategories', async (_event, updates: Array<{ accountId: number; uid: number; folder: string; category: string; scanResult?: string }>) => {
+  ipcMain.handle('mail:updateCategories', async (_event, updates: Array<{ accountId: number; uid: number; folder: string; category: string; scanResult?: string; classificationSource?: 'local_rule' | 'llm' | 'github' | 'jev' }>) => {
     try {
       for (const update of updates) {
-        updateCachedMailCategory(update.accountId, update.folder, update.uid, update.category, update.scanResult);
+        updateCachedMailCategory(update.accountId, update.folder, update.uid, update.category, update.scanResult, update.classificationSource);
       }
       return { success: true };
     } catch (err) {

@@ -33,6 +33,7 @@ export interface MailSummary {
   category?: string;
   isScanned?: boolean;
   scanResult?: string;
+  classificationSource?: 'local_rule' | 'llm' | 'github' | 'jev';
 }
 
 export interface MailAttachmentMetadata {

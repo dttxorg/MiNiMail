@@ -105,6 +105,7 @@ export function buildGitHubTriageQuestions(mailId: string): JevQuestions {
 export function buildGitHubTriageState(input: GitHubMailTriageInput): Record<string, unknown> {
   const cleanSubject = redactSensitiveEntities(input.subject || '').redactedText;
   const cleanBody = redactSensitiveEntities(input.bodyText || input.snippet || '').redactedText.slice(0, 2000);
+  const cleanFrom = redactSensitiveEntities(input.from || '').redactedText;
 
   return {
     github_notification: {
@@ -112,7 +113,7 @@ export function buildGitHubTriageState(input: GitHubMailTriageInput): Record<str
       repository: input.repositoryFullName || 'unknown/repository',
       subject: cleanSubject,
       preview: cleanBody,
-      from: input.from,
+      from: cleanFrom,
     },
     goal: 'Accurately triage GitHub notification into high-signal folders to separate blockers from background chatter.',
   };
@@ -149,8 +150,10 @@ export async function classifyGitHubWithJev(
   const urgAns = getScoreAnswer(answers, `urgency_${input.id}`, 30);
 
   const matchedFolder = FOLDER_MAP[folderAns.choice] || 'GitHub/Low Priority';
-  const priorityLevel = (priAns.choice.toUpperCase() as GitHubJevPriority) || 'P2';
-
+  const rawPriority = (priAns.choice || '').toUpperCase();
+  const priorityLevel: GitHubJevPriority = (rawPriority === 'P0' || rawPriority === 'P1' || rawPriority === 'P2' || rawPriority === 'P3')
+    ? rawPriority
+    : 'P2';
   const isHighConfidence = folderAns.confidence >= threshold && priAns.confidence >= threshold;
 
   return {

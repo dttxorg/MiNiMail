@@ -30,7 +30,7 @@ import { GITHUB_SMART_FOLDER_IDS } from '../utils/mailRoutingAdapter';
 import type { GitHubSmartFolder } from '../../shared/email-ai';
 import { getGitHubFolderPriorityHint, getGitHubPriorityBadgeInfo } from '../utils/githubPriorityUi';
 import type { GenericPriorityFolderId } from '../utils/mailRoutingAdapter';
-import { buildIconButtonStyle, buildPanelStyle, buildSidebarItemStyle, uiColor, uiRadius } from '../utils/uiDesignTokens';
+import { buildIconButtonStyle, buildSidebarItemStyle, uiColor, uiRadius } from '../utils/uiDesignTokens';
 import minimailLogo from '../assets/minimail-logo.png';
 
 type SidebarLabelLanguage = AppLanguage;
@@ -344,8 +344,8 @@ export function Sidebar({
   scheduledCount = 0,
   appLanguage: appLanguageSetting,
   isMacOS = false,
-  onOpenKnowledgeBase,
-  knowledgeBaseStaleCount = 0,
+  onOpenKnowledgeBase: _onOpenKnowledgeBase,
+  knowledgeBaseStaleCount: _knowledgeBaseStaleCount = 0,
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);

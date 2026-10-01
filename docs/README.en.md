@@ -45,6 +45,7 @@ It combines a local-first mail cache with privacy-aware AI features for summariz
 - Local-first caching for mail lists, message bodies, and attachment metadata.
 - AI summaries, reply suggestions, translation, routing, and structured key information extraction.
 - Generic AI categories plus dedicated routing for GitHub notification emails.
+- Integrates TypeSafe Jev System One decision engine for low-latency structured classification, GitHub notification triage, and thread lineage compaction.
 - Supports OpenAI-compatible APIs and local large language models, allowing users to choose between cloud and local models.
 - Blocks remote images and tracking pixels by default.
 - Sanitizes HTML email before rendering.

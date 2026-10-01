@@ -56,7 +56,17 @@ export function parseJevResponse(
   text: string,
 ): JevResponse {
   if (!ok) {
-    throw new Error(`Jev request failed (${status}): ${text.slice(0, 300)}`);
+    let safeDetail = '';
+    try {
+      const errObj = JSON.parse(text);
+      if (errObj && typeof errObj === 'object') {
+        const msg = typeof errObj.message === 'string' ? errObj.message : typeof errObj.error === 'string' ? errObj.error : '';
+        if (msg) safeDetail = `: ${msg.slice(0, 100)}`;
+      }
+    } catch {
+      // ignore non-json error responses
+    }
+    throw new Error(`Jev request failed (${status})${safeDetail}`);
   }
   let parsed: unknown;
   try {

@@ -89,6 +89,26 @@ export interface JevSettings {
   preserveRecentMails: number;
 }
 
+export interface JevPublicSettings {
+  enabled: boolean;
+  hasApiKey: boolean;
+  baseUrl: string;
+  model: string;
+  confidenceThreshold: number;
+  preserveRecentMails: number;
+}
+
+export const JEV_EMAIL_CATEGORIES: readonly JevEmailCategory[] = [
+  'inbox',
+  'newsletter',
+  'transactional',
+  'notification',
+  'risk',
+  'spam',
+] as const;
+
+export const JEV_PRIORITY_LEVELS: readonly JevPriorityLevel[] = ['high', 'normal', 'low'] as const;
+
 export const DEFAULT_JEV_SETTINGS: JevSettings = {
   enabled: false,
   apiKey: '',

@@ -67,6 +67,7 @@ import {
   searchAiSummaries,
   getPreheatStatus,
   setPreheatMode,
+  organizeThreadLineageWithJev,
   type UpsertMailSummaryInput,
   type UpsertThreadSummaryInput,
 } from '../services/mailSummaryService';
@@ -77,6 +78,7 @@ import type {
 } from '../../shared/email-ai/mailSummaryTypes';
 import {
   getJevSettings,
+  getJevPublicSettings,
   saveJevSettings,
   testJevConnection,
   classifyEmailViaJev,
@@ -549,7 +551,7 @@ export function registerAIHandlers(): void {
   // Jev System One integration IPC handlers
   ipcMain.handle('ai:getJevSettings', async () => {
     try {
-      return { success: true, data: getJevSettings() };
+      return { success: true, data: getJevPublicSettings() };
     } catch (err) {
       log.error('[ai:getJevSettings]', err);
       return { success: false, error: (err as Error).message };
@@ -559,7 +561,7 @@ export function registerAIHandlers(): void {
   ipcMain.handle('ai:saveJevSettings', async (_event, settings: Partial<JevSettings>) => {
     try {
       saveJevSettings(settings);
-      return { success: true, data: getJevSettings() };
+      return { success: true, data: getJevPublicSettings() };
     } catch (err) {
       log.error('[ai:saveJevSettings]', err);
       return { success: false, error: (err as Error).message };
@@ -602,6 +604,21 @@ export function registerAIHandlers(): void {
       return { success: true, data };
     } catch (err) {
       log.error('[ai:compactThreadWithJev]', err);
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('ai:organizeThreadWithJev', async (_event, input: {
+    accountId: number;
+    threadId: string;
+    threadSubject: string;
+    mails: JevThreadMailInput[];
+  }) => {
+    try {
+      const data = await organizeThreadLineageWithJev(input);
+      return { success: true, data };
+    } catch (err) {
+      log.error('[ai:organizeThreadWithJev]', err);
       return { success: false, error: (err as Error).message };
     }
   });

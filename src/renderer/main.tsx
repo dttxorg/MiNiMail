@@ -30,6 +30,7 @@ class RootErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState
     if (this.state.hasError) {
       return (
         <div
+          data-testid="root-error-boundary"
           className="w-screen h-screen flex flex-col items-center justify-center p-8 select-none"
           style={{
             backgroundColor: '#0A0B0E',

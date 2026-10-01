@@ -14,6 +14,27 @@ function npmRunArgs(scriptName) {
   };
 }
 
+let electronBinary = null;
+try {
+  electronBinary = require('electron');
+  if (typeof electronBinary !== 'string') electronBinary = null;
+} catch {
+  electronBinary = null;
+}
+
+function electronNodeArgs(scriptPath, extraArgs = []) {
+  if (electronBinary) {
+    return {
+      command: electronBinary,
+      args: ['--import', tsLoaderImport, scriptPath, ...extraArgs],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    };
+  }
+  return {
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, scriptPath, ...extraArgs],
+  };
+}
 const tsLoaderImport = [
   'data:text/javascript,',
   'import { register } from "node:module";',
@@ -26,6 +47,21 @@ const checks = [
     name: 'production build',
     ...npmRunArgs('build'),
   },
+  {
+    name: 'renderer typecheck',
+    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    args: ['tsc', '-p', 'tsconfig.json', '--noEmit'],
+  },
+  {
+    name: 'renderer build smoke check',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/renderer-smoke.test.ts'],
+  },
+  ...(electronBinary ? [{
+    name: 'renderer live mount smoke test',
+    command: electronBinary,
+    args: ['scripts/renderer-render-smoke.cjs'],
+  }] : []),
   {
     name: 'mail runtime regression',
     command: process.execPath,
@@ -252,24 +288,45 @@ const checks = [
     args: ['scripts/electron-sandbox-security.test.cjs'],
   },
   {
-    name: 'mail summary service regression',
+    name: 'Electron window recovery regression',
     command: process.execPath,
-    args: ['--import', tsLoaderImport, 'scripts/mail-summary-service.test.ts'],
+    args: ['scripts/electron-window-recovery.test.cjs'],
+  },
+  {
+    name: 'Jev service & settings security regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/jev-service.test.ts'],
+  },
+  {
+    name: 'Jev protocol and compaction regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/jev-integration.test.ts'],
+  },
+  {
+    name: 'Jev GitHub triage regression',
+    command: process.execPath,
+    args: ['--import', tsLoaderImport, 'scripts/jev-github-triage.test.ts'],
+  },
+  {
+    name: 'Jev runtime integration regression',
+    command: process.execPath,
+    args: ['scripts/jev-runtime-integration.test.cjs'],
+  },
+  {
+    name: 'mail summary service regression',
+    ...electronNodeArgs('scripts/mail-summary-service.test.ts'),
   },
   {
     name: 'mail summary search regression',
-    command: process.execPath,
-    args: ['--import', tsLoaderImport, 'scripts/mail-summary-search.test.ts'],
+    ...electronNodeArgs('scripts/mail-summary-search.test.ts'),
   },
   {
     name: 'mail summary renderer regression',
-    command: process.execPath,
-    args: ['--import', tsLoaderImport, 'scripts/mail-summary-renderer.test.ts'],
+    ...electronNodeArgs('scripts/mail-summary-renderer.test.ts'),
   },
   {
     name: 'mail summary IPC regression',
-    command: process.execPath,
-    args: ['--import', tsLoaderImport, 'scripts/mail-summary-ipc.test.ts'],
+    ...electronNodeArgs('scripts/mail-summary-ipc.test.ts'),
   },
   {
     name: 'macOS native experience regression',
@@ -319,8 +376,7 @@ for (const check of checks) {
   console.log(`\n[test:release] ${check.name}`);
   const result = spawnSync(check.command, check.args, {
     cwd: process.cwd(),
-    env: process.env,
-    shell: false,
+    env: check.env || process.env,
     stdio: 'inherit',
   });
 

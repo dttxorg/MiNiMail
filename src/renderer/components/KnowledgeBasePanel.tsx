@@ -46,9 +46,11 @@ export function KnowledgeBasePanel({ accountId, onOpenMail, onClose }: Knowledge
     async (mode: PreheatMode) => {
       setPreheatBusy(true);
       try {
-        const res = typeof window.electronAPI?.setMailSummaryPreheatMode === 'function'
-          ? await window.electronAPI.setMailSummaryPreheatMode(mode)
-          : await (window.electronAPI?.invoke?.('ai:setMailSummaryPreheatMode', mode) as any);
+        if (typeof window.electronAPI?.setMailSummaryPreheatMode === 'function') {
+          await window.electronAPI.setMailSummaryPreheatMode(mode);
+        } else {
+          await (window.electronAPI?.invoke?.('ai:setMailSummaryPreheatMode', mode) as any);
+        }
       } finally {
         setPreheatBusy(false);
       }

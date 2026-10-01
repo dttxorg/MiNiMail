@@ -698,7 +698,16 @@ export interface BatchClassifyResult {
   messageScenario?: string;
   replyNeeded?: boolean;
   confidence?: number;
-  source?: 'local_rule' | 'llm' | 'github';
+  source?: 'local_rule' | 'llm' | 'github' | 'jev';
+  jev?: {
+    priority?: string;
+    actionRequired?: boolean;
+    urgencyScore?: number;
+    categoryConfidence?: number;
+    priorityConfidence?: number;
+    matchedFolder?: string;
+    reason?: string;
+  };
 }
 
 export interface BatchScanRoutingResult {
@@ -820,7 +829,23 @@ export async function batchClassifyMails(
 
   const githubCompatibilityResults: BatchClassifyResult[] = [];
   const localRuleResults: BatchClassifyResult[] = [];
-  const genericEmails = emails.filter((email) => {
+  const githubEmails: Array<{ email: typeof emails[0]; routing: Extract<BatchScanRoutingResult['routing'], { kind: 'github' }> }> = [];
+  const genericEmails: typeof emails = [];
+  let jevService: typeof import('./jevService') | null = null;
+  const privacyMode = getAiPrivacyMode();
+  if (privacyMode !== 'local_raw') {
+    try {
+      const jevModule = await import('./jevService');
+      if (jevModule.isJevEnabled()) {
+        jevService = jevModule;
+        log.info('[batchClassifyMails] Jev enabled: using structured triage before fallback models');
+      }
+    } catch {
+      jevService = null;
+    }
+  }
+
+  for (const email of emails) {
     const routing = runScanPipeline({
       subject: email.subject,
       from: email.from,
@@ -837,105 +862,169 @@ export async function batchClassifyMails(
       const local = localPreClassifyEmail(email);
       if (local) {
         localRuleResults.push(local);
-        return false;
+      } else {
+        genericEmails.push(email);
       }
-      return true;
+      continue;
     }
+    githubEmails.push({ email, routing: routing as Extract<BatchScanRoutingResult['routing'], { kind: 'github' }> });
+  }
 
-    let category: Category = '通知类';
-    if (routing.github.event_type === 'security_alert') {
-      category = '安全/风险类';
-    } else if (
-      routing.github.event_type === 'review_requested' ||
-      routing.github.event_type === 'assigned_issue' ||
-      routing.github.event_type === 'mention' ||
-      routing.github.event_type === 'pull_request_update' ||
-      routing.github.event_type === 'issue_update'
-    ) {
-      category = '工作/业务类';
-    } else if (routing.github.event_type === 'workflow_failure') {
-      category = '工作/业务类';
-    }
+  const CONCURRENCY_LIMIT = 5;
+  for (let i = 0; i < githubEmails.length; i += CONCURRENCY_LIMIT) {
+    const chunk = githubEmails.slice(i, i + CONCURRENCY_LIMIT);
+    const chunkResults = await Promise.all(
+      chunk.map(async ({ email, routing }) => {
+        let category: Category = '通知类';
+        if (routing.github.event_type === 'security_alert') {
+          category = '安全/风险类';
+        } else if (
+          routing.github.event_type === 'review_requested' ||
+          routing.github.event_type === 'assigned_issue' ||
+          routing.github.event_type === 'mention' ||
+          routing.github.event_type === 'pull_request_update' ||
+          routing.github.event_type === 'issue_update' ||
+          routing.github.event_type === 'workflow_failure'
+        ) {
+          category = '工作/业务类';
+        }
 
-    githubCompatibilityResults.push({
-      id: email.id,
-      category,
-      senderType: 'system_notification',
-      inboxClass: 'updates',
-      messageScenario: routing.github.event_type === 'security_alert' ? 'security_alert' : 'dev_notification',
-      replyNeeded: false,
-      confidence: 0.9,
-      source: 'github',
-    });
-    return false;
-  });
+        let jevDetails: BatchClassifyResult['jev'];
+        let source: BatchClassifyResult['source'] = 'github';
+        if (jevService) {
+          try {
+            const jevResult = await jevService.classifyGitHubMailViaJev({
+              id: email.id,
+              subject: email.subject,
+              from: email.from,
+              fromName: email.from_name,
+              snippet: email.snippet,
+              bodyText: email.body_text,
+              repositoryFullName: routing.github.repository_full_name,
+              headers: email.headers,
+            });
+            if (jevResult?.isHighConfidence) {
+              category = jevResult.matchedFolder === 'GitHub/Security'
+                ? '安全/风险类'
+                : jevResult.matchedFolder === 'GitHub/Low Priority'
+                  ? '通知类'
+                  : '工作/业务类';
+              source = 'jev';
+              jevDetails = {
+                priority: jevResult.priorityLevel,
+                actionRequired: jevResult.isHumanBlocking,
+                urgencyScore: jevResult.urgencyScore,
+                categoryConfidence: jevResult.folderConfidence,
+                priorityConfidence: jevResult.priorityConfidence,
+                matchedFolder: jevResult.matchedFolder,
+                reason: jevResult.reason,
+              };
+            }
+          } catch (error) {
+            log.warn(`[batchClassifyMails] Jev GitHub triage failed for ${email.id}, using local rules:`, error);
+          }
+        }
+
+        return {
+          id: email.id,
+          category,
+          senderType: 'system_notification' as const,
+          inboxClass: 'updates',
+          messageScenario: jevDetails?.matchedFolder === 'GitHub/Security'
+            ? 'security_alert'
+            : 'dev_notification',
+          replyNeeded: Boolean(jevDetails?.actionRequired),
+          confidence: jevDetails?.categoryConfidence ?? 0.9,
+          source,
+          jev: jevDetails,
+        };
+      })
+    );
+    githubCompatibilityResults.push(...chunkResults);
+  }
 
   if (genericEmails.length === 0) {
     return { success: true, results: [...githubCompatibilityResults, ...localRuleResults], routingResults };
   }
 
-  const privacyMode = getAiPrivacyMode();
   const allResults: BatchClassifyResult[] = [...githubCompatibilityResults, ...localRuleResults];
   const failedIds: string[] = [];
 
   const remainingGenericEmails: typeof genericEmails = [];
-  let jevClassifier: ((input: any) => Promise<any>) | null = null;
-  try {
-    const jevMod = await import('./jevService');
-    if (jevMod && jevMod.isJevEnabled()) {
-      jevClassifier = jevMod.classifyEmailViaJev;
-    }
-  } catch {
-    jevClassifier = null;
-  }
+  const jevClassifier = jevService?.classifyEmailViaJev ?? null;
 
   if (jevClassifier) {
     log.info(`[batchClassifyMails] Jev enabled: running fast triage for ${genericEmails.length} emails`);
-    for (const email of genericEmails) {
-      try {
-        const jevResult = await jevClassifier({
-          id: email.id,
-          subject: email.subject,
-          from: email.from,
-          fromName: email.from_name,
-          snippet: email.snippet,
-          bodyText: email.body_text,
-          hasAttachment: email.has_attachment,
-        });
+    const categoryMap: Record<string, Category> = {
+      inbox: '工作/业务类',
+      newsletter: '通知类',
+      transactional: '账单/财务类',
+      notification: '通知类',
+      risk: '安全/风险类',
+      spam: '广告/营销类',
+    };
+    const inboxClassMap: Record<string, string> = {
+      inbox: 'primary',
+      newsletter: 'promotions',
+      transactional: 'transactions',
+      notification: 'updates',
+      risk: 'updates',
+      spam: 'promotions',
+    };
+    const senderTypeMap: Record<string, EmailAISenderType> = {
+      inbox: 'work_contact',
+      newsletter: 'newsletter',
+      transactional: 'vendor',
+      notification: 'system_notification',
+      risk: 'system_notification',
+      spam: 'marketing',
+    };
 
+    const CONCURRENCY_LIMIT = 5;
+    for (let i = 0; i < genericEmails.length; i += CONCURRENCY_LIMIT) {
+      const chunk = genericEmails.slice(i, i + CONCURRENCY_LIMIT);
+      const chunkResults = await Promise.all(
+        chunk.map(async (email) => {
+          try {
+            const jevResult = await jevClassifier({
+              id: email.id,
+              subject: email.subject,
+              from: email.from,
+              fromName: email.from_name,
+              snippet: email.snippet,
+              bodyText: email.body_text,
+              hasAttachment: email.has_attachment,
+            });
+            return { email, jevResult };
+          } catch (err) {
+            log.warn(`[batchClassifyMails] Jev triage failed for ${email.id}, fallback to legacy:`, err);
+            return { email, jevResult: null };
+          }
+        })
+      );
+
+      for (const { email, jevResult } of chunkResults) {
         if (jevResult && jevResult.isHighConfidence) {
-          const categoryMap: Record<string, Category> = {
-            inbox: '工作/业务类',
-            newsletter: '通知类',
-            transactional: '账单/财务类',
-            notification: '通知类',
-            risk: '安全/风险类',
-            spam: '广告/营销类',
-          };
-          const inboxClassMap: Record<string, string> = {
-            inbox: 'primary',
-            newsletter: 'promotions',
-            transactional: 'transactions',
-            notification: 'updates',
-            risk: 'updates',
-            spam: 'promotions',
-          };
-
           allResults.push({
             id: email.id,
             category: categoryMap[jevResult.category] || '工作/业务类',
-            senderType: jevResult.category === 'notification' ? 'system_notification' : 'work_contact',
+            senderType: senderTypeMap[jevResult.category] || 'work_contact',
             inboxClass: inboxClassMap[jevResult.category] || 'primary',
             replyNeeded: jevResult.actionRequired,
             confidence: jevResult.categoryConfidence,
-            source: 'jev' as any,
+            source: 'jev',
+            jev: {
+              priority: jevResult.priority,
+              actionRequired: jevResult.actionRequired,
+              urgencyScore: jevResult.urgencyScore,
+              categoryConfidence: jevResult.categoryConfidence,
+              priorityConfidence: jevResult.priorityConfidence,
+            },
           });
-          continue;
+        } else {
+          remainingGenericEmails.push(email);
         }
-      } catch (err) {
-        log.warn(`[batchClassifyMails] Jev triage failed for ${email.id}, fallback to legacy:`, err);
       }
-      remainingGenericEmails.push(email);
     }
   } else {
     remainingGenericEmails.push(...genericEmails);
@@ -943,6 +1032,11 @@ export async function batchClassifyMails(
 
   if (remainingGenericEmails.length === 0) {
     return { success: true, results: allResults, routingResults, failedIds: failedIds.length > 0 ? failedIds : undefined };
+  }
+  if (!getAIConfig().apiKey) {
+    log.warn('[batchClassifyMails] no OpenAI-compatible fallback is configured; returning JEV/local results only');
+    failedIds.push(...remainingGenericEmails.map((email) => email.id));
+    return { success: true, results: allResults, routingResults, failedIds };
   }
 
   const genericEmailModes = remainingGenericEmails.map((email) => {

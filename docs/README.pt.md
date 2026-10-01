@@ -23,6 +23,7 @@ Ele combina um cache de e-mail local-first com recursos AI atentos à privacidad
 - Cache local-first para listas de e-mail, corpos de mensagem e metadados de anexos.
 - Resumos AI, sugestões de resposta, tradução, roteamento e extração estruturada de informações importantes.
 - Categorias AI genéricas e roteamento dedicado para notificações do GitHub.
+- Integra o mecanismo de decisão TypeSafe Jev System One para classificação estruturada de baixa latência, triagem de notificações do GitHub e compactação de tópicos.
 - Suporta APIs compatíveis com OpenAI e grandes modelos de linguagem locais, permitindo que os usuários escolham entre modelos em nuvem e locais conforme suas necessidades de privacidade, custos e hábitos de uso.
 - Bloqueia imagens remotas e pixels de rastreamento por padrão.
 - Sanitiza e-mails HTML antes da renderização.

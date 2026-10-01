@@ -23,6 +23,7 @@ Die App kombiniert einen lokalen Mail-Cache mit datenschutzbewussten AI-Funktion
 - Lokales Caching von E-Mail-Listen, Nachrichteninhalten und Anhangsmetadaten.
 - AI-Zusammenfassungen, Antwortvorschläge, Übersetzung, Routing und strukturierte Extraktion wichtiger Informationen.
 - Allgemeine AI-Kategorien sowie spezielles Routing für GitHub-Benachrichtigungen.
+- Integriert die TypeSafe Jev System One Entscheidungs-Engine für extrem latenzarme strukturierte Klassifizierung, GitHub-Benachrichtigungs-Triage und Thread-Kompaktierung.
 - Unterstützt OpenAI-kompatible APIs und lokale große Sprachmodelle, sodass Nutzer je nach Datenschutzbedarf, Kosten und Nutzungsgewohnheiten zwischen Cloud- und lokalen Modellen wählen können.
 - Blockiert Remote-Bilder und Tracking-Pixel standardmäßig.
 - Bereinigt HTML-E-Mails vor dem Rendern.

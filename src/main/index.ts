@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, shell, Tray, nativeImage, type MenuItemConstructorOptions } from 'electron';
 import path from 'path';
+import { pathToFileURL } from 'node:url';
 import log from 'electron-log';
 import { initDatabase, closeDatabase, getSetting } from './database';
 import { registerAccountHandlers } from './ipc/accounts';
@@ -35,6 +36,13 @@ let appTray: Tray | null = null;
 let isQuitting = false;
 let appMenuLanguage = 'zh';
 const trustedOpenPathRoots = new Set<string>();
+
+const MAX_RENDERER_RECOVERY_ATTEMPTS = 2;
+const RENDERER_RECOVERY_DELAY_MS = 500;
+const RENDERER_WATCHDOG_MS = 4000;
+let rendererRecoveryAttempts = 0;
+let rendererRecoveryTimer: NodeJS.Timeout | null = null;
+let rendererWatchdogTimer: NodeJS.Timeout | null = null;
 
 const isSmokeTest = process.env.MINIMAIL_ELECTRON_SMOKE === '1';
 const isDev = !app.isPackaged && !isSmokeTest;
@@ -96,9 +104,57 @@ function isTrustedOpenPath(targetPath: string): boolean {
   return false;
 }
 
+function isRendererAvailable(window: BrowserWindow): boolean {
+  return !window.isDestroyed() && !window.webContents.isDestroyed();
+}
+
+function clearRendererWatchdog(): void {
+  if (rendererWatchdogTimer) {
+    clearTimeout(rendererWatchdogTimer);
+    rendererWatchdogTimer = null;
+  }
+}
+
+function getRendererIndexPath(): string {
+  return path.join(__dirname, '..', '..', 'renderer', 'index.html');
+}
+
+function isRendererEntryUrl(url: string): boolean {
+  if (isDev) {
+    try {
+      return new URL(url).origin === 'http://localhost:5173';
+    } catch {
+      return false;
+    }
+  }
+  return url.split('#')[0] === pathToFileURL(getRendererIndexPath()).toString();
+}
+
+function replaceMainWindow(window: BrowserWindow): void {
+  clearRendererWatchdog();
+  if (rendererRecoveryTimer) {
+    clearTimeout(rendererRecoveryTimer);
+    rendererRecoveryTimer = null;
+  }
+  rendererRecoveryAttempts = 0;
+  mainWindow = null;
+
+  // Create the replacement before closing the stale window so window-all-closed
+  // cannot quit the app during a renderer recovery on Windows/Linux.
+  createWindow();
+  if (!window.isDestroyed()) {
+    window.destroy();
+  }
+  showMainWindow();
+}
+
 function showMainWindow(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow();
+  if (!mainWindow || mainWindow.isDestroyed() || !isRendererAvailable(mainWindow)) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      replaceMainWindow(mainWindow);
+    } else {
+      createWindow();
+    }
     return;
   }
   if (mainWindow.isMinimized()) {
@@ -288,6 +344,113 @@ function quitApplication(): void {
   }, 2500).unref();
 }
 
+function showRendererRecoveryPage(window: BrowserWindow): void {
+  if (!isRendererAvailable(window)) return;
+
+  const target = isDev
+    ? 'http://localhost:5173'
+    : pathToFileURL(getRendererIndexPath()).toString();
+  const html = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${APP_NAME}</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body { display: grid; place-items: center; background: #0a0b0e; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { width: min(440px, calc(100vw - 48px)); box-sizing: border-box; padding: 28px; border: 1px solid rgba(255,255,255,.1); border-radius: 18px; background: #14161b; box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+      h1 { margin: 0 0 10px; font-size: 18px; }
+      p { margin: 0 0 20px; color: #a1a1aa; font-size: 13px; line-height: 1.7; }
+      button { border: 0; border-radius: 10px; padding: 10px 16px; background: #6366f1; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>界面没有正常启动</h1>
+      <p>MiNiMail 已停止重复加载以避免卡死。本地邮件数据不会受到影响，请重新尝试进入界面。</p>
+      <button type="button" id="retry">重新尝试</button>
+    </main>
+    <script>document.getElementById('retry').addEventListener('click', function () { location.href = ${JSON.stringify(target)}; });</script>
+  </body>
+</html>`;
+
+  log.error('[window] renderer failed repeatedly; showing recovery page');
+  void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch((error) => {
+    log.error('[window] failed to show renderer recovery page:', error instanceof Error ? error.message : String(error));
+  });
+}
+
+function loadRenderer(window: BrowserWindow): void {
+  if (!isRendererAvailable(window)) return;
+
+  const loadPromise = isDev
+    ? window.loadURL('http://localhost:5173')
+    : window.loadFile(getRendererIndexPath());
+
+  if (isDev) {
+    log.info('Loading dev server at http://localhost:5173');
+    window.webContents.openDevTools();
+  } else {
+    log.info(`Loading production file: ${getRendererIndexPath()}`);
+  }
+
+  void loadPromise.catch((error) => {
+    log.error('[window] renderer load promise rejected:', error instanceof Error ? error.message : String(error));
+    scheduleRendererRecovery(window, 'load promise rejected');
+  });
+}
+
+function scheduleRendererRecovery(window: BrowserWindow, reason: string): void {
+  if (isSmokeTest || isQuitting || window !== mainWindow || !isRendererAvailable(window)) return;
+  if (rendererRecoveryTimer) return;
+
+  if (rendererRecoveryAttempts >= MAX_RENDERER_RECOVERY_ATTEMPTS) {
+    showRendererRecoveryPage(window);
+    return;
+  }
+
+  rendererRecoveryAttempts += 1;
+  const attempt = rendererRecoveryAttempts;
+  log.warn(`[window] renderer recovery attempt ${attempt}/${MAX_RENDERER_RECOVERY_ATTEMPTS}: ${reason}`);
+  rendererRecoveryTimer = setTimeout(() => {
+    rendererRecoveryTimer = null;
+    if (window !== mainWindow || !isRendererAvailable(window)) return;
+    loadRenderer(window);
+  }, RENDERER_RECOVERY_DELAY_MS);
+  rendererRecoveryTimer.unref();
+}
+
+function recreateMainWindow(window: BrowserWindow): void {
+  if (isQuitting || window !== mainWindow) return;
+
+  log.warn('[window] recreating main window after renderer process exit');
+  replaceMainWindow(window);
+}
+
+function scheduleRendererWatchdog(window: BrowserWindow): void {
+  clearRendererWatchdog();
+  rendererWatchdogTimer = setTimeout(() => {
+    rendererWatchdogTimer = null;
+    if (isQuitting || window !== mainWindow || !isRendererAvailable(window)) return;
+
+    void window.webContents.executeJavaScript(
+      'document.getElementById("root")?.childElementCount ?? -1',
+    ).then((rootChildCount) => {
+      if (rootChildCount === 0 || rootChildCount === -1) {
+        log.error('[window] renderer loaded without mounting the React root');
+        scheduleRendererRecovery(window, 'empty React root');
+        return;
+      }
+      rendererRecoveryAttempts = 0;
+    }).catch((error) => {
+      log.error('[window] renderer watchdog failed:', error instanceof Error ? error.message : String(error));
+      scheduleRendererRecovery(window, 'watchdog execution failed');
+    });
+  }, RENDERER_WATCHDOG_MS);
+  rendererWatchdogTimer.unref();
+}
+
 function createWindow() {
   log.info('Creating main window...');
   const appIconPath = getAppIconPath(process.platform === 'win32' ? 'ico' : 'png');
@@ -317,17 +480,6 @@ function createWindow() {
   });
   const window = mainWindow;
 
-  // Load the app
-  if (isDev) {
-    log.info('Loading dev server at http://localhost:5173');
-    window.loadURL('http://localhost:5173');
-    window.webContents.openDevTools();
-  } else {
-    const indexPath = path.join(__dirname, '..', '..', 'renderer', 'index.html');
-    log.info(`Loading production file: ${indexPath}`);
-    window.loadFile(indexPath);
-  }
-
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalTarget(url)) {
       void openInSystemBrowser(url).catch((err) => {
@@ -338,6 +490,7 @@ function createWindow() {
   });
 
   window.webContents.on('will-navigate', (event, url) => {
+    if (isRendererEntryUrl(url)) return;
     if (isAllowedExternalTarget(url)) {
       event.preventDefault();
       void openInSystemBrowser(url).catch((err) => {
@@ -347,7 +500,15 @@ function createWindow() {
   });
 
   window.on('closed', () => {
-    mainWindow = null;
+    clearRendererWatchdog();
+    if (rendererRecoveryTimer) {
+      clearTimeout(rendererRecoveryTimer);
+      rendererRecoveryTimer = null;
+    }
+    rendererRecoveryAttempts = 0;
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
   });
 
   window.on('close', (event) => {
@@ -358,25 +519,43 @@ function createWindow() {
   });
 
   window.webContents.on('did-finish-load', () => {
+    const loadedUrl = window.webContents.getURL();
+    if (loadedUrl.startsWith('data:text/html')) {
+      log.warn('[window] renderer recovery page loaded');
+      return;
+    }
+
     log.info('Window finished loading');
+    scheduleRendererWatchdog(window);
     if (isSmokeTest) {
       log.info('Smoke test completed after renderer load');
       setTimeout(() => quitApplication(), 250).unref();
     }
   });
 
-  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+  window.webContents.on('did-fail-load', (
+    _event,
+    errorCode,
+    errorDescription,
+    _validatedURL,
+    isMainFrame,
+  ) => {
+    if (isMainFrame === false || errorCode === -3) return;
     log.error(`Failed to load: ${errorCode} - ${errorDescription}`);
     if (isSmokeTest) {
       app.exit(1);
+      return;
     }
+    scheduleRendererRecovery(window, `load failed (${errorCode})`);
   });
 
   window.webContents.on('render-process-gone', (_event, details) => {
     log.error('Renderer process gone:', details);
     if (isSmokeTest) {
       app.exit(1);
+      return;
     }
+    recreateMainWindow(window);
   });
 
   window.on('unresponsive', () => {
@@ -395,6 +574,8 @@ function createWindow() {
       log.warn(`Renderer console [${level}] ${sourceId}:${line} ${message}`);
     }
   });
+
+  loadRenderer(window);
 
   // Notify renderer on maximize state changes
   window.on('maximize', () => {
@@ -430,6 +611,15 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     showMainWindow();
   });
+}).catch((error) => {
+  log.error('[app] startup failed before a healthy renderer was ready:', error instanceof Error ? error.message : String(error));
+  if (isSmokeTest) {
+    app.exit(1);
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -441,6 +631,11 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  clearRendererWatchdog();
+  if (rendererRecoveryTimer) {
+    clearTimeout(rendererRecoveryTimer);
+    rendererRecoveryTimer = null;
+  }
   log.info('App quitting, closing database...');
   destroyAppTray();
   stopScheduledSendScheduler();

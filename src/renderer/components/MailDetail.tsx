@@ -428,6 +428,9 @@ interface MailDetailProps {
   isStarred?: boolean;
   onToggleStar?: () => void;
   onArchive?: () => void;
+  onReplyAll?: (mail: MailEmail) => void;
+  onToggleRead?: (mail: MailEmail) => void;
+  appLanguage?: string;
   routingDiagnostics?: Record<string, MailRoutingDiagnostics | undefined>;
 }
 
@@ -736,6 +739,8 @@ function ConversationMessageCard({
       onError,
       routingDiagnostics,
       contactWiki,
+      onReplyAll,
+      onToggleRead,
 }: {
   email: RendererMailSummary;
   initialDetail?: RendererMailDetail | null;
@@ -969,6 +974,7 @@ function ConversationMessageCard({
   const isSpam = folderMatches(email.folder, 'spam');
   const showAssistant = !isLocalSender;
   const normalizedLanguage = normalizeAppLanguage(locale);
+  const appLanguage = normalizedLanguage;
   const matchedFolderLabel = localizeMatchedFolder(routingDiagnostics?.matched_folder, normalizedLanguage);
   const routingTooltip = buildRoutingTooltip(routingDiagnostics, normalizedLanguage);
   const githubPriorityBadge = routingDiagnostics?.github_priority_level
@@ -1135,7 +1141,6 @@ function ConversationMessageCard({
     () => getConversationCounterparty(email, accountEmails),
     [accountEmails, email]
   );
-  const showAiReplyButton = !isLocalSender;
   const getKeyInfoFieldLabel = useCallback((item: KeyInfoItem) => {
     return resolveKeyInfoFieldLabel(item, normalizedLanguage, t);
   }, [normalizedLanguage, t]);
@@ -1887,14 +1892,9 @@ function ConversationMessageCard({
             <div className="mb-4 rounded-2xl p-4" style={{ backgroundColor: 'rgba(255,255,255,0.10)', backdropFilter: 'blur(10px)', border: `1px solid ${uiColor.borderSubtle}` }}>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.9)' }}>
-                  {aiFunction === 'translate' ? t('translationResult') : aiFunction === 'reply' ? t('replySuggestion') : t('summary')}
+                  {t('summary')}
                 </span>
                 <div className="flex items-center gap-2">
-                  {aiFunction === 'reply' && (
-                    <button onClick={() => onReplyWithSuggestion(aiResult)} className="text-[10px] px-2 py-1 rounded-md text-white cursor-pointer" style={{ backgroundColor: '#7C3AED' }}>
-                      {t('useThisReply')}
-                    </button>
-                  )}
                   <button onClick={() => void handleCopyResult()} className="text-[10px] flex items-center gap-1 cursor-pointer" style={{ color: 'rgba(255,255,255,0.9)' }}>
                     <Copy className="w-3 h-3" strokeWidth={1.8} />
                     {t('copy')}
@@ -2131,6 +2131,9 @@ export function MailDetail({
   onToggleStar,
   onArchive,
   routingDiagnostics = {},
+  onReplyAll,
+  onToggleRead,
+  appLanguage: _appLanguageProp,
 }: MailDetailProps) {
   const { i18n } = useTranslation();
   const appLanguage = normalizeAppLanguage(i18n.language);
@@ -2611,6 +2614,8 @@ export function MailDetail({
             onError={onError}
             routingDiagnostics={routingDiagnostics[message.id]}
             contactWiki={contactWiki}
+            onReplyAll={onReplyAll}
+            onToggleRead={onToggleRead}
           />
         ))}
       </div>

@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       'ai:testJevConnection',
       'ai:classifyWithJev',
       'ai:compactThreadWithJev',
+      'ai:organizeThreadWithJev',
       'app:setBadgeCount',
       'mail:print',
       'ai:classifyGitHubWithJev',

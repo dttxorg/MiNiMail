@@ -21,6 +21,7 @@ export interface RendererMailSummary {
   category?: string;
   isScanned?: boolean;
   scanResult?: string;
+  classificationSource?: 'local_rule' | 'llm' | 'github' | 'jev';
   messageId?: string;
   inReplyTo?: string;
   references?: string;

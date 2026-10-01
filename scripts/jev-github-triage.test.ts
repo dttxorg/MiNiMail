@@ -124,3 +124,32 @@ test('github triage: accurately classifies dependabot security alert (P0)', asyn
   assert.equal(result.priorityLevel, 'P0');
   assert.equal(result.isHighConfidence, true);
 });
+
+test('github triage: accurately preserves low priority noise (P3)', async () => {
+  const mockAsker: JevAsker = {
+    async ask(): Promise<JevResponse> {
+      return {
+        answers: {
+          folder_star_1: { type: 'choice', choice: 'low_priority', confidence: 0.95 },
+          priority_star_1: { type: 'choice', choice: 'P3', confidence: 0.90 },
+          blocking_star_1: { type: 'noul', noul: 0.05 },
+          urgency_star_1: { type: 'score', score: 10, confidence: 0.85 },
+        },
+      };
+    },
+  };
+
+  const result = await classifyGitHubWithJev(mockAsker, {
+    id: 'star_1',
+    repositoryFullName: 'dttxorg/MiNiMail',
+    from: 'notifications@github.com',
+    subject: 'dttxorg/MiNiMail starred by octocat',
+    snippet: 'octocat starred dttxorg/MiNiMail',
+  });
+
+  assert.equal(result.matchedFolder, 'GitHub/Low Priority');
+  assert.equal(result.priorityLevel, 'P3');
+  assert.equal(result.isHumanBlocking, false);
+  assert.equal(result.urgencyScore, 10);
+  assert.equal(result.isHighConfidence, true);
+});

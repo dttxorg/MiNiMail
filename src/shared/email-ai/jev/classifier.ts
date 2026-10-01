@@ -1,12 +1,14 @@
 import { redactSensitiveEntities } from '../redactSensitiveEntities';
 import { getChoiceAnswer, getNoulAnswer, getScoreAnswer } from './client';
-import type {
-  JevAsker,
-  JevEmailCategory,
-  JevMailClassification,
-  JevPriorityLevel,
-  JevQuestions,
-  JevSettings,
+import {
+  JEV_EMAIL_CATEGORIES,
+  JEV_PRIORITY_LEVELS,
+  type JevAsker,
+  type JevEmailCategory,
+  type JevMailClassification,
+  type JevPriorityLevel,
+  type JevQuestions,
+  type JevSettings,
 } from './types';
 
 export interface EmailClassifyInput {
@@ -70,18 +72,17 @@ export function buildTriageQuestions(mailId: string): JevQuestions {
  * Prepares the sanitized/redacted state for Jev email triage.
  */
 export function buildClassifyState(input: EmailClassifyInput): Record<string, unknown> {
-  const rawContent = [input.subject, input.fromName, input.bodyText || input.snippet].filter(Boolean).join('\n');
-  const redacted = redactSensitiveEntities(rawContent);
-
-  // Redact subject and snippet safely
+  // Redact sender, subject and snippet safely
+  const redactedFrom = redactSensitiveEntities(input.from || '').redactedText;
+  const redactedFromName = redactSensitiveEntities(input.fromName || '').redactedText;
   const redactedSubject = redactSensitiveEntities(input.subject || '').redactedText;
   const redactedSnippet = redactSensitiveEntities(input.snippet || input.bodyText || '').redactedText.slice(0, 1500);
 
   return {
     email: {
       id: input.id,
-      from: input.from,
-      fromName: input.fromName || '',
+      from: redactedFrom,
+      fromName: redactedFromName,
       subject: redactedSubject,
       snippet: redactedSnippet,
       hasAttachment: Boolean(input.hasAttachment),
@@ -111,11 +112,18 @@ export async function classifyMailWithJev(
 
   const isHighConfidence = catAnswer.confidence >= threshold && priAnswer.confidence >= threshold;
 
+  const validatedCategory: JevEmailCategory = JEV_EMAIL_CATEGORIES.includes(catAnswer.choice as JevEmailCategory)
+    ? (catAnswer.choice as JevEmailCategory)
+    : 'inbox';
+  const validatedPriority: JevPriorityLevel = JEV_PRIORITY_LEVELS.includes(priAnswer.choice as JevPriorityLevel)
+    ? (priAnswer.choice as JevPriorityLevel)
+    : 'normal';
+
   return {
     mailId: input.id,
-    category: catAnswer.choice as JevEmailCategory,
+    category: validatedCategory,
     categoryConfidence: catAnswer.confidence,
-    priority: priAnswer.choice as JevPriorityLevel,
+    priority: validatedPriority,
     priorityConfidence: priAnswer.confidence,
     actionRequired: actionProb >= 0.5,
     actionRequiredProbability: actionProb,
