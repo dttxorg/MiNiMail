@@ -5,8 +5,9 @@ import { Sidebar } from './components/Sidebar';
 import { MailList } from './components/MailList';
 import { MailDetail } from './components/MailDetail';
 import { ScheduledSendDetail } from './components/ScheduledSendDetail';
-import { ComposeDialog } from './components/ComposeDialog';
-import { SettingsModal } from './components/SettingsModal';
+const ComposeDialog = React.lazy(() => import('./components/ComposeDialog').then((m) => ({ default: m.ComposeDialog })));
+const SettingsModal = React.lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
+const KnowledgeBasePanel = React.lazy(() => import('./components/KnowledgeBasePanel').then((m) => ({ default: m.KnowledgeBasePanel })));
 import { AddAccountDialog, AddAccountDialogHandle } from './components/AddAccountDialog';
 import { ToastContainer, ToastData } from './components/Toast';
 import { WindowControls } from './components/WindowControls';
@@ -97,7 +98,7 @@ import {
   type MailRoutingResultEntry,
 } from './utils/mailRoutingAdapter';
 import { buildMailRoutingDiagnosticsMap } from './utils/mailRoutingExplanationAdapter';
-import { getGitHubPriorityBadgeInfo } from './utils/githubPriorityUi';
+import { getGitHubFolderPriorityHint, getGitHubPriorityBadgeInfo } from './utils/githubPriorityUi';
 import { resolveNextDraftSelectionAfterDelete } from './utils/draftSelection';
 import {
   collectRemovedMailIdsForDeletedTarget,
@@ -698,7 +699,8 @@ function App() {
   const [showCompose, setShowCompose] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddAccount, setShowAddAccount] = useState(false);
-  const [, setWikiStaleCount] = useState(0);
+  const [knowledgeBaseOpen, setKnowledgeBaseOpen] = useState(false);
+  const [wikiStaleCount, setWikiStaleCount] = useState(0);
   const [composeContext, setComposeContext] = useState<ComposeContext>({ mode: 'new', source: null });
   const [composeRestoreDraft, setComposeRestoreDraft] = useState<ComposeRestoreDraft | null>(null);
   const [composeSessionId, setComposeSessionId] = useState(0);
@@ -1745,20 +1747,30 @@ function App() {
     const visibleIds = new Set(conversationMessages.map((mail) => mail.id));
     return mailRoutingResults.filter((entry) => visibleIds.has(entry.id));
   }, [conversationMessages, mailRoutingResults]);
-
-  const githubPriorityById = useMemo(() => Object.fromEntries(
-    mailRoutingResults
-      .filter((entry): entry is typeof entry & { routing: Extract<typeof entry.routing, { kind: 'github' }> } => entry.routing.kind === 'github')
-      .map((entry) => [
-        entry.id,
-        getGitHubPriorityBadgeInfo(
+  const githubPriorityById = useMemo(() => {
+    const map: Record<string, ReturnType<typeof getGitHubPriorityBadgeInfo>> = {};
+    // 1. Resolve from persisted scan results for GitHub smart folders
+    for (const mail of mailList) {
+      if (mail.scanResult && mail.scanResult.startsWith('GitHub/')) {
+        const hint = getGitHubFolderPriorityHint(mail.scanResult);
+        if (hint) {
+          map[mail.id] = getGitHubPriorityBadgeInfo(hint, appLanguage);
+        }
+      }
+    }
+    // 2. Overlay freshly routed in-memory entries (e.g. Jev or active rules)
+    for (const entry of mailRoutingResults) {
+      if (entry.routing.kind === 'github') {
+        map[entry.id] = getGitHubPriorityBadgeInfo(
           entry.routing.github.priority_level,
           appLanguage,
           entry.routing.github.priority.friendlyText,
           entry.routing.github.safe_summary,
-        ),
-      ])
-  ), [appLanguage, mailRoutingResults]);
+        );
+      }
+    }
+    return map;
+  }, [appLanguage, mailList, mailRoutingResults]);
 
   const routingDiagnostics = useMemo(
     () => buildMailRoutingDiagnosticsMap({
@@ -1857,6 +1869,28 @@ function App() {
           };
           if (!settingsResponse.success || !settingsResponse.data?.enabled || !settingsResponse.data.hasApiKey) return;
 
+          const to = selected.to
+            .split(',')
+            .map((value) => value.match(/<([^>]+)>/)?.[1] || value)
+            .map((value) => value.trim())
+            .filter((value) => value.includes('@'));
+          const threadId = getOrBuildThreadId({
+            subject: selected.subject,
+            from: selected.from,
+            to,
+          });
+
+          // Skip redundant body prefetch if thread summary is already fresh
+          try {
+            const existingThread = await window.electronAPI.getThreadSummary(selected.accountId, threadId);
+            const latestThreadMail = threadMails[threadMails.length - 1];
+            if (existingThread?.success && existingThread.data?.latestRoundAt && existingThread.data.latestRoundAt >= latestThreadMail.date.toISOString()) {
+              if (!cancelled) jevThreadRequestsRef.current.add(requestKey);
+              return;
+            }
+          } catch {
+            // continue to organize
+          }
           const mails = await Promise.all(threadMails.map(async (mail) => {
             let bodyText = mail.bodyText;
             if (!bodyText) {
@@ -1875,16 +1909,6 @@ function App() {
               snippet: mail.snippet,
             };
           }));
-          const to = selected.to
-            .split(',')
-            .map((value) => value.match(/<([^>]+)>/)?.[1] || value)
-            .map((value) => value.trim())
-            .filter((value) => value.includes('@'));
-          const threadId = getOrBuildThreadId({
-            subject: selected.subject,
-            from: selected.from,
-            to,
-          });
           await window.electronAPI.invoke('ai:organizeThreadWithJev', {
             accountId: selected.accountId,
             threadId,
@@ -4092,6 +4116,8 @@ function App() {
             scheduledCount={scheduledCount}
             appLanguage={appLanguage}
             isMacOS={isMacOS}
+            onOpenKnowledgeBase={() => setKnowledgeBaseOpen(true)}
+            knowledgeBaseStaleCount={wikiStaleCount}
           />
         </div>
 
@@ -4307,6 +4333,33 @@ function App() {
           onOpenBackupFolder={handleOpenBackupFolder}
         />
 
+        {knowledgeBaseOpen && currentAccount && currentAccount !== 'all' && (
+          <div
+            className="fixed inset-0 z-40 flex bg-black/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setKnowledgeBaseOpen(false)}
+          >
+            <div
+              className="ml-auto h-full w-[500px] max-w-full bg-[#161618] border-l border-[#2a2a2d] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <React.Suspense fallback={<div className="p-6 text-xs text-[#8e8e93]">Loading...</div>}>
+                <KnowledgeBasePanel
+                  accountId={currentAccount.id}
+                  onOpenMail={(mailId) => {
+                    setKnowledgeBaseOpen(false);
+                    const target = mailList.find((m) => m.id === mailId);
+                    if (target) {
+                      handleSelectEmail(target);
+                    } else {
+                      setSelectedFolder('inbox');
+                    }
+                  }}
+                  onClose={() => setKnowledgeBaseOpen(false)}
+                />
+              </React.Suspense>
+            </div>
+          </div>
+        )}
 
         <AddAccountDialog
           ref={addAccountDialogRef}

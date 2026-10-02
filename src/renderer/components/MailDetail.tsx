@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { RendererMailDetail, RendererMailSummary, type LoadMailBodyFn } from '../hooks/useMail';
 import { getOrBuildThreadId, hashPrompt } from '../../shared/email-ai/mailSummaryThread';
-import type { MailAiSummaryRecord } from '../../shared/email-ai/mailSummaryTypes';
+import type { MailAiSummaryRecord, MailAiThreadSummaryRecord } from '../../shared/email-ai/mailSummaryTypes';
 import { type AIEmailSourcePayload, type ContactWiki, useAI } from '../hooks/useAI';
 import { normalizeAiLanguage, normalizeAppLanguage } from '../utils/aiLanguages';
 import { extractReadableEmailText } from '../utils/emailContent';
@@ -2152,6 +2152,7 @@ export function MailDetail({
   const [contactWikiFeedbackStatus, setContactWikiFeedbackStatus] = useState<string | null>(null);
   const [contactWikiExpanded, setContactWikiExpanded] = useState(false);
   const [threadLineageExpanded, setThreadLineageExpanded] = useState(false);
+  const [threadSummary, setThreadSummary] = useState<MailAiThreadSummaryRecord | null>(null);
 
   const formatDate = useCallback((date: Date) => {
     return date.toLocaleString(locale, {
@@ -2321,6 +2322,34 @@ export function MailDetail({
     void loadContactWiki(false, false);
   }, [contactEmail, selectedSummary?.accountId, loadContactWiki]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setThreadSummary(null);
+    if (!selectedSummary || sortedConversation.length < 2) return;
+    const to = (selectedSummary.to || '')
+      .split(',')
+      .map((value) => value.match(/<([^>]+)>/)?.[1] || value)
+      .map((value) => value.trim())
+      .filter((value) => value.includes('@'));
+    const threadId = getOrBuildThreadId({
+      subject: selectedSummary.subject,
+      from: selectedSummary.from,
+      to,
+    });
+    void window.electronAPI
+      .getThreadSummary(selectedSummary.accountId, threadId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res && res.success && res.data) {
+          setThreadSummary(res.data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSummary?.id, selectedSummary?.accountId, selectedSummary?.subject, sortedConversation.length]);
+
   const handleContactWikiFeedback = useCallback(async (
     target: 'wiki' | 'reply',
     rating: 'useful' | 'inaccurate' | 'not_relevant' | 'too_long' | 'too_formal' | 'too_short',
@@ -2402,33 +2431,89 @@ export function MailDetail({
           </div>
         </div>
         {sortedConversation.length > 1 && (
-          <div className="mb-4 rounded-[16px] px-3.5 py-2.5 bg-[#161618] border border-[#2a2a2d] text-xs">
+          <div className="mb-4 rounded-[16px] px-3.5 py-3 bg-[#161618] border border-[#2a2a2d] text-xs">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-medium text-white flex items-center gap-1.5">
+                <span className="text-[12px] font-medium text-white flex items-center gap-1.5">
                   🧵 {appLanguage === 'zh' ? '会话往来脉络' : 'Thread Lineage'}
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0a84ff]/15 text-[#0a84ff]">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#0a84ff]/15 text-[#0a84ff] font-medium">
                   {sortedConversation.length} {appLanguage === 'zh' ? '轮往来' : 'turns'}
                 </span>
+                {threadSummary && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-medium">
+                    {appLanguage === 'zh' ? 'AI 整理就绪' : 'AI Compacted'}
+                  </span>
+                )}
               </div>
               <button
                 type="button"
                 onClick={() => setThreadLineageExpanded((v) => !v)}
-                className="text-[11px] text-[#0a84ff] hover:underline cursor-pointer"
+                className="text-[11px] text-[#0a84ff] hover:underline cursor-pointer font-medium"
               >
-                {threadLineageExpanded ? (appLanguage === 'zh' ? '收起脉络' : 'Collapse') : (appLanguage === 'zh' ? '查看时间线' : 'View Timeline')}
+                {threadLineageExpanded ? (appLanguage === 'zh' ? '收起脉络' : 'Collapse') : (appLanguage === 'zh' ? '查看脉络详情' : 'View Details')}
               </button>
             </div>
+
             {threadLineageExpanded && (
-              <div className="mt-2.5 pt-2.5 border-t border-[#2a2a2d] space-y-1.5 text-[11px]">
-                {sortedConversation.map((item, idx) => (
-                  <div key={item.id} className="flex items-start gap-2">
-                    <span className="text-[10px] text-[#636366] shrink-0">{idx + 1}.</span>
-                    <span className="text-white shrink-0">{item.fromName || item.from}:</span>
-                    <span className="truncate text-[#8e8e93]">{item.snippet || item.subject}</span>
+              <div className="mt-3 pt-3 border-t border-[#2a2a2d] space-y-3 text-[11px]">
+                {/* 1. 核心脉络摘要或时间线 */}
+                {threadSummary?.overallSummary ? (
+                  <div className="rounded-xl p-3 bg-[#0d0d0f] border border-white/5 space-y-2">
+                    <div className="text-[10px] font-semibold tracking-wider text-[#8e8e93] uppercase">
+                      {appLanguage === 'zh' ? '核心脉络摘要' : 'Core Thread Lineage'}
+                    </div>
+                    <div className="text-[12px] leading-relaxed text-[#f5f5f7] whitespace-pre-wrap font-sans">
+                      {threadSummary.overallSummary}
+                    </div>
                   </div>
-                ))}
+                ) : (
+                  <div className="space-y-1.5">
+                    {sortedConversation.map((item, idx) => (
+                      <div key={item.id} className="flex items-start gap-2">
+                        <span className="text-[10px] text-[#636366] shrink-0">{idx + 1}.</span>
+                        <span className="text-white shrink-0 font-medium">{item.fromName || item.from}:</span>
+                        <span className="truncate text-[#8e8e93]">{item.snippet || item.subject}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 2. 待跟进事项 (Open Loops) */}
+                {threadSummary && threadSummary.overallOpenLoops && threadSummary.overallOpenLoops.length > 0 && (
+                  <div className="rounded-xl p-3 bg-amber-500/10 border border-amber-500/20 space-y-1.5">
+                    <div className="text-[11px] font-semibold text-amber-400 flex items-center gap-1.5">
+                      <span>⚡</span>
+                      <span>{appLanguage === 'zh' ? '待跟进事项 (Open Loops)' : 'Action Items & Open Loops'}</span>
+                    </div>
+                    <ul className="space-y-1 text-amber-200/90 text-[11px] leading-relaxed pl-1">
+                      {threadSummary.overallOpenLoops.map((loop: string, i: number) => (
+                        <li key={i} className="flex items-start gap-1.5">
+                          <span className="text-amber-400/60">•</span>
+                          <span>{loop.replace(/^\[Jev:Loop\]\s*/, '')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* 3. 达成约定与承诺 (Commitments) */}
+                {threadSummary && threadSummary.overallCommitments && threadSummary.overallCommitments.length > 0 && (
+                  <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20 space-y-1.5">
+                    <div className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <span>🤝</span>
+                      <span>{appLanguage === 'zh' ? '达成约定与承诺 (Commitments)' : 'Stated Commitments & Milestones'}</span>
+                    </div>
+                    <ul className="space-y-1 text-emerald-200/90 text-[11px] leading-relaxed pl-1">
+                      {threadSummary.overallCommitments.map((commit: string, i: number) => (
+                        <li key={i} className="flex items-start gap-1.5">
+                          <span className="text-emerald-400/60">•</span>
+                          <span>{commit.replace(/^\[Jev:Commit\]\s*/, '')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </div>

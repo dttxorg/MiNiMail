@@ -2,6 +2,7 @@
 import { useTranslation } from 'react-i18next';
 import {
   Archive,
+  BookOpen,
   BellDot,
   BriefcaseBusiness,
   CalendarClock,
@@ -344,8 +345,8 @@ export function Sidebar({
   scheduledCount = 0,
   appLanguage: appLanguageSetting,
   isMacOS = false,
-  onOpenKnowledgeBase: _onOpenKnowledgeBase,
-  knowledgeBaseStaleCount: _knowledgeBaseStaleCount = 0,
+  onOpenKnowledgeBase,
+  knowledgeBaseStaleCount = 0,
 }: SidebarProps) {
   const { i18n } = useTranslation();
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -463,7 +464,30 @@ export function Sidebar({
             <span className="flex-1 text-left leading-none">{t('starred')}</span>
           </button>
 
-
+          {onOpenKnowledgeBase && (
+            <button
+              onClick={onOpenKnowledgeBase}
+              className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]"
+              style={buildSidebarItemStyle(false)}
+              title={appLanguage === 'zh' ? '联系人往来知识库与行为画像' : 'Contact history wiki and behavioral insights'}
+            >
+              <NavIcon active={false}>
+                <BookOpen className="w-[18px] h-[18px]" strokeWidth={1.8} style={{ color: '#818CF8' }} />
+              </NavIcon>
+              <span className="flex-1 text-left leading-none">
+                {appLanguage === 'zh' ? '联系人知识库' : 'Contact Wiki'}
+              </span>
+              {knowledgeBaseStaleCount > 0 && (
+                <span
+                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold"
+                  style={{ backgroundColor: 'rgba(99,102,241,0.2)', color: '#A5B4FC', lineHeight: 1 }}
+                  title={appLanguage === 'zh' ? `${knowledgeBaseStaleCount} 位联系人有待更新往来记录` : `${knowledgeBaseStaleCount} contacts have pending history updates`}
+                >
+                  {knowledgeBaseStaleCount}
+                </span>
+              )}
+            </button>
+          )}
           <button onClick={() => onSelectFolder('archive')} className="w-full flex items-center cursor-pointer transition-all duration-150 [-webkit-app-region:no-drag]" style={buildSidebarItemStyle(selectedFolder === 'archive')}>
             <NavIcon active={selectedFolder === 'archive'}>{navIcons.archive}</NavIcon>
             <span className="flex-1 text-left leading-none">{ui.archive}</span>
